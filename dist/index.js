@@ -250,18 +250,18 @@ function initializeStartupData() {
                         role: 'SUPER_ADMIN'
                     }
                 });
-                console.log('âœ… Super admin account created for the first time.');
+                console.log('✅ Super admin account created for the first time.');
             }
             else {
-                console.log('âœ… Super admin already exists â€” password preserved as-is.');
+                console.log('✅ Super admin already exists — password preserved as-is.');
             }
             const shouldSeedDummyData = process.env.SEED_DUMMY_DATA === 'true';
             const schoolCount = yield prisma_1.default.school.count();
             const courseCount = yield prisma_1.default.course.count();
             const examCount = yield prisma_1.default.exam.count();
-            console.log(`Ã°Å¸â€œÅ  Current Database Stats - Schools: ${schoolCount}, Courses: ${courseCount}, Exams: ${examCount}`);
+            console.log(`📊 Current Database Stats - Schools: ${schoolCount}, Courses: ${courseCount}, Exams: ${examCount}`);
             if (schoolCount === 0 && shouldSeedDummyData) {
-                console.log('Ã°Å¸Å’Â± Database is empty of schools. Initiating automatic school data seeding...');
+                console.log('🌱 Database is empty of schools. Initiating automatic school data seeding...');
                 const schoolsData = [
                     { name: 'Ã™â€¦Ã˜Â¯Ã˜Â±Ã˜Â³Ã˜Â© Ã˜Â§Ã™â€žÃ˜Â±Ã™Ë†Ã˜Â§Ã˜Â¯ Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã˜ÂµÃ˜Â© - Ã˜Â§Ã™â€žÃ™â€šÃ˜Â§Ã™â€¡Ã˜Â±Ã˜Â©', subdomain: 'alrowad', themeColor: '#4f46e5' },
                     { name: 'Ã™â€¦Ã˜Â¯Ã˜Â±Ã˜Â³Ã˜Â© Ã˜Â§Ã™â€žÃ™â€ Ã™Å Ã™â€ž Ã˜Â§Ã™â€žÃ˜Â¯Ã™Ë†Ã™â€žÃ™Å Ã˜Â© - Ã˜Â§Ã™â€žÃ˜Â´Ã™Å Ã˜Â® Ã˜Â²Ã˜Â§Ã™Å Ã˜Â¯', subdomain: 'nile', themeColor: '#059669' },
@@ -704,12 +704,12 @@ function autoRecoverSpecificLesson() {
 } */
 const startServer = () => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        console.log('ðŸ“¡ Testing database connection...');
+        console.log('[DB] Testing database connection...');
         yield prisma_1.default.$connect();
-        console.log('âœ… Database connected successfully!');
+        console.log('[DB] Connected successfully!');
     }
     catch (error) {
-        console.error('âŒ Database connection failed:', error.message);
+        console.error('[DB] Connection failed:', error.message);
     }
     app.get('/api/run-cleanup-duplicate-questions', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         try {
@@ -748,16 +748,16 @@ const startServer = () => __awaiter(void 0, void 0, void 0, function* () {
         }
     }));
     app.listen(PORT, '0.0.0.0', () => {
-        console.log(`ðŸš€ LMS Backend running on port ${PORT}`);
-        // âš¡ CRITICAL FIX: Defer ALL heavy startup tasks by 30 seconds.
+        console.log(`[Server] LMS Backend running on port ${PORT}`);
+        // CRITICAL FIX: Defer ALL heavy startup tasks by 30 seconds.
         // This ensures the healthcheck passes immediately and prevents Bad Gateway (502) loops.
         // Dokploy/Nginx will see the server as "healthy" right away, then heavy tasks run in background.
         setTimeout(() => {
-            console.log('â³ [Deferred Startup] Starting background initialization tasks...');
+            console.log('[Deferred Startup] Starting background initialization tasks...');
             // Cron jobs & schedulers (lightweight to register, heavy to execute later)
             // startBackupScheduler(); // Removed to prevent duplicate hourly backups with cronService
             (0, cronService_1.initCronJobs)();
-            // Auto-recover missing slides (Disabled â€” completed its job)
+            // Auto-recover missing slides (Disabled — completed its job)
             // autoRecoverMissingSlides().catch((e: any) => console.error('[Auto-Recover-Slides]:', e.message));
             console.log('✅ [Deferred Startup] All background tasks launched.');
         }, 30000); // 30 seconds delay — safely after healthcheck passes
