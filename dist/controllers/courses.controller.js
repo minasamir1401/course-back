@@ -442,6 +442,9 @@ const putCourseHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, funct
     try {
         const { id } = req.params;
         const { title, description, coverImage, grade, grades, subject, country, isCentral, schoolId, schoolIds, lessons, } = req.body;
+        if (lessons !== undefined && !Array.isArray(lessons)) {
+            return res.status(400).json({ error: "lessons must be an array when provided." });
+        }
         // Authorization check
         const existingCourse = yield prisma_1.default.course.findUnique({
             where: { id },
@@ -1988,6 +1991,7 @@ const postCourseHandler32 = (req, res) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.postCourseHandler32 = postCourseHandler32;
+// Automatic title-based deduplication is disabled — deduplication is preview/manual only
 function previewDeduplication() {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b;

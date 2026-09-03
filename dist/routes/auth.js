@@ -72,15 +72,12 @@ router.post('/api/auth/register', (req, res) => __awaiter(void 0, void 0, void 0
 router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const ip = req.ip || req.socket.remoteAddress || 'unknown';
-        const now = Date.now();
-        const existingAttempt = shared_1.loginAttempts.get(ip);
-        if (existingAttempt) {
-            if (now - existingAttempt.firstAttemptAt > shared_1.LOGIN_WINDOW_MS) {
-                shared_1.loginAttempts.delete(ip);
-            }
-            else if (existingAttempt.count >= shared_1.LOGIN_MAX_ATTEMPTS) {
-                return res.status(429).json({ error: 'محاولات دخول كثيرة جداً. يرجى الانتظار والمحاولة لاحقاً.' });
-            }
+        // Check cluster-aware rate limit (Redis + local memory)
+        const rateLimitCheck = yield (0, shared_1.isLoginRateLimited)(ip);
+        if (rateLimitCheck.isLimited) {
+            return res.status(429).json({
+                error: `محاولات دخول كثيرة جداً. يرجى الانتظار والمحاولة لاحقاً بعد ${rateLimitCheck.remainingMinutes} دقيقة.`
+            });
         }
         const { username, password } = req.body;
         const missing = (0, shared_1.hasRequiredFields)(req.body, ['username', 'password']);
@@ -89,29 +86,15 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         }
         const user = yield prisma_1.default.user.findUnique({ where: { username } });
         if (!user || user.deletedAt) {
-            const attempt = shared_1.loginAttempts.get(ip);
-            if (!attempt || now - attempt.firstAttemptAt > shared_1.LOGIN_WINDOW_MS) {
-                shared_1.loginAttempts.set(ip, { count: 1, firstAttemptAt: now });
-            }
-            else {
-                attempt.count += 1;
-                shared_1.loginAttempts.set(ip, attempt);
-            }
+            yield (0, shared_1.recordFailedLogin)(ip);
             return res.status(400).json({ error: 'Invalid username or password.' });
         }
         const validPassword = yield bcryptjs_1.default.compare(password, user.password);
         if (!validPassword) {
-            const attempt = shared_1.loginAttempts.get(ip);
-            if (!attempt || now - attempt.firstAttemptAt > shared_1.LOGIN_WINDOW_MS) {
-                shared_1.loginAttempts.set(ip, { count: 1, firstAttemptAt: now });
-            }
-            else {
-                attempt.count += 1;
-                shared_1.loginAttempts.set(ip, attempt);
-            }
+            yield (0, shared_1.recordFailedLogin)(ip);
             return res.status(400).json({ error: 'Invalid username or password.' });
         }
-        shared_1.loginAttempts.delete(ip);
+        yield (0, shared_1.clearLoginAttempts)(ip);
         // Generate token payload: user_id, role, school_id, grade
         const token = jsonwebtoken_1.default.sign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
         // Set httpOnly cookie — protected from XSS. SameSite=None for cross-subdomain (api.klevro.com ← front.klevro.com).

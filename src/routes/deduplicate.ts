@@ -20,12 +20,13 @@ router.get('/scan', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request
     // 1. Scan Courses (Group by title, description, subject)
     const duplicateCoursesGroups = (await prisma.course.groupBy({
       by: ['title', 'description', 'subject'],
+      where: { deletedAt: null },
       _count: { id: true }
     })).filter(g => g._count.id > 1);
 
     for (const group of duplicateCoursesGroups) {
       const courses = await prisma.course.findMany({
-        where: { title: group.title, description: group.description, subject: group.subject },
+        where: { deletedAt: null, title: group.title, description: group.description, subject: group.subject },
         orderBy: { createdAt: 'asc' },
         select: { id: true, title: true, createdAt: true, school: { select: { name: true } } },
       });
@@ -41,12 +42,13 @@ router.get('/scan', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request
     // 2. Scan Exams (Group by title, courseId)
     const duplicateExamsGroups = (await prisma.exam.groupBy({
       by: ['title', 'courseId'],
+      where: { deletedAt: null },
       _count: { id: true }
     })).filter(g => g._count.id > 1);
 
     for (const group of duplicateExamsGroups) {
       const exams = await prisma.exam.findMany({
-        where: { title: group.title, courseId: group.courseId },
+        where: { deletedAt: null, title: group.title, courseId: group.courseId },
         orderBy: { createdAt: 'asc' },
         select: { id: true, title: true, createdAt: true },
       });
@@ -62,12 +64,13 @@ router.get('/scan', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request
     // 3. Scan Lessons (Group by title, courseId)
     const duplicateLessonsGroups = (await prisma.lesson.groupBy({
       by: ['title', 'courseId'],
+      where: { deletedAt: null },
       _count: { id: true }
     })).filter(g => g._count.id > 1);
 
     for (const group of duplicateLessonsGroups) {
       const lessons = await prisma.lesson.findMany({
-        where: { title: group.title, courseId: group.courseId },
+        where: { deletedAt: null, title: group.title, courseId: group.courseId },
         orderBy: { createdAt: 'asc' },
         select: { id: true, title: true, createdAt: true },
       });
@@ -83,12 +86,13 @@ router.get('/scan', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request
     // 4. Scan Questions (Group by text, examId)
     const duplicateQuestionsGroups = (await prisma.question.groupBy({
       by: ['text', 'examId'],
+      where: { deletedAt: null },
       _count: { id: true }
     })).filter(g => g._count.id > 1);
 
     for (const group of duplicateQuestionsGroups) {
       const questions = await prisma.question.findMany({
-        where: { text: group.text, examId: group.examId },
+        where: { deletedAt: null, text: group.text, examId: group.examId },
         orderBy: { createdAt: 'asc' },
         select: { id: true, text: true, createdAt: true },
       });
@@ -108,6 +112,7 @@ router.get('/scan', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request
 });
 
 // POST /api/deduplicate/clean
+// Safe soft-delete into trash recycle bin (never cascading deleteMany)
 // Expects { courses: string[], exams: string[], lessons: string[], questions: string[] }
 router.post('/clean', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -116,19 +121,31 @@ router.post('/clean', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Reque
 
     await prisma.$transaction(async (tx) => {
       if (questions.length > 0) {
-        const result = await tx.question.deleteMany({ where: { id: { in: questions } } });
+        const result = await tx.question.updateMany({
+          where: { id: { in: questions }, deletedAt: null },
+          data: { deletedAt: new Date() }
+        });
         deleted.questions = result.count;
       }
       if (lessons.length > 0) {
-        const result = await tx.lesson.deleteMany({ where: { id: { in: lessons } } });
+        const result = await tx.lesson.updateMany({
+          where: { id: { in: lessons }, deletedAt: null },
+          data: { deletedAt: new Date() }
+        });
         deleted.lessons = result.count;
       }
       if (exams.length > 0) {
-        const result = await tx.exam.deleteMany({ where: { id: { in: exams } } });
+        const result = await tx.exam.updateMany({
+          where: { id: { in: exams }, deletedAt: null },
+          data: { deletedAt: new Date() }
+        });
         deleted.exams = result.count;
       }
       if (courses.length > 0) {
-        const result = await tx.course.deleteMany({ where: { id: { in: courses } } });
+        const result = await tx.course.updateMany({
+          where: { id: { in: courses }, deletedAt: null },
+          data: { deletedAt: new Date() }
+        });
         deleted.courses = result.count;
       }
     });

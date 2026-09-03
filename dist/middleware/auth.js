@@ -25,13 +25,26 @@ const INSECURE_JWT_SECRETS = new Set([
 if (!JWT_SECRET || JWT_SECRET.length < 32 || INSECURE_JWT_SECRETS.has(JWT_SECRET)) {
     throw new Error('JWT_SECRET must be a unique random value of at least 32 characters');
 }
-// Bounded local cache for active user status checks to avoid database query bottlenecks
+const redis_1 = require("../lib/redis");
+// Bounded local cache for active user status checks (mirrored with Redis for cluster mode)
 const userStatusCache = new Map();
 const STATUS_CACHE_TTL = 30 * 1000; // 30 seconds cache TTL
 const checkUserActiveStatus = (userId) => __awaiter(void 0, void 0, void 0, function* () {
     if (userId === 'SYSTEM')
         return true;
     const now = Date.now();
+    const redisCacheKey = `user_status:${userId}`;
+    // 1. Check Redis / shared cluster store
+    try {
+        const sharedStatus = yield (0, redis_1.cacheGetJSON)(redisCacheKey);
+        if (sharedStatus && typeof sharedStatus.isActive === 'boolean') {
+            return sharedStatus.isActive;
+        }
+    }
+    catch (_a) {
+        // Non-fatal, proceed to local memory check
+    }
+    // 2. Check local memory cache
     const cached = userStatusCache.get(userId);
     if (cached && (now - cached.timestamp < STATUS_CACHE_TTL)) {
         return cached.isActive;
@@ -49,6 +62,8 @@ const checkUserActiveStatus = (userId) => __awaiter(void 0, void 0, void 0, func
     });
     const isActive = !!(user && user.status === 'ACTIVE');
     userStatusCache.set(userId, { isActive, timestamp: now });
+    // Update Redis cache asynchronously with 30s TTL
+    (0, redis_1.cacheSetJSON)(redisCacheKey, { isActive }, 30).catch(() => { });
     return isActive;
 });
 const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {

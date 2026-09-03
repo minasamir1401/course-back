@@ -23,7 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.releaseLock = exports.acquireLock = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = void 0;
+exports.releaseLock = exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = exports.isLoginRateLimited = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = void 0;
 exports.getYoutubeDuration = getYoutubeDuration;
 exports.getVimeoDuration = getVimeoDuration;
 exports.getVideoDuration = getVideoDuration;
@@ -36,6 +36,7 @@ const https_1 = __importDefault(require("https"));
 const crypto_1 = __importDefault(require("crypto"));
 const multer_1 = __importDefault(require("multer"));
 const prisma_1 = __importDefault(require("./lib/prisma"));
+const redis_1 = require("./lib/redis");
 if (!process.env.JWT_SECRET) {
     console.warn('⚠️ WARNING: JWT_SECRET environment variable is missing!');
 }
@@ -87,7 +88,8 @@ const multerStorage = multer_1.default.diskStorage({
 });
 exports.multerUpload = (0, multer_1.default)({
     storage: multerStorage,
-    limits: { fileSize: 1000 * 1024 * 1024 }, // 1 GB limit
+    // 150 MB max limit prevents heap memory exhaustion (OOM) and protects VPS disk space
+    limits: { fileSize: 150 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
         if (exports.ALLOWED_MIME_TYPES.has(file.mimetype)) {
             cb(null, true);
@@ -948,7 +950,7 @@ function normalizeLegacyCourses() {
         }
     });
 }
-// Stats Cache to improve performance
+// Stats Cache to improve performance (mirrored with Redis for cluster mode)
 exports.statsCache = new Map();
 exports.CACHE_TTL = 300 * 1000; // 5 minutes cache
 const setCache = (key, data) => {
@@ -958,7 +960,10 @@ const setCache = (key, data) => {
             exports.statsCache.delete(firstKey);
         }
     }
-    exports.statsCache.set(key, { data, timestamp: Date.now() });
+    const entry = { data, timestamp: Date.now() };
+    exports.statsCache.set(key, entry);
+    // Sync to Redis cluster asynchronously with TTL (5 mins)
+    (0, redis_1.cacheSetJSON)(`stats:${key}`, entry, Math.floor(exports.CACHE_TTL / 1000)).catch(() => { });
 };
 exports.setCache = setCache;
 const getCache = (key) => {
@@ -972,6 +977,77 @@ const getCache = (key) => {
     return undefined;
 };
 exports.getCache = getCache;
+/**
+ * Async cache getter that checks Redis before falling back to local memory.
+ */
+const getCacheAsync = (key) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const fromRedis = yield (0, redis_1.cacheGetJSON)(`stats:${key}`);
+        if (fromRedis && fromRedis.data !== undefined) {
+            exports.statsCache.set(key, fromRedis);
+            return fromRedis;
+        }
+    }
+    catch (_a) {
+        // Fall back to local memory
+    }
+    return (0, exports.getCache)(key);
+});
+exports.getCacheAsync = getCacheAsync;
+/**
+ * Cluster-aware Rate Limiting for Login
+ */
+const isLoginRateLimited = (ip) => __awaiter(void 0, void 0, void 0, function* () {
+    const redisKey = `ratelimit:login:${ip}`;
+    const now = Date.now();
+    // 1. Check local memory
+    const localAttempt = exports.loginAttempts.get(ip);
+    if (localAttempt && localAttempt.count >= exports.LOGIN_MAX_ATTEMPTS && (now - localAttempt.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
+        const remainingMs = exports.LOGIN_WINDOW_MS - (now - localAttempt.firstAttemptAt);
+        return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
+    }
+    // 2. Check Redis if active
+    if ((0, redis_1.isRedisActive)()) {
+        try {
+            const redisStatus = yield (0, redis_1.cacheGetJSON)(redisKey);
+            if (redisStatus && redisStatus.count >= exports.LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
+                const remainingMs = exports.LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
+                return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
+            }
+        }
+        catch (_a) {
+            // Non-fatal
+        }
+    }
+    return { isLimited: false, remainingMinutes: 0 };
+});
+exports.isLoginRateLimited = isLoginRateLimited;
+const recordFailedLogin = (ip) => __awaiter(void 0, void 0, void 0, function* () {
+    const now = Date.now();
+    const redisKey = `ratelimit:login:${ip}`;
+    // 1. Update local memory
+    const localAttempt = exports.loginAttempts.get(ip);
+    let newCount = 1;
+    let firstAttemptAt = now;
+    if (localAttempt && now - localAttempt.firstAttemptAt <= exports.LOGIN_WINDOW_MS) {
+        newCount = localAttempt.count + 1;
+        firstAttemptAt = localAttempt.firstAttemptAt;
+    }
+    exports.loginAttempts.set(ip, { count: newCount, firstAttemptAt });
+    // 2. Update Redis
+    if ((0, redis_1.isRedisActive)()) {
+        const windowSecs = Math.floor(exports.LOGIN_WINDOW_MS / 1000);
+        yield (0, redis_1.cacheSetJSON)(redisKey, { count: newCount, firstAttemptAt }, windowSecs).catch(() => { });
+    }
+});
+exports.recordFailedLogin = recordFailedLogin;
+const clearLoginAttempts = (ip) => __awaiter(void 0, void 0, void 0, function* () {
+    exports.loginAttempts.delete(ip);
+    if ((0, redis_1.isRedisActive)()) {
+        yield (0, redis_1.cacheDelete)(`ratelimit:login:${ip}`).catch(() => { });
+    }
+});
+exports.clearLoginAttempts = clearLoginAttempts;
 // Simple In-Memory Mutex to prevent double-click submissions (Idempotency)
 const locks = new Set();
 const acquireLock = (key) => {

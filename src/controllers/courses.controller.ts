@@ -481,6 +481,10 @@ export const putCourseHandler12 = async (req: any, res: any) => {
         lessons,
       } = req.body;
 
+      if (lessons !== undefined && !Array.isArray(lessons)) {
+        return res.status(400).json({ error: "lessons must be an array when provided." });
+      }
+
       // Authorization check
       const existingCourse = await prisma.course.findUnique({
         where: { id },
@@ -2213,6 +2217,7 @@ export const postCourseHandler32 = async (req: any, res: any) => {
   };
 
 
+// Automatic title-based deduplication is disabled — deduplication is preview/manual only
 export async function previewDeduplication() {
   try {
     const lessons = await prisma.lesson.findMany({

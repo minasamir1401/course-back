@@ -135,59 +135,6 @@ router.post('/api/system/wipe-all-dummy-data-danger', verifyToken, checkRole(['S
   }
 });
 
-// Force inject the Factors lesson to bypass restore logic issues
-router.get('/api/system/force-inject-factors', verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
-  try {
-    const b64Payload = 'ewogICJkYXRhIjogewogICAgImNvdXJzZSI6IFsKICAgICAgewogICAgICAgICJpZCI6ICI3MjA4NTFjMy1lYTRhLTQ1MWUtYWU1Zi04NWMwNDkwYWEzNTkiLAogICAgICAgICJ0aXRsZSI6ICJEb21haW4gZS5nIEFsZ2VicmEiLAogICAgICAgICJkZXNjcmlwdGlvbiI6ICJNYXRoZW1hdGljcyBEb21haW4gQ29udGVudCBhdCB0aGUgRW5kIG9mIEdyYWRl the rest of the b64Payload...';
-    const raw = JSON.parse(Buffer.from(b64Payload, 'base64').toString('utf8'));
-    
-    if (raw.data && raw.data.lesson && raw.data.lesson.length > 0) {
-      const lessonData = raw.data.lesson[0];
-      const courseData = raw.data.course[0];
-      
-      await prisma.course.upsert({
-        where: { id: courseData.id },
-        update: {},
-        create: {
-          id: courseData.id,
-          title: courseData.title,
-          grade: courseData.grade,
-          isCentral: false,
-          schoolId: courseData.schoolId
-        }
-      });
-      
-      await prisma.lesson.upsert({
-        where: { id: lessonData.id },
-        update: {
-          title: lessonData.title,
-          courseId: courseData.id,
-          questions: lessonData.questions,
-          slides: lessonData.slides,
-          attachments: lessonData.attachments,
-          isCentral: false,
-          isVisible: true
-        },
-        create: {
-          id: lessonData.id,
-          courseId: courseData.id,
-          title: lessonData.title,
-          questions: lessonData.questions,
-          slides: lessonData.slides,
-          attachments: lessonData.attachments,
-          isCentral: false,
-          isVisible: true
-        }
-      });
-      
-      res.json({ success: true, message: 'Lesson Factors injected successfully from EMBEDDED payload!' });
-    } else {
-      res.json({ success: false, message: 'Invalid format in payload.' });
-    }
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ??? DANGER: WIPE SEEDED DUMMY DATA ONLY
 // Requires body: { confirm: 'WIPE_DUMMY_DATA' }. Supports dry_run: true to preview.

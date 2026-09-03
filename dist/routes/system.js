@@ -115,57 +115,6 @@ router.post('/api/system/wipe-all-dummy-data-danger', auth_1.verifyToken, (0, au
         res.status(500).json({ success: false, error: error.message });
     }
 }));
-// Force inject the Factors lesson to bypass restore logic issues
-router.get('/api/system/force-inject-factors', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    try {
-        const b64Payload = 'ewogICJkYXRhIjogewogICAgImNvdXJzZSI6IFsKICAgICAgewogICAgICAgICJpZCI6ICI3MjA4NTFjMy1lYTRhLTQ1MWUtYWU1Zi04NWMwNDkwYWEzNTkiLAogICAgICAgICJ0aXRsZSI6ICJEb21haW4gZS5nIEFsZ2VicmEiLAogICAgICAgICJkZXNjcmlwdGlvbiI6ICJNYXRoZW1hdGljcyBEb21haW4gQ29udGVudCBhdCB0aGUgRW5kIG9mIEdyYWRl the rest of the b64Payload...';
-        const raw = JSON.parse(Buffer.from(b64Payload, 'base64').toString('utf8'));
-        if (raw.data && raw.data.lesson && raw.data.lesson.length > 0) {
-            const lessonData = raw.data.lesson[0];
-            const courseData = raw.data.course[0];
-            yield prisma_1.default.course.upsert({
-                where: { id: courseData.id },
-                update: {},
-                create: {
-                    id: courseData.id,
-                    title: courseData.title,
-                    grade: courseData.grade,
-                    isCentral: false,
-                    schoolId: courseData.schoolId
-                }
-            });
-            yield prisma_1.default.lesson.upsert({
-                where: { id: lessonData.id },
-                update: {
-                    title: lessonData.title,
-                    courseId: courseData.id,
-                    questions: lessonData.questions,
-                    slides: lessonData.slides,
-                    attachments: lessonData.attachments,
-                    isCentral: false,
-                    isVisible: true
-                },
-                create: {
-                    id: lessonData.id,
-                    courseId: courseData.id,
-                    title: lessonData.title,
-                    questions: lessonData.questions,
-                    slides: lessonData.slides,
-                    attachments: lessonData.attachments,
-                    isCentral: false,
-                    isVisible: true
-                }
-            });
-            res.json({ success: true, message: 'Lesson Factors injected successfully from EMBEDDED payload!' });
-        }
-        else {
-            res.json({ success: false, message: 'Invalid format in payload.' });
-        }
-    }
-    catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-}));
 // ??? DANGER: WIPE SEEDED DUMMY DATA ONLY
 // Requires body: { confirm: 'WIPE_DUMMY_DATA' }. Supports dry_run: true to preview.
 router.post('/api/system/wipe-seeded-dummy-data', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {

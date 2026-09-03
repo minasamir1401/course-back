@@ -12,7 +12,7 @@ import {
   statsCache, CACHE_TTL, setCache, getStudentGradeAndStage, examMatchesStudent,
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
-  normalizeLegacyCourses
+  normalizeLegacyCourses, isLoginRateLimited, recordFailedLogin, clearLoginAttempts
 } from '../shared';
 
 declare global {
@@ -82,14 +82,13 @@ router.post('/api/auth/register', async (req: any, res: any) => {
 router.post('/api/auth/login', async (req: any, res: any) => {
   try {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const now = Date.now();
-    const existingAttempt = loginAttempts.get(ip);
-    if (existingAttempt) {
-      if (now - existingAttempt.firstAttemptAt > LOGIN_WINDOW_MS) {
-        loginAttempts.delete(ip);
-      } else if (existingAttempt.count >= LOGIN_MAX_ATTEMPTS) {
-        return res.status(429).json({ error: 'محاولات دخول كثيرة جداً. يرجى الانتظار والمحاولة لاحقاً.' });
-      }
+
+    // Check cluster-aware rate limit (Redis + local memory)
+    const rateLimitCheck = await isLoginRateLimited(ip);
+    if (rateLimitCheck.isLimited) {
+      return res.status(429).json({
+        error: `محاولات دخول كثيرة جداً. يرجى الانتظار والمحاولة لاحقاً بعد ${rateLimitCheck.remainingMinutes} دقيقة.`
+      });
     }
 
     const { username, password } = req.body;
@@ -101,29 +100,17 @@ router.post('/api/auth/login', async (req: any, res: any) => {
     const user = await prisma.user.findUnique({ where: { username } });
 
     if (!user || user.deletedAt) {
-      const attempt = loginAttempts.get(ip);
-      if (!attempt || now - attempt.firstAttemptAt > LOGIN_WINDOW_MS) {
-        loginAttempts.set(ip, { count: 1, firstAttemptAt: now });
-      } else {
-        attempt.count += 1;
-        loginAttempts.set(ip, attempt);
-      }
+      await recordFailedLogin(ip);
       return res.status(400).json({ error: 'Invalid username or password.' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      const attempt = loginAttempts.get(ip);
-      if (!attempt || now - attempt.firstAttemptAt > LOGIN_WINDOW_MS) {
-        loginAttempts.set(ip, { count: 1, firstAttemptAt: now });
-      } else {
-        attempt.count += 1;
-        loginAttempts.set(ip, attempt);
-      }
+      await recordFailedLogin(ip);
       return res.status(400).json({ error: 'Invalid username or password.' });
     }
 
-    loginAttempts.delete(ip);
+    await clearLoginAttempts(ip);
 
     // Generate token payload: user_id, role, school_id, grade
     const token = jwt.sign(

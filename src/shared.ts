@@ -6,6 +6,14 @@ import crypto from 'crypto';
 import multer from 'multer';
 import type { SignOptions } from 'jsonwebtoken';
 import prisma from './lib/prisma';
+import {
+  cacheGetJSON,
+  cacheSetJSON,
+  cacheDelete,
+  checkRateLimit,
+  resetRateLimit,
+  isRedisActive,
+} from './lib/redis';
 
 if (!process.env.JWT_SECRET) {
   console.warn('⚠️ WARNING: JWT_SECRET environment variable is missing!');
@@ -61,7 +69,8 @@ const multerStorage = multer.diskStorage({
 
 export const multerUpload = multer({
   storage: multerStorage,
-  limits: { fileSize: 1000 * 1024 * 1024 }, // 1 GB limit
+  // 150 MB max limit prevents heap memory exhaustion (OOM) and protects VPS disk space
+  limits: { fileSize: 150 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
       cb(null, true);
@@ -912,7 +921,7 @@ export async function normalizeLegacyCourses() {
   }
 }
 
-// Stats Cache to improve performance
+// Stats Cache to improve performance (mirrored with Redis for cluster mode)
 export const statsCache = new Map<string, { data: any, timestamp: number }>();
 export const CACHE_TTL = 300 * 1000; // 5 minutes cache
 
@@ -923,7 +932,11 @@ export const setCache = (key: string, data: any) => {
       statsCache.delete(firstKey);
     }
   }
-  statsCache.set(key, { data, timestamp: Date.now() });
+  const entry = { data, timestamp: Date.now() };
+  statsCache.set(key, entry);
+
+  // Sync to Redis cluster asynchronously with TTL (5 mins)
+  cacheSetJSON(`stats:${key}`, entry, Math.floor(CACHE_TTL / 1000)).catch(() => {});
 };
 
 export const getCache = (key: string) => {
@@ -935,6 +948,81 @@ export const getCache = (key: string) => {
     return cached;
   }
   return undefined;
+};
+
+/**
+ * Async cache getter that checks Redis before falling back to local memory.
+ */
+export const getCacheAsync = async (key: string): Promise<{ data: any; timestamp: number } | undefined> => {
+  try {
+    const fromRedis = await cacheGetJSON<{ data: any; timestamp: number }>(`stats:${key}`);
+    if (fromRedis && fromRedis.data !== undefined) {
+      statsCache.set(key, fromRedis);
+      return fromRedis;
+    }
+  } catch {
+    // Fall back to local memory
+  }
+  return getCache(key);
+};
+
+/**
+ * Cluster-aware Rate Limiting for Login
+ */
+export const isLoginRateLimited = async (ip: string): Promise<{ isLimited: boolean; remainingMinutes: number }> => {
+  const redisKey = `ratelimit:login:${ip}`;
+  const now = Date.now();
+
+  // 1. Check local memory
+  const localAttempt = loginAttempts.get(ip);
+  if (localAttempt && localAttempt.count >= LOGIN_MAX_ATTEMPTS && (now - localAttempt.firstAttemptAt < LOGIN_WINDOW_MS)) {
+    const remainingMs = LOGIN_WINDOW_MS - (now - localAttempt.firstAttemptAt);
+    return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
+  }
+
+  // 2. Check Redis if active
+  if (isRedisActive()) {
+    try {
+      const redisStatus = await cacheGetJSON<{ count: number; firstAttemptAt: number }>(redisKey);
+      if (redisStatus && redisStatus.count >= LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < LOGIN_WINDOW_MS)) {
+        const remainingMs = LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
+        return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  return { isLimited: false, remainingMinutes: 0 };
+};
+
+export const recordFailedLogin = async (ip: string): Promise<void> => {
+  const now = Date.now();
+  const redisKey = `ratelimit:login:${ip}`;
+
+  // 1. Update local memory
+  const localAttempt = loginAttempts.get(ip);
+  let newCount = 1;
+  let firstAttemptAt = now;
+
+  if (localAttempt && now - localAttempt.firstAttemptAt <= LOGIN_WINDOW_MS) {
+    newCount = localAttempt.count + 1;
+    firstAttemptAt = localAttempt.firstAttemptAt;
+  }
+  loginAttempts.set(ip, { count: newCount, firstAttemptAt });
+
+  // 2. Update Redis
+  if (isRedisActive()) {
+    const windowSecs = Math.floor(LOGIN_WINDOW_MS / 1000);
+    await cacheSetJSON(redisKey, { count: newCount, firstAttemptAt }, windowSecs).catch(() => {});
+  }
+};
+
+export const clearLoginAttempts = async (ip: string): Promise<void> => {
+  loginAttempts.delete(ip);
+  if (isRedisActive()) {
+    await cacheDelete(`ratelimit:login:${ip}`).catch(() => {});
+  }
 };
 
 // Simple In-Memory Mutex to prevent double-click submissions (Idempotency)

@@ -518,10 +518,11 @@ router.post('/api/school/import/excel', auth_1.verifyToken, (0, auth_1.checkRole
         const workbook = xlsx.readFile(req.file.path);
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const rows = xlsx.utils.sheet_to_json(worksheet, { defval: '' });
-        if (rows.length === 0) {
+        const rawRows = xlsx.utils.sheet_to_json(worksheet, { defval: '' });
+        if (rawRows.length === 0) {
             return res.status(400).json({ error: 'The uploaded file is empty' });
         }
+        const rows = (0, shared_1.sanitizeDeep)(rawRows);
         let createdCourses = 0;
         let createdLessons = 0;
         // Group rows by Course Title
@@ -660,8 +661,8 @@ router.get('/api/school/export/course/:id', auth_1.verifyToken, (0, auth_1.check
             where: whereClause,
             include: {
                 lessons: {
-                    orderBy: { order: 'asc' },
-                    include: { blocks: { orderBy: { order: 'asc' } } }
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+                    include: { blocks: { orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] } }
                 }
             }
         });
@@ -774,7 +775,7 @@ router.get('/api/school/export/lesson/:id', auth_1.verifyToken, (0, auth_1.check
         const schoolId = req.user.role === 'SUPER_ADMIN' ? undefined : req.user.schoolId;
         const lesson = yield prisma.lesson.findFirst({
             where: { id: lessonId },
-            include: { course: true, blocks: { orderBy: { order: 'asc' } } }
+            include: { course: true, blocks: { orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] } }
         });
         if (!lesson) {
             return res.status(404).json({ error: 'Lesson not found' });
@@ -889,16 +890,16 @@ router.get('/api/school/export/json/course/:id', auth_1.verifyToken, (0, auth_1.
             where: whereClause,
             include: {
                 lessons: {
-                    orderBy: { order: 'asc' },
+                    orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
                     include: {
                         blocks: {
-                            orderBy: { order: 'asc' },
-                            include: { sections: { orderBy: { order: 'asc' } } }
+                            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+                            include: { sections: { orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] } }
                         }
                     }
                 },
                 exams: {
-                    include: { questions: { orderBy: { order: 'asc' } } }
+                    include: { questions: { orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] } }
                 },
                 schools: { select: { id: true, name: true } },
                 school: { select: { id: true, name: true } }
@@ -1045,6 +1046,7 @@ router.post('/api/school/import/json/course', auth_1.verifyToken, (0, auth_1.che
         if (!jsonData || !jsonData.course || !jsonData.course.title) {
             return res.status(400).json({ error: 'Invalid course JSON structure' });
         }
+        jsonData = (0, shared_1.sanitizeDeep)(jsonData);
         const schoolId = req.user.role === 'SUPER_ADMIN' ? undefined : req.user.schoolId;
         const courseData = jsonData.course;
         const lessonsList = Array.isArray(jsonData.lessons) ? jsonData.lessons : [];

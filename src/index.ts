@@ -10,7 +10,18 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import * as Sentry from '@sentry/node';
 import prisma from './lib/prisma';
+
+// Initialize Centralized Error Tracking if SENTRY_DSN is configured
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  });
+  console.log('✅ [Sentry] Error monitoring and performance tracing initialized.');
+}
 
 import {
   allowedOrigins, isOriginAllowed, ensurePerformanceIndexes, normalizeLegacyCourses,
@@ -215,6 +226,9 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
   // 4. Default handler for other unhandled errors
   console.error(`[ERROR] Unhandled Error [${req.method} ${req.url}]:`, err);
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(err);
+  }
   return res.status(err.status || 500).json({
     error: 'Internal Server Error',
     message: process.env.NODE_ENV === 'production' ? 'An unexpected error occurred.' : err.message
@@ -223,11 +237,13 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 // Process-level precautions
 process.on('uncaughtException', (error) => {
+  if (process.env.SENTRY_DSN) Sentry.captureException(error);
   console.error('[CRITICAL] Uncaught Exception:', error);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
+  if (process.env.SENTRY_DSN) Sentry.captureException(reason);
   console.error('[WARN] Unhandled Promise Rejection at:', promise, 'reason:', reason);
 });
 
@@ -521,237 +537,6 @@ async function recoverEmptyCourses() {
   }
 }
 
-// SAT-MATH SCHOOL RECOVERY
-async function recoverSATMathSchool() {
-  const SAT_PATTERNS = ['SAT-MATH', 'SAT_MATH', 'SAT-Math', 'sat-math', 'sat_math'];
-  console.log('[SAT Recovery] Checking for SAT-MATH school in database...');
-
-  try {
-    const existingSchool = await prisma.school.findFirst({
-      where: {
-        OR: [
-          { name: { contains: 'SAT-MATH' } },
-          { name: { contains: 'SAT_MATH' } },
-          { name: { contains: 'SAT-Math' } },
-          { name: { contains: 'sat-math' } },
-          { name: { contains: 'sat_math' } }
-        ]
-      }
-    });
-
-    if (existingSchool) {
-      console.log(`[SAT Recovery] SAT-MATH school found in DB: "${existingSchool.name}" (id: ${existingSchool.id}). No recovery needed.`);
-      return;
-    }
-
-    console.log('[SAT Recovery] SAT-MATH school NOT found in DB. Searching backup files...');
-    const searchDirs = [BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
-    const backupFiles: string[] = [];
-
-    for (const dir of searchDirs) {
-      try {
-        if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-          const entries = fs.readdirSync(dir);
-          for (const file of entries) {
-            if (file.endsWith('.json') && (file.startsWith('backup-') || file.startsWith('backup_') || file.includes('backup'))) {
-              const full = path.join(dir, file);
-              if (!backupFiles.includes(full)) backupFiles.push(full);
-            }
-          }
-        }
-      } catch { /* skip */ }
-    }
-
-    backupFiles.sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
-    console.log(`[SAT Recovery] Found ${backupFiles.length} backup file(s) to scan.`);
-
-    for (const bFile of backupFiles) {
-      try {
-        const content = fs.readFileSync(bFile, 'utf-8');
-        const backupObj = JSON.parse(content);
-        const data = backupObj.data || backupObj;
-        const schools: any[] = Array.isArray(data.school) ? data.school : [];
-
-        const satSchool = schools.find((s: any) =>
-          SAT_PATTERNS.some(p => typeof s.name === 'string' && s.name.toLowerCase().includes(p.toLowerCase()))
-        );
-
-        if (!satSchool) continue;
-
-        console.log(`[SAT Recovery] Found SAT-MATH school in backup: ${path.basename(bFile)}`);
-        const doubleCheck = await prisma.school.findUnique({ where: { id: satSchool.id } });
-        if (doubleCheck) return;
-
-        await prisma.school.create({
-          data: {
-            id: satSchool.id,
-            name: satSchool.name,
-            subdomain: satSchool.subdomain ?? undefined,
-            themeColor: satSchool.themeColor ?? null,
-            status: satSchool.status ?? 'ACTIVE',
-            createdAt: satSchool.createdAt ? new Date(satSchool.createdAt) : new Date(),
-            updatedAt: satSchool.updatedAt ? new Date(satSchool.updatedAt) : new Date()
-          }
-        });
-        console.log(`[SAT Recovery] School "${satSchool.name}" restored to DB.`);
-
-        const schoolUsers: any[] = Array.isArray(data.user)
-          ? data.user.filter((u: any) => u.schoolId === satSchool.id)
-          : [];
-
-        let restoredUsers = 0;
-        for (const u of schoolUsers) {
-          try {
-            const exists = await prisma.user.findUnique({ where: { id: u.id } });
-            if (!exists) {
-              await prisma.user.create({
-                data: { ...u, createdAt: new Date(u.createdAt), updatedAt: new Date(u.updatedAt) }
-              });
-              restoredUsers++;
-            }
-          } catch (ue: any) {
-            console.warn(`   Could not restore user ${u.id}: ${ue.message}`);
-          }
-        }
-        if (restoredUsers > 0) console.log(`[SAT Recovery] Restored ${restoredUsers} user(s).`);
-      } catch (e: any) {
-        console.error(`   Error scanning backup ${path.basename(bFile)}:`, e.message);
-      }
-    }
-  } catch (error: any) {
-    console.error('[SAT Recovery] Error during recovery process:', error.message);
-  }
-}
-
-// Auto-Recover specific missing lesson
-async function autoRecoverSpecificLesson() {
-  const LESSON_TITLE = "Adding , subtracting, multiplying and dividing whole numbers";
-  console.log(`[Auto-Recovery] Checking for missing lesson: "${LESSON_TITLE}"`);
-
-  try {
-    const existingLesson = await prisma.lesson.findFirst({
-      where: {
-        title: {
-          contains: "whole numbers",
-          mode: 'insensitive'
-        }
-      }
-    });
-
-    if (existingLesson && existingLesson.title.includes('subtracting')) {
-      console.log(`[Auto-Recovery] Lesson already exists in DB (ID: ${existingLesson.id}). No recovery needed.`);
-      return;
-    }
-
-    console.log(`[Auto-Recovery] Lesson not found in DB. Searching backups...`);
-
-    // 1. Check local backups first
-    const searchDirs = [BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
-    const backupFiles: string[] = [];
-    for (const dir of searchDirs) {
-      try {
-        if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-          const entries = fs.readdirSync(dir);
-          for (const file of entries) {
-            if (file.endsWith('.json') && (file.startsWith('backup-') || file.startsWith('backup_'))) {
-              const full = path.join(dir, file);
-              if (!backupFiles.includes(full)) backupFiles.push(full);
-            }
-          }
-        }
-      } catch { /* skip */ }
-    }
-
-    let targetLesson: any = null;
-
-    backupFiles.sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
-
-    for (const bFile of backupFiles) {
-      if (targetLesson) break;
-      try {
-        const content = fs.readFileSync(bFile, 'utf-8');
-        const backupObj = JSON.parse(content);
-        const data = backupObj.data || backupObj;
-
-        const backupLessons: any[] = Array.isArray(data.lesson) ? data.lesson : [];
-        const found = backupLessons.find((l: any) => l.title === LESSON_TITLE || (l.title && l.title.includes('subtracting, multiplying') && l.title.includes('whole numbers')));
-        if (found) {
-          console.log(`[Auto-Recovery] Found lesson in local backup: ${path.basename(bFile)}`);
-          targetLesson = found;
-        }
-      } catch (err) { }
-    }
-
-    // 2. If not found locally, check Cloud Backups
-    if (!targetLesson) {
-      console.log(`[Auto-Recovery] Not found locally. Checking Cloud Backups...`);
-      try {
-        const { getCloudBackups } = require('./lib/db-backup');
-        const cloudRecords = await getCloudBackups();
-
-        if (cloudRecords && cloudRecords.length > 0) {
-          for (const record of cloudRecords) {
-            if (targetLesson) break;
-            const data = record.data?.data || record.data;
-            const backupLessons: any[] = Array.isArray(data?.lesson) ? data.lesson : [];
-            const found = backupLessons.find((l: any) => l.title === LESSON_TITLE || (l.title && l.title.includes('subtracting, multiplying') && l.title.includes('whole numbers')));
-            if (found) {
-              console.log(`[Auto-Recovery] Found lesson in Cloud Backup from ${record.created_at}`);
-              targetLesson = found;
-            }
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[Auto-Recovery] Failed to search Cloud Backup:`, err.message);
-      }
-    }
-
-    if (!targetLesson) {
-      console.log(`[Auto-Recovery] Lesson "${LESSON_TITLE}" could not be found in any local or cloud backup.`);
-      return;
-    }
-
-    // 3. Restore the lesson
-    const existingCourse = await prisma.course.findUnique({ where: { id: targetLesson.courseId } });
-    if (!existingCourse) {
-      console.warn(`[Auto-Recovery] Parent course (${targetLesson.courseId}) is missing. Cannot restore lesson without course.`);
-      return;
-    }
-
-    await prisma.lesson.upsert({
-      where: { id: targetLesson.id },
-      update: {
-        ...targetLesson,
-        updatedAt: new Date(),
-        publishDate: targetLesson.publishDate ? new Date(targetLesson.publishDate) : null,
-        cutOffDate: targetLesson.cutOffDate ? new Date(targetLesson.cutOffDate) : null
-      },
-      create: {
-        ...targetLesson,
-        createdAt: new Date(targetLesson.createdAt),
-        updatedAt: new Date(),
-        publishDate: targetLesson.publishDate ? new Date(targetLesson.publishDate) : null,
-        cutOffDate: targetLesson.cutOffDate ? new Date(targetLesson.cutOffDate) : null
-      }
-    });
-
-    console.log(`[Auto-Recovery] Successfully restored lesson "${targetLesson.title}" to course "${existingCourse.title}"!`);
-  } catch (error: any) {
-    console.error('[Auto-Recovery] Error recovering specific lesson:', error.message);
-  }
-}
-
-// Keep Cloud Backup Awake and Sync Missing Courses
-/* function startCloudBackupKeepAlive() {
-  console.log('[Backup] Started Cloud Backup Keep-Alive service (ping every 5 minutes)');
-  // 5 minutes = 300,000 ms
-  setInterval(() => {
-    keepCloudBackupAlive();
-    // USER REQUEST: Do not merge Cloud Backup data back into PostgreSQL automatically
-    // syncMissingCloudCourses().catch(e => console.error('[Auto-Sync] Error:', e.message));
-  }, 5 * 60 * 1000);
-} */
-
 const startServer = async () => {
   try {
     console.log('[DB] Testing database connection...');
@@ -761,12 +546,16 @@ const startServer = async () => {
     console.error('[DB] Connection failed:', error.message);
   }
 
-  app.get('/api/run-cleanup-duplicate-questions', verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
+  // Safe soft-delete cleanup for duplicate questions (preserves StudentAnswers)
+  app.all('/api/run-cleanup-duplicate-questions', verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
     try {
-      const exams = await prisma.exam.findMany({ select: { id: true, title: true } });
-      let totalDeleted = 0;
+      const exams = await prisma.exam.findMany({ where: { deletedAt: null }, select: { id: true, title: true } });
+      let totalSoftDeleted = 0;
       for (const exam of exams) {
-        const questions = await prisma.question.findMany({ where: { examId: exam.id }, orderBy: { createdAt: 'asc' } });
+        const questions = await prisma.question.findMany({
+          where: { examId: exam.id, deletedAt: null },
+          orderBy: { createdAt: 'asc' }
+        });
         const seenText = new Set<string>();
         const duplicatesIds: string[] = [];
         for (const q of questions) {
@@ -776,11 +565,14 @@ const startServer = async () => {
           else seenText.add(signature);
         }
         if (duplicatesIds.length > 0) {
-          const deleted = await prisma.question.deleteMany({ where: { id: { in: duplicatesIds } } });
-          totalDeleted += deleted.count;
+          const result = await prisma.question.updateMany({
+            where: { id: { in: duplicatesIds }, deletedAt: null },
+            data: { deletedAt: new Date() }
+          });
+          totalSoftDeleted += result.count;
         }
       }
-      res.json({ success: true, message: `Cleanup complete. Deleted ${totalDeleted} duplicates across all exams.` });
+      res.json({ success: true, message: `Cleanup complete. Soft-deleted ${totalSoftDeleted} duplicate questions to recycle bin.` });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -845,3 +637,6 @@ process.on('SIGINT', async () => {
 });
 
 startServer();
+
+export { app, startServer };
+export default app;
