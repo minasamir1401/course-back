@@ -42,6 +42,17 @@ async function main() {
     console.log('[startup] Skipping Prisma schema sync to avoid P3005 on an already-populated production database.');
   }
 
+  // Automatically check and clean invalid indexes before PM2 cluster workers start
+  try {
+    const cleanIndexesScript = path.join(rootDir, 'dist', 'scripts', 'clean-invalid-indexes.js');
+    if (fs.existsSync(cleanIndexesScript)) {
+      console.log('[startup] Running automatic index maintenance (clean invalid indexes & optimize)...');
+      await spawnCommand('node', [cleanIndexesScript]);
+    }
+  } catch (idxError) {
+    console.warn('[startup] Non-fatal index maintenance notice:', idxError.message || idxError);
+  }
+
   await spawnCommand('pm2-runtime', ['start', 'dist/index.js', '-i', 'max', '--max-memory-restart', '1024M']);
 }
 

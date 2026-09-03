@@ -759,16 +759,22 @@ const startServer = () => __awaiter(void 0, void 0, void 0, function* () {
             (0, cronService_1.initCronJobs)();
             // Auto-recover missing slides (Disabled â€” completed its job)
             // autoRecoverMissingSlides().catch((e: any) => console.error('[Auto-Recover-Slides]:', e.message));
-            console.log('âœ… [Deferred Startup] All background tasks launched.');
-        }, 30000); // 30 seconds delay â€” safely after healthcheck passes
+            console.log('✅ [Deferred Startup] All background tasks launched.');
+        }, 30000); // 30 seconds delay — safely after healthcheck passes
     });
-    // These are fast DB queries â€” run immediately (no deferral needed)
-    (0, shared_1.ensurePerformanceIndexes)()
-        .then(() => console.log('âœ… Performance indexes are ready'))
-        .catch((error) => console.error('âš ï¸ Performance index setup failed:', error.message));
-    initializeStartupData()
-        .then(() => console.log('âœ… Startup data initialized'))
-        .catch((error) => console.error('âš ï¸ Startup data initialization failed:', error.message));
+    // In PM2 cluster mode, only Worker #0 runs startup DDL and data initialization
+    const isPrimaryWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
+    if (isPrimaryWorker) {
+        (0, shared_1.ensurePerformanceIndexes)()
+            .then(() => console.log('✅ Performance indexes are ready'))
+            .catch((error) => console.error('⚠️ Performance index setup failed:', error.message));
+        initializeStartupData()
+            .then(() => console.log('✅ Startup data initialized'))
+            .catch((error) => console.error('⚠️ Startup data initialization failed:', error.message));
+    }
+    else {
+        console.log(`[Startup] PM2 worker #${process.env.NODE_APP_INSTANCE} online — deferred tasks & DDL handled by worker #0.`);
+    }
 });
 // Graceful shutdown handling
 process.on('SIGTERM', () => __awaiter(void 0, void 0, void 0, function* () {

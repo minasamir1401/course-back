@@ -639,6 +639,26 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         const usedExistingIds = new Set<string>();
         const incomingQuestionIds: string[] = [];
 
+        // Pre-query all currently valid modules and subExams for this exam to ensure 100% FK safety
+        const existingExamModules = await tx.examModule.findMany({
+          where: { examId: id },
+          select: { id: true }
+        });
+        const existingSubExams = await tx.subExam.findMany({
+          where: { module: { examId: id } },
+          select: { id: true }
+        });
+
+        const validModuleIdSet = new Set<string>([
+          ...existingExamModules.map(m => m.id),
+          ...(modulesProvided ? incomingModuleIds : [])
+        ]);
+
+        const validSubExamIdSet = new Set<string>([
+          ...existingSubExams.map(s => s.id),
+          ...(modulesProvided ? incomingSubExamIds : [])
+        ]);
+
         // ✅ KEY FIX: Track which IDs the client explicitly sent in the payload
         // We only soft-delete questions the client KNEW about (had their ID) but chose to remove.
         // Questions sent without an ID are new — they never trigger deletions.
@@ -649,6 +669,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             continue;
           }
           const newExplanation = formatExplanation(q);
+
+          const cleanModuleId = q.moduleId ? sanitizeHtml(q.moduleId) : null;
+          const cleanSubExamId = q.subExamId ? sanitizeHtml(q.subExamId) : null;
+
           const qData = {
             text: extractAndSaveBase64Images(sanitizeHtml(q.text || '')),
             type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type === 'QUESTION' && q.label ? q.label : q.type) ? sanitizeHtml(q.type === 'QUESTION' && q.label ? q.label : q.type) : 'MCQ',
@@ -674,16 +698,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? sanitizeHtml(q.estimatedTime) : null) : undefined,
             explanation: newExplanation,
             imageUrl: q.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(q.imageUrl)) : null,
-            // ✅ FK-SAFE: only keep moduleId if it belongs to an incoming module.
-            // If the question references a module that isn't in the payload (stale ID,
-            // deleted module, or frontend race), treat it as unassigned (null) so we
-            // never write a dangling foreign key and trigger P2003.
-            moduleId: modulesProvided
-              ? ((q.moduleId && incomingModuleIds.includes(sanitizeHtml(q.moduleId))) ? sanitizeHtml(q.moduleId) : null)
-              : (q.moduleId ? sanitizeHtml(q.moduleId) : null),
-            subExamId: modulesProvided
-              ? ((q.subExamId && incomingSubExamIds.includes(sanitizeHtml(q.subExamId))) ? sanitizeHtml(q.subExamId) : null)
-              : (q.subExamId ? sanitizeHtml(q.subExamId) : null),
+            // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in validModuleIdSet / validSubExamIdSet.
+            // If stale ID, deleted module, or autosave race without modules payload, set to null to avoid P2003.
+            moduleId: cleanModuleId && validModuleIdSet.has(cleanModuleId) ? cleanModuleId : null,
+            subExamId: cleanSubExamId && validSubExamIdSet.has(cleanSubExamId) ? cleanSubExamId : null,
             order: i
           };
 

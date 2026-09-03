@@ -588,6 +588,23 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     .filter((questionId) => !!questionId && existingIds.has(questionId) && !explicitDeletedIds.has(questionId)));
                 const usedExistingIds = new Set();
                 const incomingQuestionIds = [];
+                // Pre-query all currently valid modules and subExams for this exam to ensure 100% FK safety
+                const existingExamModules = yield tx.examModule.findMany({
+                    where: { examId: id },
+                    select: { id: true }
+                });
+                const existingSubExams = yield tx.subExam.findMany({
+                    where: { module: { examId: id } },
+                    select: { id: true }
+                });
+                const validModuleIdSet = new Set([
+                    ...existingExamModules.map(m => m.id),
+                    ...(modulesProvided ? incomingModuleIds : [])
+                ]);
+                const validSubExamIdSet = new Set([
+                    ...existingSubExams.map(s => s.id),
+                    ...(modulesProvided ? incomingSubExamIds : [])
+                ]);
                 // ✅ KEY FIX: Track which IDs the client explicitly sent in the payload
                 // We only soft-delete questions the client KNEW about (had their ID) but chose to remove.
                 // Questions sent without an ID are new — they never trigger deletions.
@@ -598,6 +615,8 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         continue;
                     }
                     const newExplanation = formatExplanation(q);
+                    const cleanModuleId = q.moduleId ? (0, shared_1.sanitizeHtml)(q.moduleId) : null;
+                    const cleanSubExamId = q.subExamId ? (0, shared_1.sanitizeHtml)(q.subExamId) : null;
                     const qData = {
                         text: (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.text || '')),
                         type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type === 'QUESTION' && q.label ? q.label : q.type) ? (0, shared_1.sanitizeHtml)(q.type === 'QUESTION' && q.label ? q.label : q.type) : 'MCQ',
@@ -623,16 +642,10 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? (0, shared_1.sanitizeHtml)(q.estimatedTime) : null) : undefined,
                         explanation: newExplanation,
                         imageUrl: q.imageUrl ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.imageUrl)) : null,
-                        // ✅ FK-SAFE: only keep moduleId if it belongs to an incoming module.
-                        // If the question references a module that isn't in the payload (stale ID,
-                        // deleted module, or frontend race), treat it as unassigned (null) so we
-                        // never write a dangling foreign key and trigger P2003.
-                        moduleId: modulesProvided
-                            ? ((q.moduleId && incomingModuleIds.includes((0, shared_1.sanitizeHtml)(q.moduleId))) ? (0, shared_1.sanitizeHtml)(q.moduleId) : null)
-                            : (q.moduleId ? (0, shared_1.sanitizeHtml)(q.moduleId) : null),
-                        subExamId: modulesProvided
-                            ? ((q.subExamId && incomingSubExamIds.includes((0, shared_1.sanitizeHtml)(q.subExamId))) ? (0, shared_1.sanitizeHtml)(q.subExamId) : null)
-                            : (q.subExamId ? (0, shared_1.sanitizeHtml)(q.subExamId) : null),
+                        // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in validModuleIdSet / validSubExamIdSet.
+                        // If stale ID, deleted module, or autosave race without modules payload, set to null to avoid P2003.
+                        moduleId: cleanModuleId && validModuleIdSet.has(cleanModuleId) ? cleanModuleId : null,
+                        subExamId: cleanSubExamId && validSubExamIdSet.has(cleanSubExamId) ? cleanSubExamId : null,
                         order: i
                     };
                     const incomingFingerprint = (0, contentReconciliation_1.buildQuestionFingerprint)(qData);

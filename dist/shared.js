@@ -825,41 +825,89 @@ const buildStudentCourseWhere = (student) => {
 exports.buildStudentCourseWhere = buildStudentCourseWhere;
 function ensurePerformanceIndexes() {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b;
+        var _a, _b, _c;
         if (process.env.SKIP_PERFORMANCE_INDEXES === 'true')
             return;
+        // In PM2 cluster mode, only Worker #0 executes DDL index operations
+        if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== '0') {
+            console.log(`[DB Index Setup] PM2 worker #${process.env.NODE_APP_INSTANCE} — skipping index check (worker #0 handles DDL).`);
+            return;
+        }
         const isPostgres = ((_a = process.env.DATABASE_URL) === null || _a === void 0 ? void 0 : _a.startsWith('postgres')) || ((_b = process.env.DATABASE_URL) === null || _b === void 0 ? void 0 : _b.startsWith('postgresql'));
-        const statements = [
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_isCentral_grade_idx" ON "Course" ("isCentral", "grade")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_schoolId_grade_idx" ON "Course" ("schoolId", "grade")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_subject_idx" ON "Course" ("subject")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "LessonProgress_userId_isCompleted_idx" ON "LessonProgress" ("userId", "isCompleted")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "LessonProgress_lessonId_idx" ON "LessonProgress" ("lessonId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "CourseProgress_userId_idx" ON "CourseProgress" ("userId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "CourseProgress_courseId_idx" ON "CourseProgress" ("courseId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "StudentEnrollment_courseId_idx" ON "StudentEnrollment" ("courseId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "TeacherCourse_courseId_idx" ON "TeacherCourse" ("courseId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_createdAt_idx" ON "Exam" ("createdAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_schoolId_createdAt_idx" ON "Exam" ("schoolId", "createdAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_isCentral_createdAt_idx" ON "Exam" ("isCentral", "createdAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_userId_createdAt_idx" ON "ExamSubmission" ("userId", "createdAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_examId_userId_idx" ON "ExamSubmission" ("examId", "userId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_idx" ON "Question" ("examId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_deletedAt_idx" ON "Question" ("examId", "deletedAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_idx" ON "Question" ("subExamId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_deletedAt_idx" ON "Question" ("subExamId", "deletedAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_moduleId_idx" ON "Question" ("moduleId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_deletedAt_idx" ON "Question" ("deletedAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_examId_idx" ON "ExamModule" ("examId")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "SubExam_moduleId_idx" ON "SubExam" ("moduleId")'
-        ];
-        for (const statement of statements) {
-            try {
-                const query = isPostgres ? statement : statement.replace(' CONCURRENTLY', '');
-                yield prisma_1.default.$executeRawUnsafe(query);
+        let advisoryLockAcquired = false;
+        try {
+            if (isPostgres) {
+                try {
+                    const lockResult = yield prisma_1.default.$queryRawUnsafe('SELECT pg_try_advisory_lock(74839201) as locked;');
+                    advisoryLockAcquired = Boolean((_c = lockResult === null || lockResult === void 0 ? void 0 : lockResult[0]) === null || _c === void 0 ? void 0 : _c.locked);
+                    if (!advisoryLockAcquired) {
+                        console.log('[DB Index Setup] Another instance is already maintaining indexes. Skipping.');
+                        return;
+                    }
+                    // Clean any invalid indexes leftover from past deadlocks
+                    const invalidIndexes = yield prisma_1.default.$queryRawUnsafe(`
+          SELECT c.relname as index_name
+          FROM pg_index i
+          JOIN pg_class c ON c.oid = i.indexrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE i.indisvalid = false AND n.nspname = 'public';
+        `);
+                    if (Array.isArray(invalidIndexes) && invalidIndexes.length > 0) {
+                        for (const row of invalidIndexes) {
+                            console.warn(`[DB Index Setup] Dropping invalid index: "${row.index_name}"`);
+                            try {
+                                yield prisma_1.default.$executeRawUnsafe(`DROP INDEX CONCURRENTLY IF EXISTS "${row.index_name}"`);
+                            }
+                            catch (dropErr) {
+                                console.warn(`[DB Index Setup] Failed to drop invalid index "${row.index_name}": ${dropErr.message}`);
+                            }
+                        }
+                    }
+                }
+                catch (lockErr) {
+                    console.warn(`[DB Index Setup] Advisory lock/cleanup notice: ${lockErr.message}`);
+                }
             }
-            catch (idxErr) {
-                console.warn(`[DB Index Setup] Non-fatal notice: ${idxErr.message}`);
+            const statements = [
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_isCentral_grade_idx" ON "Course" ("isCentral", "grade")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_schoolId_grade_idx" ON "Course" ("schoolId", "grade")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_subject_idx" ON "Course" ("subject")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "LessonProgress_userId_isCompleted_idx" ON "LessonProgress" ("userId", "isCompleted")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "LessonProgress_lessonId_idx" ON "LessonProgress" ("lessonId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "CourseProgress_userId_idx" ON "CourseProgress" ("userId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "CourseProgress_courseId_idx" ON "CourseProgress" ("courseId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "StudentEnrollment_courseId_idx" ON "StudentEnrollment" ("courseId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "TeacherCourse_courseId_idx" ON "TeacherCourse" ("courseId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_createdAt_idx" ON "Exam" ("createdAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_schoolId_createdAt_idx" ON "Exam" ("schoolId", "createdAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_isCentral_createdAt_idx" ON "Exam" ("isCentral", "createdAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_userId_createdAt_idx" ON "ExamSubmission" ("userId", "createdAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_examId_userId_idx" ON "ExamSubmission" ("examId", "userId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_idx" ON "Question" ("examId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_deletedAt_idx" ON "Question" ("examId", "deletedAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_idx" ON "Question" ("subExamId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_deletedAt_idx" ON "Question" ("subExamId", "deletedAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_moduleId_idx" ON "Question" ("moduleId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_deletedAt_idx" ON "Question" ("deletedAt")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_examId_idx" ON "ExamModule" ("examId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "SubExam_moduleId_idx" ON "SubExam" ("moduleId")'
+            ];
+            for (const statement of statements) {
+                try {
+                    const query = isPostgres ? statement : statement.replace(' CONCURRENTLY', '');
+                    yield prisma_1.default.$executeRawUnsafe(query);
+                }
+                catch (idxErr) {
+                    console.warn(`[DB Index Setup] Non-fatal notice: ${idxErr.message}`);
+                }
+            }
+        }
+        finally {
+            if (isPostgres && advisoryLockAcquired) {
+                try {
+                    yield prisma_1.default.$executeRawUnsafe('SELECT pg_advisory_unlock(74839201);');
+                }
+                catch (_d) { }
             }
         }
     });
