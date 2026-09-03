@@ -868,7 +868,19 @@ export async function ensurePerformanceIndexes() {
   } finally {
     if (isPostgres && advisoryLockAcquired) {
       try {
-        await prisma.$executeRawUnsafe('SELECT pg_advisory_unlock(74839201);');
+        await prisma.$executeRawUnsafe(`
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_locks
+              WHERE locktype = 'advisory'
+                AND (objid = 74839201 OR classid = 74839201)
+                AND pid = pg_backend_pid()
+            ) THEN
+              PERFORM pg_advisory_unlock(74839201);
+            END IF;
+          END $$;
+        `);
       } catch {}
     }
   }
