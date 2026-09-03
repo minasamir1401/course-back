@@ -1,0 +1,1 @@
+const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.exam.findFirst({where: {id: '35de0b61-1fb1-4d33-ba8b-2790d231846f'}}).then(e => console.log(JSON.stringify(e))).finally(() => prisma.$disconnect());

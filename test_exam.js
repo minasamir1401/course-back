@@ -1,0 +1,1 @@
+const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.exam.findUnique({where: {id: '35de0b61-1fb1-4d33-ba8b-2790d231846f'}, include: {schools: true}}).then(e => console.log(JSON.stringify({id: e?.id, title: e?.title, isCentral: e?.isCentral, schoolId: e?.schoolId, schools: e?.schools}))).finally(() => prisma.$disconnect());

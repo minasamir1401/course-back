@@ -1,0 +1,83 @@
+PrismaClientValidationError: 
+Invalid `prisma.exam.update()` invocation:
+
+{
+  where: {
+    id: "fb9a25ec-6aa2-4613-9258-05b4dc49ee74"
+  },
+  data: {
+    title: "mina",
+    description: null,
+    type: "Exam",
+    courseId: undefined,
+    showAnswers: true,
+    resultVisibility: "SHOW_ANSWERS",
+    password: null,
+    startDate: new Date("2026-08-19T05:12:00.000Z"),
+    endDate: new Date("2026-08-20T01:12:00.000Z"),
+    status: "DRAFT",
+    category: "اللغة العربية",
+    grade: "الصف الأول الثانوي",
+    grades: undefined,
+    subjects: undefined,
+    duration: 60,
+    passingScore: 50,
+    attemptsAllowed: 1,
+    isCentral: false,
+    schoolId: null,
+    schools: {
+      set: [],
+      connect: [
+        {
+          id: null
+        }
+      ]
+    }
+  }
+}
+
+Argument `id` is missing.
+PrismaClientValidationError: 
+Invalid `prisma.exam.update()` invocation:
+
+{
+  where: {
+    id: "fb9a25ec-6aa2-4613-9258-05b4dc49ee74"
+  },
+  data: {
+    title: "mina",
+    description: null,
+    type: "Exam",
+    courseId: undefined,
+    showAnswers: true,
+    resultVisibility: "SHOW_ANSWERS",
+    password: null,
+    startDate: new Date("2026-08-19T05:12:00.000Z"),
+    endDate: new Date("2026-08-20T01:12:00.000Z"),
+    status: "DRAFT",
+    category: "اللغة العربية",
+    grade: "الصف الأول الثانوي",
+    grades: undefined,
+    subjects: undefined,
+    duration: 60,
+    passingScore: 50,
+    attemptsAllowed: 1,
+    isCentral: false,
+    schoolId: null,
+    schools: {
+      set: [],
+      connect: [
+        {
+          id: null
+        }
+      ]
+    }
+  }
+}
+
+Argument `id` is missing.
+    at Tn (D:\pj\porj\corse\lms-platform\backend\node_modules\@prisma\client\runtime\library.js:115:6855)
+    at In.handleRequestError (D:\pj\porj\corse\lms-platform\backend\node_modules\@prisma\client\runtime\library.js:122:6510)
+    at In.handleAndLogRequestError (D:\pj\porj\corse\lms-platform\backend\node_modules\@prisma\client\runtime\library.js:122:6188)
+    at In.request (D:\pj\porj\corse\lms-platform\backend\node_modules\@prisma\client\runtime\library.js:122:5896)
+    at async l (D:\pj\porj\corse\lms-platform\backend\node_modules\@prisma\client\runtime\library.js:127:11167)

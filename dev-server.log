@@ -1,0 +1,22 @@
+
+> lms-backend@1.0.0 dev
+> nodemon src/index.ts
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: ts,json[39m
+[32m[nodemon] starting `ts-node src/index.ts`[39m
+ðŸ“¡ Testing database connection...
+âœ… Database connected successfully!
+ðŸš€ LMS Backend running on port 5000
+âœ… Performance indexes are ready
+✅ Super admin already exists — password preserved as-is.
+âœ… Super admin already exists â€” password preserved as-is.
+📊 Current Database Stats - Schools: 4, Courses: 4, Exams: 66
+Ã°Å¸â€œÅ  Current Database Stats - Schools: 4, Courses: 4, Exams: 66
+âœ… Startup data initialized
+â³ [Deferred Startup] Starting background initialization tasks...
+⏰ [Cron Service] Lightweight hourly backup scheduler initialized (safe, non-blocking).
+[Cron Service] Note: Cloud backup is disabled, backups will only be saved locally.
+âœ… [Deferred Startup] All background tasks launched.

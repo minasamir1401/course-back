@@ -1,0 +1,599 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model School {
+  id            String   @id @default(uuid())
+  name          String
+  subdomain     String?  @unique
+  themeColor    String?
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  courses       Course[] @relation("CourseOwner")
+  ownedExams    Exam[]   @relation("ExamOwner")
+  users         User[]
+  assignedExams Exam[]   @relation("ExamToSchool")
+  assignedCourses Course[] @relation("CourseToSchool")
+  classrooms    Classroom[]
+  skillClusters SkillCluster[] @relation("SkillClusterOwner")
+  examFolders   ExamFolder[]
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  name               String
+  username           String              @unique
+  email              String?             @unique
+  password           String
+  role               String              @default("STUDENT") // SUPER_ADMIN, SCHOOL_ADMIN, TEACHER, STUDENT, PARENT, SUPERVISOR
+  
+  // Profile Fields
+  avatar             String?
+  phone              String?
+  status             String              @default("ACTIVE") // ACTIVE, INACTIVE, SUSPENDED
+  gender             String?             // MALE, FEMALE
+  address            String?
+  grade              String?
+  specialization     String?
+  
+  // School Link
+  schoolId           String?
+  school             School?             @relation(fields: [schoolId], references: [id])
+  
+  // Classroom Link (for students)
+  classroomId        String?
+  classroom          Classroom?          @relation("ClassroomStudents", fields: [classroomId], references: [id])
+  
+  // Parent Link (for students)
+  parentId           String?
+  parent             User?               @relation("ParentToChildren", fields: [parentId], references: [id])
+  children           User[]              @relation("ParentToChildren")
+  
+  // System Relations
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  activityLogs       ActivityLog[]
+  courseProgresses   CourseProgress[]
+  examSubmissions    ExamSubmission[]
+  studentAnswers     StudentAnswer[]
+  studentEnrollments StudentEnrollment[]
+  teacherCourses     TeacherCourse[]
+  managedClassrooms  Classroom[]         @relation("ClassroomTeacher")
+  lessonProgresses   LessonProgress[]
+  blockAnswers       BlockAnswer[]
+  activityAttempts   ActivityAttempt[]
+  xp                 Int                 @default(0)
+  xpHistories        XPHistory[]
+  deletedAt          DateTime?           // Soft Delete: null = active, date = in trash
+  
+  // Content Creation Tracking
+  createdCourses     Course[]            @relation("CourseCreator")
+  createdExams       Exam[]              @relation("ExamCreator")
+  createdLessons     Lesson[]            @relation("LessonCreator")
+  createdExamFolders ExamFolder[]        @relation("ExamFolderCreator")
+  createdSkillClusters SkillCluster[]    @relation("SkillClusterCreator")
+  
+  @@index([schoolId])
+  @@index([role])
+  @@index([grade])
+}
+
+model Classroom {
+  id        String   @id @default(uuid())
+  name      String   // e.g., "1/A", "Group 5"
+  grade     String   // e.g., "الصف الأول الثانوي"
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  
+  teacherId String?
+  teacher   User?    @relation("ClassroomTeacher", fields: [teacherId], references: [id])
+  
+  students  User[]   @relation("ClassroomStudents")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Course {
+  id          String              @id @default(uuid())
+  title       String
+  description String?
+  coverImage  String?
+  grade       String?
+  grades      String?
+  subject     String?
+  country     String              @default("مصر")
+  isCentral   Boolean             @default(false)
+  schoolId    String?
+  creatorId   String?
+  deletedAt   DateTime?           // Soft Delete: null = active, date = in trash (15-day recycle bin)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  school      School?             @relation("CourseOwner", fields: [schoolId], references: [id])
+  creator     User?               @relation("CourseCreator", fields: [creatorId], references: [id])
+  progresses  CourseProgress[]
+  lessons     Lesson[]
+  enrollments StudentEnrollment[]
+  teachers    TeacherCourse[]
+  exams       Exam[]
+  schools     School[]            @relation("CourseToSchool")
+  
+  @@index([schoolId])
+  @@index([isCentral])
+  @@index([grade])
+  @@index([subject])
+  @@index([isCentral, grade])
+  @@index([schoolId, grade])
+  @@index([createdAt])
+  @@index([deletedAt])
+}
+
+model StudentEnrollment {
+  id        String   @id @default(uuid())
+  studentId String
+  courseId  String
+  createdAt DateTime @default(now())
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@index([courseId])
+}
+
+model TeacherCourse {
+  id        String   @id @default(uuid())
+  teacherId String
+  courseId  String
+  createdAt DateTime @default(now())
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacher   User     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, courseId])
+  @@index([courseId])
+}
+
+model Lesson {
+  id               String   @id @default(uuid())
+  courseId         String
+  title            String
+  domain           String?
+  content          String?
+  videoUrl         String?
+  summary          String?
+  notes            String?
+  questions        Json?    // Store JSON of questions
+  attachments      Json?    // Store JSON of lesson resources (PDFs, PPTs, etc.)
+  slides           Json?    // Store JSON of slides content
+  assignments      Json?    // Store JSON of assignments content
+  standards        String?  // Educational standards
+  indicators       String?  // Learning indicators
+  learningOutcomes String?  // Learning outcomes
+  isCentral        Boolean   @default(false)
+  isVisible        Boolean   @default(true)  // Show/hide from students
+  publishDate      DateTime? // When the lesson becomes available
+  cutOffDate       DateTime? // When the lesson is no longer accessible
+  order            Int       @default(0)
+  duration         Int       @default(0) // Duration in seconds
+  deletedAt        DateTime? // Soft Delete: null = active, date = in trash (15-day recycle bin)
+  originalCourseId String?   // Tracks original course before moving to النيل staging
+  creatorId        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  course           Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  creator          User?     @relation("LessonCreator", fields: [creatorId], references: [id])
+  progresses       LessonProgress[]
+  blocks           LessonBlock[]
+  
+  @@index([courseId, order])
+  @@index([deletedAt])
+}
+
+model LessonProgress {
+  id              String   @id @default(uuid())
+  userId          String
+  lessonId        String
+  watchedSeconds  Int      @default(0)
+  isCompleted     Boolean  @default(false)
+  lastBlockId     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson          Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId, isCompleted])
+  @@index([lessonId])
+}
+
+model CourseProgress {
+  id              String   @id @default(uuid())
+  userId          String
+  courseId        String
+  progressPercent Float    @default(0)
+  lastAccessedAt  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  course          Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+}
+
+model ExamFolder {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  grade       String?
+  subject     String?
+  schoolId    String?
+  isCentral   Boolean  @default(false)
+  creatorId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  exams       Exam[]
+  school      School?  @relation(fields: [schoolId], references: [id])
+  creator     User?    @relation("ExamFolderCreator", fields: [creatorId], references: [id])
+}
+
+model Exam {
+  id                String           @id @default(uuid())
+  title             String
+  description       String?
+  type              String           @default("Quiz")
+  duration          Int              @default(30)
+  passingScore      Int              @default(50)
+  isCentral         Boolean          @default(false)
+  showAnswers       Boolean          @default(true) 
+  resultVisibility  String           @default("SHOW_SCORE") 
+  password          String?
+  startDate         DateTime?
+  endDate           DateTime?
+  attemptsAllowed   Int              @default(1)
+  status            String           @default("PUBLISHED") 
+  category          String?          
+  grade             String?
+  grades            String?
+  subjects          String?
+  schoolId          String?
+  courseId          String?
+  folderId          String?
+  courseName        String?
+  section           String?
+  domain            String?
+  learningOutcomes  String?
+  indicators        String?
+  skills            String?
+  skill             String?
+  gradeTarget       String?
+  level             String           @default("Medium")
+  creatorId         String?
+  deletedAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  school            School?          @relation("ExamOwner", fields: [schoolId], references: [id])
+  course            Course?          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  folder            ExamFolder?      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  creator           User?            @relation("ExamCreator", fields: [creatorId], references: [id])
+  modules           ExamModule[]
+  submissions       ExamSubmission[]
+  questions         Question[]
+  schools           School[]         @relation("ExamToSchool")
+  
+  @@index([schoolId])
+  @@index([isCentral])
+  @@index([grade])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@index([schoolId, createdAt])
+  @@index([isCentral, createdAt])
+  @@index([folderId])
+}
+
+model Question {
+  id              String          @id @default(uuid())
+  examId          String
+  text            String
+  type            String          @default("MCQ")
+  options         String
+  correctAnswer   String
+  points          Int             @default(1)
+  xpPoints        Int             @default(10)
+  skill           String?
+  learningOutcome String?
+  indicator       String?         // Unified metadata field
+  videoUrl        String?         // Unified video field
+  level           String          @default("Medium")
+  dok             String?
+  cognitive       String?
+  course          String?
+  section         String?
+  domain          String?
+  standard        String?
+  subskill        String?
+  microSkill      String?
+  gradeTarget     String?
+  errorPattern    String?
+  estimatedTime   String?
+  explanation     String?
+  imageUrl        String?
+  order           Int             @default(0)
+  deletedAt       DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  moduleId        String?
+  subExamId       String?
+  exam            Exam            @relation(fields: [examId], references: [id], onDelete: Cascade)
+  module          ExamModule?     @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  subExam         SubExam?        @relation(fields: [subExamId], references: [id], onDelete: SetNull)
+  answers         StudentAnswer[]
+}
+
+model ExamSubmission {
+  id         String          @id @default(uuid())
+  subExamId  String?
+  userId     String
+  examId     String
+  totalScore Float
+  totalTime  Int?
+  createdAt  DateTime        @default(now())
+  percentage Float?
+  exam       Exam            @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers    StudentAnswer[]
+  
+  @@index([userId])
+  @@index([examId])
+  @@index([userId, createdAt])
+  @@index([examId, userId])
+}
+
+model StudentAnswer {
+  id             String         @id @default(uuid())
+  submissionId   String
+  userId         String
+  questionId     String
+  selectedAnswer String
+  isCorrect      Boolean
+  timeTaken      Int?
+  createdAt      DateTime       @default(now())
+  question       Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  submission     ExamSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  metadata  String?
+  timestamp DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LessonBlock {
+  id              String            @id @default(uuid())
+  lessonId        String
+  type            String            // "TEXT" | "QUESTION"
+  label           String?           // "CONTENT", "EXAMPLE", "SUMMARY", "MCQ", etc.
+  title           String?           // Optional Card Name
+  content         String?           // Main rich text or question text
+  
+  // Question specific fields
+  options         String?           // Stored as JSON string
+  correctAnswer   String?           // Stored as JSON or comma separated
+  points          Int               @default(1)
+  
+  // Display settings
+  order           Int               @default(0)
+  isRequired      Boolean           @default(false)
+  isVisible       Boolean           @default(true)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  lesson          Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  sections        DynamicSection[]
+  answers         BlockAnswer[]
+  
+  @@index([lessonId, order])
+}
+
+model DynamicSection {
+  id              String            @id @default(uuid())
+  blockId         String
+  type            String            // "FEEDBACK", "HINT", "EXPLANATION", "TIP", "KEY_INSIGHT"
+  content         String            // Rich text content
+  order           Int               @default(0)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  block           LessonBlock       @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  
+  @@index([blockId, order])
+}
+
+model BlockAnswer {
+  id              String            @id @default(uuid())
+  userId          String
+  blockId         String
+  selectedAnswer  String            
+  isCorrect       Boolean
+  attempts        Int               @default(1)
+  timeTaken       Int?
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  block           LessonBlock       @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, blockId])
+  @@index([userId])
+  @@index([blockId])
+}
+
+// 1. المحاور التعليمية الكبرى (الكلستر)
+model SkillCluster {
+  id          String         @id @default(uuid())
+  name        String
+  description String?
+  subject     String
+  grade       String
+  isCentral   Boolean        @default(false)
+  schoolId    String?
+  creatorId   String?
+  school      School?        @relation("SkillClusterOwner", fields: [schoolId], references: [id])
+  creator     User?          @relation("SkillClusterCreator", fields: [creatorId], references: [id])
+  skills      SkillLesson[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([schoolId])
+  @@index([grade, subject])
+}
+
+// 2. المهارة الفرعية (الدرس المهاراتي)
+model SkillLesson {
+  id               String                @id @default(uuid())
+  clusterId        String
+  name             String
+  description      String?
+  order            Int                   @default(0)
+  cluster          SkillCluster          @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  activities       InteractiveActivity[]
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+}
+
+// 3. النشاط التفاعلي
+model InteractiveActivity {
+  id               String                @id @default(uuid())
+  lessonId         String
+  title            String
+  type             String                // MCQ, MATCHING, DRAG_DROP, SORTING, CLOCK, MAZE...
+  options          String                // JSON config
+  correctAnswer    String                // JSON correct answer
+  points           Int                   @default(10)
+  xpPoints         Int                   @default(10)
+  difficulty       String                @default("Medium") // Easy, Medium, Hard
+  dok              String?               // Depth of Knowledge (1, 2, 3)
+  estimatedTime    Int                   @default(60) // in seconds
+  
+  // Educational standards
+  standard         String?
+  indicator        String?
+  learningOutcome  String?
+  skill            String?
+  
+  // Educational elements
+  hint             String?
+  tip              String?
+  explanation      String?
+  keyInsight       String?
+  
+  lesson           SkillLesson           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  attempts         ActivityAttempt[]
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+}
+
+// 4. محاولات الطلاب وتقييمهم
+model ActivityAttempt {
+  id               String                @id @default(uuid())
+  userId           String
+  activityId       String
+  selectedAnswer   String                // Student's answer
+  isCorrect        Boolean
+  score            Int                   // Points earned
+  stars            Int                   // Stars (1-3)
+  timeTaken        Int?                  // Time taken in seconds
+  createdAt        DateTime              @default(now())
+  
+  user             User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activity         InteractiveActivity   @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, activityId])
+}
+
+model XPHistory {
+  id          String   @id @default(uuid())
+  userId      String
+  xp          Int
+  sourceType  String   // "EXAM", "LESSON_SLIDE", "LESSON_ASSIGNMENT", "LESSON_QUIZ", "INTERACTIVE_ACTIVITY"
+  sourceId    String   // The ID of the exam, lesson, or interactive activity
+  questionId  String   // The ID of the question (or block ID inside the lesson JSON)
+  isCorrect   Boolean
+  attemptNum  Int
+  isBonus     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, sourceId])
+  @@index([userId, questionId])
+}
+
+// Stores explicit user-deletion markers so auto-recovery never re-creates deleted items
+// even across Dokploy container re-deploys (unlike a local JSON file).
+model DeletedTombstone {
+  id          String   @id @default(uuid())
+  entityType  String   // "lesson" or "course"
+  entityId    String   // UUID of the deleted lesson or course
+  entityTitle String?  // Human-readable title for debugging
+  deletedAt   DateTime @default(now())
+
+  @@unique([entityType, entityId])
+  @@index([entityType, entityId])
+}
+
+model ExamModule {
+  id            String      @id @default(uuid())
+  examId        String
+  title         String
+  description   String?
+  order         Int         @default(0)
+  duration      Int?
+  passingScore  Int?
+  gradeTarget   String?
+  publishDate   DateTime?
+  cutOffDate    DateTime?
+  exam          Exam        @relation(fields: [examId], references: [id], onDelete: Cascade)
+  questions     Question[]
+  subExams      SubExam[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([examId, order])
+}
+
+model SubExam {
+  id            String      @id @default(uuid())
+  moduleId      String
+  title         String
+  password      String?
+  duration      Int?
+  passingScore  Int?
+  attemptsAllowed Int       @default(1)
+  order         Int         @default(0)
+  publishDate   DateTime?
+  cutOffDate    DateTime?
+  module        ExamModule  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  questions     Question[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([moduleId, order])
+}
