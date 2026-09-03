@@ -188,7 +188,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     err.message?.includes('aborted') ||
     err.message?.includes('connection closed')
   ) {
-    console.warn(`âš ï¸ Request aborted by client: ${req.method} ${req.url} - ${err.message}`);
+    console.warn(`[WARN] Request aborted by client: ${req.method} ${req.url} - ${err.message}`);
     return res.status(400).json({
       error: 'Bad Request',
       message: 'Request was aborted or connection was closed prematurely by the client.'
@@ -197,7 +197,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
   // 2. JSON Parsing Syntax Error (e.g. invalid JSON sent to express.json())
   if (err instanceof SyntaxError && 'status' in err && err.status === 400 && 'body' in err) {
-    console.warn(`âš ï¸ JSON syntax error from ${req.ip}: ${err.message}`);
+    console.warn(`[WARN] JSON syntax error from ${req.ip}: ${err.message}`);
     return res.status(400).json({
       error: 'Bad Request',
       message: 'Invalid JSON payload format.'
@@ -206,7 +206,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
   // 3. Payload Too Large (e.g. body exceeds the size limit)
   if (err.status === 413 || err.type === 'entity.too.large') {
-    console.warn(`âš ï¸ Payload too large from ${req.ip}: ${req.method} ${req.url}`);
+    console.warn(`[WARN] Payload too large from ${req.ip}: ${req.method} ${req.url}`);
     return res.status(413).json({
       error: 'Payload Too Large',
       message: 'The request payload exceeds the allowed size limit.'
@@ -214,7 +214,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   }
 
   // 4. Default handler for other unhandled errors
-  console.error(`âŒ Unhandled Error [${req.method} ${req.url}]:`, err);
+  console.error(`[ERROR] Unhandled Error [${req.method} ${req.url}]:`, err);
   return res.status(err.status || 500).json({
     error: 'Internal Server Error',
     message: process.env.NODE_ENV === 'production' ? 'An unexpected error occurred.' : err.message
@@ -223,23 +223,22 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 // Process-level precautions
 process.on('uncaughtException', (error) => {
-  console.error('ðŸ”¥ CRITICAL: Uncaught Exception:', error);
+  console.error('[CRITICAL] Uncaught Exception:', error);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('âš ï¸ Unhandled Promise Rejection at:', promise, 'reason:', reason);
+  console.error('[WARN] Unhandled Promise Rejection at:', promise, 'reason:', reason);
 });
 
 // Startup data maintenance that is safe to run in production.
 async function initializeStartupData() {
   try {
-    // ðŸ”’ [TOMBSTONE FIX]: Prevented auto-centralization of courses missing schoolId on startup
-    // to avoid hiding courses that were temporarily unlinked from a school.
-    await normalizeLegacyCourses();
+    // [TOMBSTONE FIX]: Prevented auto-centralization of courses missing schoolId on startup
+    // courses missing schoolId might be intentional; do not auto-centralize on startup.
 
-    // ðŸ”’ SECURITY FIX: Only create superadmin if it does NOT already exist.
-    // NEVER use upsert({ update: { password } }) â€” that resets the password on every deploy,
+    // SECURITY FIX: Only create superadmin if it does NOT already exist.
+    // NEVER use upsert({ update: { password } }) — that resets the password on every deploy,
     // undoing any manual password change made in production.
     const existingSuperAdmin = await prisma.user.findFirst({
       where: { role: 'SUPER_ADMIN', username: 'superadmin' }
@@ -274,31 +273,31 @@ async function initializeStartupData() {
       console.log('🌱 Database is empty of schools. Initiating automatic school data seeding...');
 
       const schoolsData = [
-        { name: 'Ã™â€¦Ã˜Â¯Ã˜Â±Ã˜Â³Ã˜Â© Ã˜Â§Ã™â€žÃ˜Â±Ã™Ë†Ã˜Â§Ã˜Â¯ Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã˜ÂµÃ˜Â© - Ã˜Â§Ã™â€žÃ™â€šÃ˜Â§Ã™â€¡Ã˜Â±Ã˜Â©', subdomain: 'alrowad', themeColor: '#4f46e5' },
-        { name: 'Ã™â€¦Ã˜Â¯Ã˜Â±Ã˜Â³Ã˜Â© Ã˜Â§Ã™â€žÃ™â€ Ã™Å Ã™â€ž Ã˜Â§Ã™â€žÃ˜Â¯Ã™Ë†Ã™â€žÃ™Å Ã˜Â© - Ã˜Â§Ã™â€žÃ˜Â´Ã™Å Ã˜Â® Ã˜Â²Ã˜Â§Ã™Å Ã˜Â¯', subdomain: 'nile', themeColor: '#059669' },
-        { name: 'Ã™â€¦Ã˜Â¯Ã˜Â±Ã˜Â³Ã˜Â© Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜Â§Ã˜Â±Ã˜Â© Ã™â€žÃ˜ÂºÃ˜Â§Ã˜Âª - Ã˜Â§Ã™â€žÃ˜Â¥Ã˜Â³Ã™Æ’Ã™â€ Ã˜Â¯Ã˜Â±Ã™Å Ã˜Â©', subdomain: 'almanara', themeColor: '#dc2626' },
-        { name: 'Ã™â€¦Ã˜Â¯Ã˜Â±Ã˜Â³Ã˜Â© Ã˜Â¨Ã™Ë†Ã˜Â±Ã˜Â³Ã˜Â¹Ã™Å Ã˜Â¯ Ã˜Â§Ã™â€žÃ˜Â­Ã˜Â¯Ã™Å Ã˜Â«Ã˜Â©', subdomain: 'portsaid', themeColor: '#2563eb' }
+        { name: 'مدرسة الرواد الخاصة - القاهرة', subdomain: 'alrowad', themeColor: '#4f46e5' },
+        { name: 'مدرسة النيل الدولية - الشيخ زايد', subdomain: 'nile', themeColor: '#059669' },
+        { name: 'مدرسة المنارة لغات - الإسكندرية', subdomain: 'almanara', themeColor: '#dc2626' },
+        { name: 'مدرسة بورسعيد الحديثة', subdomain: 'portsaid', themeColor: '#2563eb' }
       ];
 
       for (const s of schoolsData) {
         const school = await prisma.school.create({ data: s });
-        // Each seed user gets a unique random password Ã¢â‚¬â€ no shared static Password@123
-        await prisma.user.create({ data: { username: `${s.subdomain}_admin`, password: await bcrypt.hash(crypto.randomBytes(10).toString('hex'), 10), name: `Ã˜Â£/ Ã™â€¦Ã˜Â­Ã™â€¦Ã˜Â¯ Ã˜Â£Ã˜Â­Ã™â€¦Ã˜Â¯ - Ã™â€¦Ã˜Â¯Ã™Å Ã˜Â± ${s.name}`, role: 'SCHOOL_ADMIN', schoolId: school.id } });
-        const teacherNames = ['Ã˜Â£Ã˜Â­Ã™â€¦Ã˜Â¯ Ã™â€¦Ã˜Â­Ã™â€¦Ã™Ë†Ã˜Â¯', 'Ã˜Â³Ã˜Â§Ã˜Â±Ã˜Â© Ã˜Â­Ã˜Â³Ã™â€ ', 'Ã˜Â¥Ã˜Â¨Ã˜Â±Ã˜Â§Ã™â€¡Ã™Å Ã™â€¦ Ã˜Â¹Ã™â€žÃ™Å ', 'Ã™â€¦Ã˜Â±Ã™Å Ã™â€¦ Ã™Å Ã™Ë†Ã˜Â³Ã™Â'];
+        // Each seed user gets a unique random password — no shared static Password@123
+        await prisma.user.create({ data: { username: `${s.subdomain}_admin`, password: await bcrypt.hash(crypto.randomBytes(10).toString('hex'), 10), name: `أ/ محمد أحمد - مدير ${s.name}`, role: 'SCHOOL_ADMIN', schoolId: school.id } });
+        const teacherNames = ['أحمد محمود', 'سارة حسن', 'إبراهيم علي', 'مريم يوسف'];
         for (let i = 0; i < teacherNames.length; i++) {
-          await prisma.user.create({ data: { username: `${s.subdomain}_teacher_${i + 1}`, password: await bcrypt.hash(crypto.randomBytes(10).toString('hex'), 10), name: `Ã˜Â£/ ${teacherNames[i]}`, role: 'TEACHER', schoolId: school.id } });
+          await prisma.user.create({ data: { username: `${s.subdomain}_teacher_${i + 1}`, password: await bcrypt.hash(crypto.randomBytes(10).toString('hex'), 10), name: `أ/ ${teacherNames[i]}`, role: 'TEACHER', schoolId: school.id } });
         }
-        const studentNames = ['Ã™Å Ã˜Â§Ã˜Â³Ã™Å Ã™â€  Ã˜Â®Ã˜Â§Ã™â€žÃ˜Â¯', 'Ã˜Â¬Ã™â€ Ã™â€° Ã˜Â¹Ã™â€¦Ã˜Â±Ã™Ë†', 'Ã˜Â¹Ã™â€¦Ã˜Â± Ã˜Â¥Ã™Å Ã™â€¡Ã˜Â§Ã˜Â¨', 'Ã™â€žÃ™Å Ã™â€žÃ™â€° Ã™â€¦Ã˜ÂµÃ˜Â·Ã™ÂÃ™â€°', 'Ã˜Â­Ã™â€¦Ã˜Â²Ã˜Â© Ã™â€¡Ã˜Â§Ã™â€ Ã™Å ', 'Ã™â€ Ã™Ë†Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â¯Ã™Å Ã™â€ ', 'Ã™ÂÃ˜Â±Ã™Å Ã˜Â¯Ã˜Â© Ã™â€¦Ã˜Â­Ã™â€¦Ã˜Â¯'];
-        const grades = ['Ã˜Â§Ã™â€žÃ˜ÂµÃ™Â Ã˜Â§Ã™â€žÃ˜Â£Ã™Ë†Ã™â€ž Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€ Ã™Ë†Ã™Å ', 'Ã˜Â§Ã™â€žÃ˜ÂµÃ™Â Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€ Ã™Å  Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€ Ã™Ë†Ã™Å ', 'Ã˜Â§Ã™â€žÃ˜ÂµÃ™Â Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€žÃ˜Â« Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€ Ã™Ë†Ã™Å '];
+        const studentNames = ['ياسين خالد', 'جنى عمرو', 'عمر إيهاب', 'ليلى مصطفى', 'حمزة هاني', 'نور الدين', 'فريدة محمد'];
+        const grades = ['الصف الأول الثانوي', 'الصف الثاني الثانوي', 'الصف الثالث الثانوي'];
         for (let i = 0; i < studentNames.length; i++) {
           await prisma.user.create({ data: { username: `${s.subdomain}_student_${i + 1}`, password: await bcrypt.hash(crypto.randomBytes(10).toString('hex'), 10), name: studentNames[i], role: 'STUDENT', schoolId: school.id, grade: grades[i % grades.length] } });
         }
       }
-      console.log('Ã¢Å“â€¦ 4 Schools, Admins, Teachers, and Students seeded successfully.');
+      console.log('✅ 4 Schools, Admins, Teachers, and Students seeded successfully.');
     }
 
     if (courseCount === 0 && shouldSeedDummyData) {
-      console.log('Ã°Å¸Å’Â± Database is empty of courses. Initiating automatic course data seeding...');
+      console.log('[Seed] Database is empty of courses. Initiating automatic course data seeding...');
       const coursesData = [
         {
           title: 'Physics - Grade 10',
@@ -338,24 +337,24 @@ async function initializeStartupData() {
         const course = await prisma.course.create({ data: { ...courseFields, isCentral: true, grades: JSON.stringify([c.grade]) } });
         for (const l of lessons) { await prisma.lesson.create({ data: { ...l, courseId: course.id, isCentral: true, isVisible: true } }); }
       }
-      console.log('Ã¢Å“â€¦ 3 Central Courses and Lessons seeded successfully.');
+      console.log('✅ 3 Central Courses and Lessons seeded successfully.');
     }
 
     if (examCount === 0 && shouldSeedDummyData) {
-      console.log('Ã°Å¸Å’Â± Database is empty of exams. Initiating automatic exam data seeding...');
-      const subjectsList = ['Ã˜Â§Ã™â€žÃ™ÂÃ™Å Ã˜Â²Ã™Å Ã˜Â§Ã˜Â¡', 'Ã˜Â§Ã™â€žÃ™Æ’Ã™Å Ã™â€¦Ã™Å Ã˜Â§Ã˜Â¡', 'Ã˜Â§Ã™â€žÃ™â€žÃ˜ÂºÃ˜Â© Ã˜Â§Ã™â€žÃ˜Â¹Ã˜Â±Ã˜Â¨Ã™Å Ã˜Â©'];
-      const gradeTarget = 'Ã˜Â§Ã™â€žÃ˜ÂµÃ™Â Ã˜Â§Ã™â€žÃ˜Â£Ã™Ë†Ã™â€ž Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€ Ã™Ë†Ã™Å ';
+      console.log('[Seed] Database is empty of exams. Initiating automatic exam data seeding...');
+      const subjectsList = ['Physics', 'Chemistry', 'Arabic'];
+      const gradeTarget = 'Grade 10';
       for (let i = 0; i < subjectsList.length; i++) {
         const subject = subjectsList[i];
-        await prisma.exam.create({ data: { title: `Ã˜Â§Ã™â€¦Ã˜ÂªÃ˜Â­Ã˜Â§Ã™â€  Ã˜Â§Ã™â€žÃ˜ÂªÃ™â€šÃ™Å Ã™Å Ã™â€¦ Ã˜Â§Ã™â€žÃ˜Â£Ã™Ë†Ã™â€ž - ${subject}`, description: `Ã˜Â§Ã™â€¦Ã˜ÂªÃ˜Â­Ã˜Â§Ã™â€  Ã˜ÂªÃ˜Â¬Ã˜Â±Ã™Å Ã˜Â¨Ã™Å  Ã™â€žÃ˜ÂªÃ™â€šÃ™Å Ã™Å Ã™â€¦ Ã™â€¦Ã˜Â³Ã˜ÂªÃ™Ë†Ã™â€° Ã˜Â§Ã™â€žÃ˜Â·Ã™â€žÃ˜Â§Ã˜Â¨ Ã™ÂÃ™Å  Ã™â€¦Ã˜Â§Ã˜Â¯Ã˜Â© ${subject}.`, category: subject, grade: gradeTarget, duration: 45, passingScore: 50, type: 'Exam', status: 'PUBLISHED', isCentral: true, resultVisibility: 'SHOW_ALL', showAnswers: true, questions: { create: [{ text: `Ã™â€¦Ã˜Â§ Ã™â€¡Ã™Å  Ã˜Â§Ã™â€žÃ™Ë†Ã˜Â­Ã˜Â¯Ã˜Â© Ã˜Â§Ã™â€žÃ˜Â£Ã˜Â³Ã˜Â§Ã˜Â³Ã™Å Ã˜Â© Ã™â€žÃ™â€šÃ™Å Ã˜Â§Ã˜Â³ Ã˜Â§Ã™â€žÃ™Æ’Ã™â€¦Ã™Å Ã˜Â© Ã˜Â§Ã™â€žÃ™ÂÃ™Å Ã˜Â²Ã™Å Ã˜Â§Ã˜Â¦Ã™Å Ã˜Â© Ã™ÂÃ™Å  Ã˜Â§Ã™â€žÃ™â€ Ã˜Â¸Ã˜Â§Ã™â€¦ Ã˜Â§Ã™â€žÃ˜Â¯Ã™Ë†Ã™â€žÃ™Å  Ã™â€žÃ˜Â¯Ã˜Â±Ã˜Â³ ${subject}Ã˜Å¸`, type: 'MCQ', options: JSON.stringify(['Ã˜Â§Ã™â€žÃ˜Â®Ã™Å Ã˜Â§Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â£Ã™Ë†Ã™â€ž', 'Ã˜Â§Ã™â€žÃ˜Â®Ã™Å Ã˜Â§Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€ Ã™Å ', 'Ã˜Â§Ã™â€žÃ˜Â®Ã™Å Ã˜Â§Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â«Ã˜Â§Ã™â€žÃ˜Â«', 'Ã˜Â§Ã™â€žÃ˜Â®Ã™Å Ã˜Â§Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â±Ã˜Â§Ã˜Â¨Ã˜Â¹']), correctAnswer: 'Ã˜Â§Ã™â€žÃ˜Â®Ã™Å Ã˜Â§Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â£Ã™Ë†Ã™â€ž', points: 5, skill: 'Ã˜Â§Ã™â€žÃ™ÂÃ™â€¡Ã™â€¦ Ã™Ë†Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â°Ã™Æ’Ã˜Â±', cognitive: 'Understanding', learningOutcome: 'Ã™â€¦Ã˜Â¹Ã˜Â±Ã™ÂÃ˜Â© Ã˜Â£Ã˜Â³Ã˜Â§Ã˜Â³Ã™Å Ã˜Â§Ã˜Âª Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã˜Â¯Ã˜Â© Ã˜Â§Ã™â€žÃ˜Â¹Ã™â€žÃ™â€¦Ã™Å Ã˜Â©', level: 'Medium', order: 1 }, { text: `Ã™â€¡Ã™â€ž Ã˜ÂªÃ˜Â¹Ã˜ÂªÃ˜Â¨Ã˜Â± Ã™â€¡Ã˜Â°Ã™â€¡ Ã˜Â§Ã™â€žÃ™â€¦Ã™ÂÃ˜Â§Ã™â€¡Ã™Å Ã™â€¦ Ã˜ÂµÃ˜Â­Ã™Å Ã˜Â­Ã˜Â© Ã˜Â¹Ã™â€žÃ™â€¦Ã™Å Ã˜Â§Ã™â€¹ Ã˜Â¨Ã˜Â®Ã˜ÂµÃ™Ë†Ã˜Âµ ${subject}Ã˜Å¸`, type: 'TRUE_FALSE', options: JSON.stringify(['Ã˜ÂµÃ˜Â­', 'Ã˜Â®Ã˜Â·Ã˜Â£']), correctAnswer: 'Ã˜ÂµÃ˜Â­', points: 5, skill: 'Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â­Ã™â€žÃ™Å Ã™â€ž', cognitive: 'Analyzing', learningOutcome: 'Ã˜ÂªÃ˜Â­Ã™â€žÃ™Å Ã™â€ž Ã˜Â§Ã™â€žÃ˜Â¨Ã™Å Ã˜Â§Ã™â€ Ã˜Â§Ã˜Âª Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¹Ã˜Â±Ã™Ë†Ã˜Â¶Ã˜Â©', level: 'Easy', order: 2 }] } } });
+        await prisma.exam.create({ data: { title: `Evaluation Exam 1 - ${subject}`, description: `Practice exam for ${subject}.`, category: subject, grade: gradeTarget, duration: 45, passingScore: 50, type: 'Exam', status: 'PUBLISHED', isCentral: true, resultVisibility: 'SHOW_ALL', showAnswers: true, questions: { create: [{ text: `What is the base SI unit for ${subject}?`, type: 'MCQ', options: JSON.stringify(['Option A', 'Option B', 'Option C', 'Option D']), correctAnswer: 'Option A', points: 5, skill: 'Recall', cognitive: 'Understanding', learningOutcome: 'Basics', level: 'Medium', order: 1 }, { text: `Is this statement correct for ${subject}?`, type: 'TRUE_FALSE', options: JSON.stringify(['True', 'False']), correctAnswer: 'True', points: 5, skill: 'Analysis', cognitive: 'Analyzing', learningOutcome: 'Data Analysis', level: 'Easy', order: 2 }] } } });
       }
-      console.log('Ã¢Å“â€¦ 3 Central Exams and Questions seeded successfully.');
+      console.log('✅ 3 Central Exams and Questions seeded successfully.');
     }
   } catch (error: any) {
     if (error.code === 'P2002') {
-      console.log('âœ… Startup data seeding completed by another cluster instance (P2002).');
+      console.log('✅ Startup data seeding completed by another cluster instance (P2002).');
     } else {
-      console.error('âŒ Startup data seeding failed:', error);
+      console.error('❌ Startup data seeding failed:', error);
     }
   }
 }
@@ -369,10 +368,10 @@ function startBackupScheduler() {
   };
 
   const scheduleRepeating = () => {
-    console.log(`[Backup Scheduler] â° Next simulated button backup in 1 hour | توقيت مصر الحالي: ${getEgyptTime()}`);
+    console.log(`[Backup Scheduler] Next simulated backup in 1 hour | Cairo time: ${getEgyptTime()}`);
     setTimeout(async () => {
       try {
-        console.log(`[Backup Scheduler] ðŸ‘† Simulating click on "إنشاء نسخة جديدة" button | توقيت مصر: ${getEgyptTime()}`);
+        console.log(`[Backup Scheduler] Simulating backup creation | Cairo time: ${getEgyptTime()}`);
 
         // Generate an internal superadmin token to authorize the request
         const jwt = require('jsonwebtoken');
@@ -386,9 +385,9 @@ function startBackupScheduler() {
 
         if (res.ok) {
           const json = await res.json();
-          console.log(`[Backup Scheduler] âœ… Button Backup created automatically: ${json.filename}`);
+          console.log(`[Backup Scheduler] Button Backup created automatically: ${json.filename}`);
         } else {
-          console.error(`[Backup Scheduler] âŒ Button backup failed with status: ${res.status}`);
+          console.error(`[Backup Scheduler] Button backup failed with status: ${res.status}`);
         }
       } catch (error: any) {
         console.error('[Backup Scheduler] Button simulation failed:', error.message);
@@ -736,7 +735,7 @@ async function autoRecoverSpecificLesson() {
       }
     });
 
-    console.log(`[Auto-Recovery] âœ… Successfully restored lesson "${targetLesson.title}" to course "${existingCourse.title}"!`);
+    console.log(`[Auto-Recovery] Successfully restored lesson "${targetLesson.title}" to course "${existingCourse.title}"!`);
   } catch (error: any) {
     console.error('[Auto-Recovery] Error recovering specific lesson:', error.message);
   }
@@ -744,7 +743,7 @@ async function autoRecoverSpecificLesson() {
 
 // Keep Cloud Backup Awake and Sync Missing Courses
 /* function startCloudBackupKeepAlive() {
-  console.log('ðŸ”„ Started Cloud Backup Keep-Alive service (ping every 5 minutes)');
+  console.log('[Backup] Started Cloud Backup Keep-Alive service (ping every 5 minutes)');
   // 5 minutes = 300,000 ms
   setInterval(() => {
     keepCloudBackupAlive();

@@ -350,11 +350,11 @@ async function initializeStartupData() {
       console.log('🌱 Database auto-seeding completed successfully!');
     }
   } catch (error) {
-    console.error('❌ Startup data maintenance failed:', error);
+    console.error('[Startup] Startup data maintenance failed:', error);
   }
 }
 
-initializeStartupData();
+// initializeStartupData is handled exclusively by Worker #0 in index.ts
 
 
 // --- Extracted from lines 1168-1983 ---
