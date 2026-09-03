@@ -118,6 +118,15 @@ exports.loginAttempts.set = function (key, value) {
     }
     return originalLoginAttemptsSet(key, value);
 };
+// ⚠️ CLUSTER-MODE LIMITATION:
+// loginAttempts, statsCache (below), and userStatusCache (auth.ts) are in-process Maps.
+// In PM2 cluster mode (pm2 -i max), each worker holds a SEPARATE copy of these Maps.
+// This means:
+//   - Rate limiting (loginAttempts) is per-worker, not per-IP — effective limit = MAX_ATTEMPTS × workers
+//   - Stats cache (statsCache) may serve stale data across workers independently
+//   - User status cache (auth.ts) may be inconsistent between workers
+// TODO: Replace with a shared store (Redis/Valkey) to fix cross-worker state.
+// See: https://redis.io/docs/latest/develop/clients/nodejs/
 // Cleanup old login attempts every hour to prevent memory leaks
 setInterval(() => {
     const now = Date.now();
@@ -834,11 +843,24 @@ function ensurePerformanceIndexes() {
             'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_schoolId_createdAt_idx" ON "Exam" ("schoolId", "createdAt")',
             'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_isCentral_createdAt_idx" ON "Exam" ("isCentral", "createdAt")',
             'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_userId_createdAt_idx" ON "ExamSubmission" ("userId", "createdAt")',
-            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_examId_userId_idx" ON "ExamSubmission" ("examId", "userId")'
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_examId_userId_idx" ON "ExamSubmission" ("examId", "userId")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_idx" ON "Question" ("examId")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_deletedAt_idx" ON "Question" ("examId", "deletedAt")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_idx" ON "Question" ("subExamId")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_deletedAt_idx" ON "Question" ("subExamId", "deletedAt")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_moduleId_idx" ON "Question" ("moduleId")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_deletedAt_idx" ON "Question" ("deletedAt")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_examId_idx" ON "ExamModule" ("examId")',
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "SubExam_moduleId_idx" ON "SubExam" ("moduleId")'
         ];
         for (const statement of statements) {
-            const query = isPostgres ? statement : statement.replace(' CONCURRENTLY', '');
-            yield prisma_1.default.$executeRawUnsafe(query);
+            try {
+                const query = isPostgres ? statement : statement.replace(' CONCURRENTLY', '');
+                yield prisma_1.default.$executeRawUnsafe(query);
+            }
+            catch (idxErr) {
+                console.warn(`[DB Index Setup] Non-fatal notice: ${idxErr.message}`);
+            }
         }
     });
 }

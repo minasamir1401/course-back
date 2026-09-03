@@ -12,7 +12,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const client_1 = require("@prisma/client");
 let dbUrl = process.env.DATABASE_URL || '';
 if (dbUrl && !dbUrl.includes('connection_limit')) {
-    dbUrl += (dbUrl.includes('?') ? '&' : '?') + 'connection_limit=5&pool_timeout=15';
+    const connectionLimit = process.env.DATABASE_CONNECTION_LIMIT || '15';
+    const poolTimeout = process.env.DATABASE_POOL_TIMEOUT || '30';
+    dbUrl += (dbUrl.includes('?') ? '&' : '?') + `connection_limit=${connectionLimit}&pool_timeout=${poolTimeout}`;
 }
 // Base Prisma Client
 const basePrisma = new client_1.PrismaClient({

@@ -30,6 +30,7 @@ const cors_1 = __importDefault(require("cors"));
 const compression_1 = __importDefault(require("compression"));
 const helmet_1 = __importDefault(require("helmet"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
+const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
@@ -140,6 +141,7 @@ app.use((0, cors_1.default)({
 }));
 app.use(express_1.default.json({ limit: '100mb' }));
 app.use(express_1.default.urlencoded({ limit: '100mb', extended: true }));
+app.use((0, cookie_parser_1.default)());
 // Serve Uploaded Files with Cache-Control
 app.use('/uploads', (req, res, next) => {
     const fileExt = path_1.default.extname(req.path).toLowerCase();

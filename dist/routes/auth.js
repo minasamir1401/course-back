@@ -114,6 +114,16 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         shared_1.loginAttempts.delete(ip);
         // Generate token payload: user_id, role, school_id, grade
         const token = jsonwebtoken_1.default.sign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
+        // Set httpOnly cookie — protected from XSS. SameSite=None for cross-subdomain (api.klevro.com ← front.klevro.com).
+        // The JSON token is kept for backward compatibility during the transition period.
+        const cookieMaxAge = 8 * 60 * 60 * 1000; // 8 hours in ms
+        res.cookie('auth_token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            maxAge: cookieMaxAge,
+            path: '/'
+        });
         let schoolName = null;
         if (user.schoolId) {
             const school = yield prisma_1.default.school.findUnique({ where: { id: user.schoolId } });
@@ -156,6 +166,14 @@ router.post('/api/auth/refresh-token', auth_1.verifyToken, (req, res) => __await
         }
         const newToken = jsonwebtoken_1.default.sign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
         const expiresAt = Date.now() + (8 * 60 * 60 * 1000); // 8 hours from now
+        // Refresh the httpOnly cookie as well
+        res.cookie('auth_token', newToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            maxAge: 8 * 60 * 60 * 1000,
+            path: '/'
+        });
         res.json({
             token: newToken,
             expiresAt,
@@ -174,8 +192,16 @@ router.post('/api/auth/refresh-token', auth_1.verifyToken, (req, res) => __await
     }
 }));
 // ==========================================
-// 🌍 SUPER ADMIN ROUTES
+// 🚪 LOGOUT — Clear httpOnly cookie
 // ==========================================
-// Manage Schools
+router.post('/api/auth/logout', (req, res) => {
+    res.clearCookie('auth_token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        path: '/'
+    });
+    res.json({ message: 'Logged out successfully' });
+});
 exports.default = router;
 // Trigger restart

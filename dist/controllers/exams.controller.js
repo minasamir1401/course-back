@@ -989,20 +989,26 @@ const getExamHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, function
 });
 exports.getExamHandler9 = getExamHandler9;
 const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id } = req.params;
         const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
+        const queryStartTime = Date.now();
         const exam = yield prisma_1.default.exam.findUnique({
             where: { id, deletedAt: null },
             include: {
                 schools: { select: { id: true, name: true } },
                 modules: { orderBy: { order: 'asc' }, include: { subExams: { orderBy: { order: 'asc' }, include: { _count: { select: { questions: { where: { deletedAt: null } } } } } } } },
                 questions: {
-                    where: { deletedAt: null },
+                    where: subExamId ? { subExamId, deletedAt: null } : { deletedAt: null },
                     orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
                 }
             }
         });
+        const queryDuration = Date.now() - queryStartTime;
+        if (queryDuration > 1000) {
+            console.log(`[Exam GET] Exam "${(exam === null || exam === void 0 ? void 0 : exam.title) || id}" query took ${queryDuration}ms (${((_a = exam === null || exam === void 0 ? void 0 : exam.questions) === null || _a === void 0 ? void 0 : _a.length) || 0} questions)`);
+        }
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
         const role = req.user.role;
@@ -1029,7 +1035,7 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             : null;
         if (subExamId && !selectedSubExam)
             return res.status(404).json({ error: 'Exam section not found' });
-        let parsedQuestions = (subExamId ? exam.questions.filter((question) => question.subExamId === subExamId) : exam.questions).map(q => {
+        let parsedQuestions = exam.questions.map(q => {
             let options = [];
             try {
                 options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;

@@ -1076,17 +1076,22 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
+    const queryStartTime = Date.now();
     const exam = await prisma.exam.findUnique({
       where: { id, deletedAt: null },
       include: {
         schools: { select: { id: true, name: true } },
         modules: { orderBy: { order: 'asc' }, include: { subExams: { orderBy: { order: 'asc' }, include: { _count: { select: { questions: { where: { deletedAt: null } } } } } } } },
         questions: {
-          where: { deletedAt: null },
+          where: subExamId ? { subExamId, deletedAt: null } : { deletedAt: null },
           orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
         }
       }
     });
+    const queryDuration = Date.now() - queryStartTime;
+    if (queryDuration > 1000) {
+      console.log(`[Exam GET] Exam "${exam?.title || id}" query took ${queryDuration}ms (${exam?.questions?.length || 0} questions)`);
+    }
 
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
     const role = (req as any).user.role;
@@ -1115,7 +1120,7 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
       : null;
     if (subExamId && !selectedSubExam) return res.status(404).json({ error: 'Exam section not found' });
 
-    let parsedQuestions = (subExamId ? exam.questions.filter((question: any) => question.subExamId === subExamId) : exam.questions).map(q => {
+    let parsedQuestions = exam.questions.map(q => {
       let options = [];
       try {
         options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;

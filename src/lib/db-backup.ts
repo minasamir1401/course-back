@@ -26,7 +26,7 @@ function createArchive(format: any, options?: any) {
 
 const BACKUP_DB_URL = process.env.BACKUP_DB_URL as string;
 if (!BACKUP_DB_URL && process.env.ENABLE_CLOUD_BACKUP === 'true') {
-  console.error("❌ BACKUP_DB_URL is not set in environment variables");
+  console.warn("⚠️ [Cloud Backup] BACKUP_DB_URL is not configured — cloud backup disabled; local backups will be used instead.");
 }
 
 // Cloud backup is opt-in so a secondary database outage cannot affect LMS availability.

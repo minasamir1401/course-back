@@ -166,25 +166,44 @@ router.get('/api/system/force-inject-factors', auth_1.verifyToken, (0, auth_1.ch
         res.status(500).json({ error: e.message });
     }
 }));
-exports.default = router;
 // ??? DANGER: WIPE SEEDED DUMMY DATA ONLY
+// Requires body: { confirm: 'WIPE_DUMMY_DATA' }. Supports dry_run: true to preview.
 router.post('/api/system/wipe-seeded-dummy-data', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        const { confirm, dry_run } = req.body;
+        // Require explicit confirmation string to prevent accidental or CSRF-triggered deletion
+        if (confirm !== 'WIPE_DUMMY_DATA') {
+            return res.status(400).json({
+                error: "Confirmation required.",
+                message: "Send { confirm: 'WIPE_DUMMY_DATA' } in the request body to proceed. Add dry_run: true to preview."
+            });
+        }
         const DUMMY_DOMAINS = ['alrowad', 'nile', 'almanara'];
         const dummySchools = yield prisma_1.default.school.findMany({ where: { subdomain: { in: DUMMY_DOMAINS } } });
         if (dummySchools.length === 0) {
             return res.json({ message: "No dummy schools found." });
         }
         const schoolIds = dummySchools.map(s => s.id);
+        if (dry_run) {
+            const userCount = yield prisma_1.default.user.count({ where: { schoolId: { in: schoolIds } } });
+            const courseCount = yield prisma_1.default.course.count({ where: { schoolId: { in: schoolIds } } });
+            return res.json({
+                dry_run: true,
+                message: "Preview only — no data deleted. Remove dry_run: true to execute.",
+                schools: dummySchools.map(s => ({ id: s.id, subdomain: s.subdomain })),
+                would_delete: { users: userCount, courses: courseCount, schools: dummySchools.length }
+            });
+        }
         yield prisma_1.default.user.deleteMany({ where: { schoolId: { in: schoolIds } } });
         yield prisma_1.default.lesson.deleteMany({ where: { course: { schoolId: { in: schoolIds } } } });
         yield prisma_1.default.course.deleteMany({ where: { schoolId: { in: schoolIds } } });
         yield prisma_1.default.classroom.deleteMany({ where: { schoolId: { in: schoolIds } } });
         yield prisma_1.default.school.deleteMany({ where: { id: { in: schoolIds } } });
-        res.json({ message: "Dummy data wiped successfully!" });
+        res.json({ message: "Dummy data wiped successfully!", deleted_schools: schoolIds.length });
     }
     catch (error) {
         console.error("Error wiping dummy data:", error);
         res.status(500).json({ error: "Failed to wipe dummy data", details: error.message });
     }
 }));
+exports.default = router;

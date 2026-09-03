@@ -805,12 +805,24 @@ export async function ensurePerformanceIndexes() {
     'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_schoolId_createdAt_idx" ON "Exam" ("schoolId", "createdAt")',
     'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Exam_isCentral_createdAt_idx" ON "Exam" ("isCentral", "createdAt")',
     'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_userId_createdAt_idx" ON "ExamSubmission" ("userId", "createdAt")',
-    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_examId_userId_idx" ON "ExamSubmission" ("examId", "userId")'
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamSubmission_examId_userId_idx" ON "ExamSubmission" ("examId", "userId")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_idx" ON "Question" ("examId")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_examId_deletedAt_idx" ON "Question" ("examId", "deletedAt")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_idx" ON "Question" ("subExamId")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_subExamId_deletedAt_idx" ON "Question" ("subExamId", "deletedAt")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_moduleId_idx" ON "Question" ("moduleId")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_deletedAt_idx" ON "Question" ("deletedAt")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_examId_idx" ON "ExamModule" ("examId")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "SubExam_moduleId_idx" ON "SubExam" ("moduleId")'
   ];
 
   for (const statement of statements) {
-    const query = isPostgres ? statement : statement.replace(' CONCURRENTLY', '');
-    await prisma.$executeRawUnsafe(query);
+    try {
+      const query = isPostgres ? statement : statement.replace(' CONCURRENTLY', '');
+      await prisma.$executeRawUnsafe(query);
+    } catch (idxErr: any) {
+      console.warn(`[DB Index Setup] Non-fatal notice: ${idxErr.message}`);
+    }
   }
 }
 

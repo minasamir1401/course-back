@@ -337,6 +337,13 @@ model Question {
   module          ExamModule?     @relation(fields: [moduleId], references: [id], onDelete: SetNull)
   subExam         SubExam?        @relation(fields: [subExamId], references: [id], onDelete: SetNull)
   answers         StudentAnswer[]
+
+  @@index([examId])
+  @@index([examId, deletedAt])
+  @@index([subExamId])
+  @@index([subExamId, deletedAt])
+  @@index([moduleId])
+  @@index([deletedAt])
 }
 
 model ExamSubmission {

@@ -66,8 +66,14 @@ export async function runHourlyCloudBackupJob() {
       if (files.length > 50) {
         const filesToDelete = files.slice(50);
         for (const f of filesToDelete) {
-          fs.unlinkSync(f.filePath);
-          console.log(`🗑️ [Cron Service] Pruned old local backup: ${f.filename}`);
+          try {
+            if (fs.existsSync(f.filePath)) {
+              fs.unlinkSync(f.filePath);
+              console.log(`🗑️ [Cron Service] Pruned old local backup: ${f.filename}`);
+            }
+          } catch (delErr: any) {
+            console.warn(`[Cron Service] Could not prune file ${f.filename} (non-fatal):`, delErr.message);
+          }
         }
       }
     } catch (e: any) {
@@ -124,6 +130,12 @@ async function pruneOldHourlyBackups() {
  * Run at minute 0 of every hour (1:00, 2:00, 3:00, ...).
  */
 export function initCronJobs() {
+  // PM2 cluster mode: only run scheduled crons on worker instance #0 (or single-process if NODE_APP_INSTANCE is unset)
+  if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== '0') {
+    console.log(`⏰ [Cron Service] PM2 worker instance #${process.env.NODE_APP_INSTANCE} — skipping cron scheduler (runs exclusively on worker #0).`);
+    return;
+  }
+
   cron.schedule('0 * * * *', async () => {
     await runHourlyCloudBackupJob();
   });

@@ -52,9 +52,14 @@ const checkUserActiveStatus = (userId) => __awaiter(void 0, void 0, void 0, func
     return isActive;
 });
 const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
-    let token = (_a = req.headers.authorization) === null || _a === void 0 ? void 0 : _a.split(' ')[1];
-    // Support query parameter token (needed for direct downloads like backups via window.open)
+    var _a, _b;
+    // Priority 1: httpOnly cookie (most secure — not accessible to JavaScript)
+    let token = (_a = req.cookies) === null || _a === void 0 ? void 0 : _a.auth_token;
+    // Priority 2: Authorization header (backward-compatible — legacy clients / mobile)
+    if (!token) {
+        token = (_b = req.headers.authorization) === null || _b === void 0 ? void 0 : _b.split(' ')[1];
+    }
+    // Priority 3: Query parameter (needed for direct downloads like backups via window.open)
     if (!token && req.query.token) {
         token = req.query.token;
     }
