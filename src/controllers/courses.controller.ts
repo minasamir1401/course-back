@@ -345,12 +345,18 @@ export const postCourseHandler11 = async (req: any, res: any) => {
       }
 
       // Determine the target school ID
+      const rawCreateSchoolList = schoolIds !== undefined ? schoolIds : (schoolId ? [schoolId] : []);
+      const sanitizedCreateSchoolIds: string[] = (Array.isArray(rawCreateSchoolList) ? rawCreateSchoolList : [rawCreateSchoolList])
+        .map((sid: any) => (typeof sid === "object" && sid ? sid.id : sid))
+        .filter((sid: any): sid is string => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
+        .map((sid: string) => sid.trim());
+
       const targetSchoolId =
         req.user.role === "SCHOOL_ADMIN" || req.user.role === "TEACHER"
           ? req.user.schoolId
           : isCentral
             ? null
-            : schoolId || req.user.schoolId;
+            : (sanitizedCreateSchoolIds.length > 0 ? sanitizedCreateSchoolIds[0] : (schoolId && schoolId !== "null" && typeof schoolId === "string" && schoolId.trim() !== "" ? schoolId.trim() : null)) || req.user.schoolId;
 
       // Check if duplicate course already exists in the target school
       const existingCourse = await prisma.course.findFirst({
@@ -435,9 +441,8 @@ export const postCourseHandler11 = async (req: any, res: any) => {
             schools:
               req.user.role === "SUPER_ADMIN" &&
               !isCentral &&
-              Array.isArray(schoolIds) &&
-              schoolIds.length > 0
-                ? { connect: schoolIds.map((id: string) => ({ id })) }
+              sanitizedCreateSchoolIds.length > 0
+                ? { connect: sanitizedCreateSchoolIds.map((id: string) => ({ id })) }
                 : undefined,
             lessons: {
               create: lessonsData,
@@ -661,6 +666,14 @@ export const putCourseHandler12 = async (req: any, res: any) => {
             )
           : null;
 
+      console.log("[Course PUT] Raw schoolIds:", JSON.stringify(schoolIds), "schoolId:", schoolId);
+
+      const rawSchoolList = schoolIds !== undefined ? schoolIds : (schoolId ? [schoolId] : []);
+      const sanitizedSchoolIds: string[] = (Array.isArray(rawSchoolList) ? rawSchoolList : [rawSchoolList])
+        .map((sid: any) => (typeof sid === "object" && sid ? sid.id : sid))
+        .filter((sid: any): sid is string => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
+        .map((sid: string) => sid.trim());
+
       const updatedCourse = await prisma.$transaction(
         async (tx) => {
           await tx.course.update({
@@ -682,20 +695,17 @@ export const putCourseHandler12 = async (req: any, res: any) => {
               isCentral: req.user.role === "SUPER_ADMIN" ? !!isCentral : false,
               schoolId:
                 req.user.role === "SCHOOL_ADMIN" || req.user.role === "TEACHER"
-                  ? req.user.schoolId
+                  ? (req.user.schoolId || existingCourse.schoolId)
                   : isCentral
                     ? null
-                    : schoolId || req.user.schoolId,
+                    : (sanitizedSchoolIds.length > 0 ? sanitizedSchoolIds[0] : (schoolId && schoolId !== "null" && typeof schoolId === "string" && schoolId.trim() !== "" ? schoolId.trim() : null)),
               schools:
                 req.user.role === "SUPER_ADMIN" && isCentral
                   ? { set: [] }
-                  : req.user.role === "SUPER_ADMIN" && !isCentral && schoolIds !== undefined
+                  : req.user.role === "SUPER_ADMIN" && !isCentral && (schoolIds !== undefined || schoolId !== undefined)
                     ? {
-                        set: Array.isArray(schoolIds)
-                          ? schoolIds.map((sid: string) => ({ id: sid }))
-                          : schoolId
-                            ? [{ id: schoolId }]
-                            : [],
+                        set: [],
+                        connect: sanitizedSchoolIds.map((sid: string) => ({ id: sid })),
                       }
                     : undefined,
             },

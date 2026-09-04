@@ -1020,12 +1020,16 @@ export const postBackupHandler13 = async (req: any, res: any) => {
       // 3. Connect implicit M:N relationships
       if (data.courseToSchool && data.courseToSchool.length > 0) {
         for (const item of data.courseToSchool) {
-          if (item.schools && item.schools.length > 0) {
+          const validSchools = (item.schools || [])
+            .map((s: any) => (typeof s === "object" && s ? s.id : s))
+            .filter((id: any): id is string => Boolean(id && typeof id === "string" && id !== "null" && id !== "undefined" && id.trim() !== ""))
+            .map((id: string) => ({ id: id.trim() }));
+          if (validSchools.length > 0) {
             await tx.course.update({
               where: { id: item.id },
               data: {
                 schools: {
-                  connect: item.schools.map((s: any) => ({ id: s.id }))
+                  connect: validSchools
                 }
               }
             });
@@ -1034,12 +1038,16 @@ export const postBackupHandler13 = async (req: any, res: any) => {
       }
       if (data.examToSchool && data.examToSchool.length > 0) {
         for (const item of data.examToSchool) {
-          if (item.schools && item.schools.length > 0) {
+          const validSchools = (item.schools || [])
+            .map((s: any) => (typeof s === "object" && s ? s.id : s))
+            .filter((id: any): id is string => Boolean(id && typeof id === "string" && id !== "null" && id !== "undefined" && id.trim() !== ""))
+            .map((id: string) => ({ id: id.trim() }));
+          if (validSchools.length > 0) {
             await tx.exam.update({
               where: { id: item.id },
               data: {
                 schools: {
-                  connect: item.schools.map((s: any) => ({ id: s.id }))
+                  connect: validSchools
                 }
               }
             });

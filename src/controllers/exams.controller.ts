@@ -121,12 +121,18 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
 
     // Prepare target schools
     const effectiveIsCentral = !!isCentral;
-    const finalSchoolIds = (req as any).user.role === 'SCHOOL_ADMIN'
-      ? (effectiveIsCentral ? [] : [(req as any).user.schoolId])
-      : (effectiveIsCentral ? [] : (schoolIds || (schoolId ? [schoolId] : [(req as any).user.schoolId])).filter(Boolean));
+    const rawCreateSchoolList = schoolIds !== undefined ? schoolIds : (schoolId ? [schoolId] : [(req as any).user.schoolId]);
+    const finalSchoolIds: string[] = effectiveIsCentral
+      ? []
+      : (req as any).user.role === 'SCHOOL_ADMIN'
+        ? [(req as any).user.schoolId]
+        : (Array.isArray(rawCreateSchoolList) ? rawCreateSchoolList : [rawCreateSchoolList])
+            .map((s: any) => (typeof s === 'object' && s ? s.id : s))
+            .filter((id: any): id is string => Boolean(id && typeof id === 'string' && id !== 'null' && id !== 'undefined' && id.trim() !== ''))
+            .map((id: string) => id.trim());
     const ownerSchoolId = (req as any).user.role === 'SCHOOL_ADMIN'
       ? (effectiveIsCentral ? null : (req as any).user.schoolId)
-      : (effectiveIsCentral ? null : (schoolId || (req as any).user.schoolId));
+      : (effectiveIsCentral ? null : (finalSchoolIds.length > 0 ? finalSchoolIds[0] : (schoolId || (req as any).user.schoolId)));
 
     // Check if duplicate exam already exists in the same target school
     if (req.body.status !== 'DRAFT') {
@@ -486,12 +492,23 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
     if ((req as any).user.role === 'SUPER_ADMIN') {
       const effectiveIsCentral = isCentral !== undefined ? !!isCentral : existingExam.isCentral;
       updateData.isCentral = effectiveIsCentral;
-      updateData.schoolId = effectiveIsCentral ? null : (req.body.schoolId || existingExam.schoolId);
-      if (schoolIds !== undefined) {
-        updateData.schools = {
-          set: [],
-          connect: (schoolIds || []).filter((sid: any) => sid && sid !== 'null').map((sid: string) => ({ id: sid }))
-        };
+      if (effectiveIsCentral) {
+        updateData.schoolId = null;
+        updateData.schools = { set: [] };
+      } else {
+        const rawSchoolList = schoolIds !== undefined ? schoolIds : (req.body.schoolId ? [req.body.schoolId] : []);
+        const sanitizedSchoolIds: string[] = (Array.isArray(rawSchoolList) ? rawSchoolList : [rawSchoolList])
+          .map((sid: any) => (typeof sid === "object" && sid ? sid.id : sid))
+          .filter((sid: any): sid is string => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
+          .map((sid: string) => sid.trim());
+
+        updateData.schoolId = sanitizedSchoolIds.length > 0 ? sanitizedSchoolIds[0] : (req.body.schoolId && req.body.schoolId !== "null" ? req.body.schoolId : existingExam.schoolId);
+        if (schoolIds !== undefined || req.body.schoolId !== undefined) {
+          updateData.schools = {
+            set: [],
+            connect: sanitizedSchoolIds.map((sid: string) => ({ id: sid })),
+          };
+        }
       }
     } else {
       const effectiveIsCentral = isCentral !== undefined ? !!isCentral : existingExam.isCentral;
