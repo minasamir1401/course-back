@@ -2075,6 +2075,118 @@ export const deleteExamHandler30 = async (req: Request, res: Response) => {
   }
 };
 
+export const postMoveSubExamHandler = async (req: Request, res: Response) => {
+  try {
+    const { id, moduleId, subExamId } = req.params;
+    const { targetModuleId, newModuleTitle } = req.body || {};
+
+    const trimmedNewTitle = newModuleTitle ? String(newModuleTitle).trim() : '';
+    if (!targetModuleId && !trimmedNewTitle) {
+      return res.status(400).json({ error: 'Either targetModuleId or newModuleTitle is required.' });
+    }
+
+    const sourceModule = await prisma.examModule.findFirst({
+      where: { id: moduleId, examId: id },
+      select: { id: true, title: true }
+    });
+    if (!sourceModule) {
+      return res.status(404).json({ error: 'Source module not found in this exam.' });
+    }
+
+    const subExam = await prisma.subExam.findFirst({
+      where: { id: subExamId, moduleId },
+      include: {
+        _count: {
+          select: { questions: { where: { deletedAt: null } } }
+        }
+      }
+    });
+    if (!subExam) {
+      return res.status(404).json({ error: 'Exam not found inside source module.' });
+    }
+
+    let destinationModuleId = targetModuleId ? String(targetModuleId).trim() : '';
+
+    const result = await prisma.$transaction(async (tx) => {
+      if (trimmedNewTitle) {
+        const lastModule = await tx.examModule.findFirst({
+          where: { examId: id },
+          orderBy: { order: 'desc' },
+          select: { order: true }
+        });
+        const nextOrder = (lastModule?.order ?? -1) + 1;
+
+        const createdModule = await tx.examModule.create({
+          data: {
+            examId: id,
+            title: sanitizeHtml(trimmedNewTitle),
+            order: nextOrder,
+          }
+        });
+        destinationModuleId = createdModule.id;
+      } else {
+        const targetMod = await tx.examModule.findFirst({
+          where: { id: destinationModuleId, examId: id },
+          select: { id: true, title: true }
+        });
+        if (!targetMod) {
+          throw new Error('Destination module not found in this exam.');
+        }
+        if (targetMod.id === moduleId) {
+          throw new Error('Destination module cannot be the same as the current module.');
+        }
+      }
+
+      const destSubExamsCount = await tx.subExam.count({
+        where: { moduleId: destinationModuleId }
+      });
+
+      const updatedSubExam = await tx.subExam.update({
+        where: { id: subExamId },
+        data: {
+          moduleId: destinationModuleId,
+          order: destSubExamsCount,
+        }
+      });
+
+      const updatedQuestions = await tx.question.updateMany({
+        where: {
+          examId: id,
+          subExamId: subExamId,
+        },
+        data: {
+          moduleId: destinationModuleId,
+        }
+      });
+
+      const destinationModule = await tx.examModule.findUnique({
+        where: { id: destinationModuleId },
+        include: {
+          subExams: {
+            orderBy: { order: 'asc' }
+          }
+        }
+      });
+
+      return {
+        subExam: updatedSubExam,
+        destinationModule,
+        movedQuestionsCount: updatedQuestions.count,
+        isNewModule: Boolean(trimmedNewTitle),
+      };
+    });
+
+    res.json({
+      success: true,
+      message: 'Exam and its questions moved successfully.',
+      ...result,
+    });
+  } catch (error: any) {
+    console.error('Error moving subExam to module:', error);
+    res.status(400).json({ error: error?.message || 'Failed to move exam to destination module.' });
+  }
+};
+
 export const getExamHandler31 = async (req: Request, res: Response) => {
   try {
     const { id, moduleId, subExamId } = req.params;

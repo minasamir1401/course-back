@@ -116,6 +116,7 @@ router.post('/api/exams/:id/modules/:moduleId/exams', verifyToken, checkRole(['S
 router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/collect-questions', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postExamHandler33);
 router.put('/api/exams/:id/modules/:moduleId/exams/:subExamId', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler29);
 router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', verifyToken, checkRole(['SUPER_ADMIN']), requireManagedExam, examsController.deleteExamHandler30);
+router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/move', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveSubExamHandler);
 router.get('/api/exams/:id/modules/:moduleId/exams/:subExamId/export-json', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.getExamHandler31);
 router.post('/api/exams/:id/modules/:moduleId/exams/import-json', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, multerUpload.single('file'), examsController.postExamHandler32);
 
