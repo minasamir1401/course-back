@@ -98,12 +98,6 @@ router.post('/api/exams/:id/submit', auth_1.verifyToken, (0, auth_1.checkRole)([
 router.get('/api/exams/submissions/:id', auth_1.verifyToken, examsController.getExamHandler14);
 // 6. Get All Submissions for an Exam (for Analytics)
 router.get('/api/exams/:id/submissions', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.getExamHandler15);
-// ==========================================
-// 📊 REPORTS & ANALYTICS
-// ==========================================
-// ==========================================
-// ♻️ RESTORE ENDPOINTS
-// ==========================================
 router.post('/api/admin/exams/:id/restore', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), examsController.postExamHandler16);
 router.post('/api/admin/questions/:id/restore', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), examsController.postExamHandler17);
 // ==========================================
@@ -111,11 +105,11 @@ router.post('/api/admin/questions/:id/restore', auth_1.verifyToken, (0, auth_1.c
 // ==========================================
 router.post('/api/exams/:id/modules', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postExamHandler18);
 router.put('/api/exams/:id/modules/:moduleId', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler19);
-router.delete('/api/exams/:id/modules/:moduleId', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.deleteExamHandler20);
+router.delete('/api/exams/:id/modules/:moduleId', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), requireManagedExam, examsController.deleteExamHandler20);
 router.post('/api/exams/:id/modules/:moduleId/exams', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postExamHandler28);
 router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/collect-questions', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postExamHandler33);
 router.put('/api/exams/:id/modules/:moduleId/exams/:subExamId', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler29);
-router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.deleteExamHandler30);
+router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), requireManagedExam, examsController.deleteExamHandler30);
 router.get('/api/exams/:id/modules/:moduleId/exams/:subExamId/export-json', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.getExamHandler31);
 router.post('/api/exams/:id/modules/:moduleId/exams/import-json', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, shared_1.multerUpload.single('file'), examsController.postExamHandler32);
 // ==========================================
@@ -124,7 +118,7 @@ router.post('/api/exams/:id/modules/:moduleId/exams/import-json', auth_1.verifyT
 router.get('/api/exam-folders', auth_1.verifyToken, examsController.getExamHandler21);
 router.post('/api/exam-folders', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN']), examsController.postExamHandler22);
 router.put('/api/exam-folders/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN']), examsController.putExamHandler23);
-router.delete('/api/exam-folders/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN']), examsController.deleteExamHandler24);
+router.delete('/api/exam-folders/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), examsController.deleteExamHandler24);
 router.post('/api/exams/:id/move-standalone-questions', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.postExamHandler25);
 router.post('/api/exams/:id/move-to-module', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.postExamHandler26);
 exports.default = router;

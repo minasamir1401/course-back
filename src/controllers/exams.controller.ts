@@ -782,11 +782,15 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
         // Never infer deletes from a missing question in the payload; that can happen when
         // frontend IDs are lost, and would hide existing StudentAnswers in reports.
-        for (const existingId of Array.from(explicitDeletedIds)) {
-          await tx.question.update({
-            where: { id: existingId },
-            data: { deletedAt: new Date() }
-          });
+        // ONLY Super Admin is allowed to delete questions!
+        const isSuperAdmin = (req as any).user?.role === 'SUPER_ADMIN';
+        if (isSuperAdmin) {
+          for (const existingId of Array.from(explicitDeletedIds)) {
+            await tx.question.update({
+              where: { id: existingId },
+              data: { deletedAt: new Date() }
+            });
+          }
         }
 
         // A partial autosave must not delete unseen rows. Keep those rows and append
@@ -1194,38 +1198,38 @@ export const postExamHandler11 = async (req: any, res: any) => {
       ? mergeStudentProfile((req as any).user, await prisma.user.findUnique({ where: { id: (req as any).user.id }, select: { grade: true, schoolId: true } }))
       : (req as any).user;
     if ((req as any).user.role === 'STUDENT' && !examMatchesStudent(exam, accessUser)) {
-      return res.status(403).json({ error: 'هذا الامتحان غير مخصص لك.', type: 'ACCESS_DENIED' });
+      return res.status(403).json({ error: 'This exam is not assigned to you.', type: 'ACCESS_DENIED' });
     }
 
     // 1. Check Dates (skip for admins and teachers testing)
     const isAdminOrTeacher = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes((req as any).user.role);
     const now = new Date();
     if (!isAdminOrTeacher && exam.startDate && now < new Date(exam.startDate)) {
-      return res.status(403).json({ error: 'الامتحان لم يبدأ بعد.', type: 'EARLY_ACCESS' });
+      return res.status(403).json({ error: 'The exam has not started yet.', type: 'EARLY_ACCESS' });
     }
     if (!isAdminOrTeacher && exam.endDate && now > new Date(exam.endDate)) {
-      return res.status(403).json({ error: 'انتهى موعد الامتحان.', type: 'EXPIRED' });
+      return res.status(403).json({ error: 'The exam has expired.', type: 'EXPIRED' });
     }
     if (!isAdminOrTeacher && selectedSubExam && getAvailability(selectedSubExam, now) !== 'AVAILABLE') {
-      return res.status(403).json({ error: getAvailability(selectedSubExam, now) === 'UPCOMING' ? 'لم يبدأ هذا الاختبار بعد.' : 'انتهى موعد هذا الاختبار.', type: getAvailability(selectedSubExam, now) });
+      return res.status(403).json({ error: getAvailability(selectedSubExam, now) === 'UPCOMING' ? 'This exam has not started yet.' : 'This exam has expired.', type: getAvailability(selectedSubExam, now) });
     }
 
     // 2. Check Attempts (999 means unlimited)
     const submissionCount = await prisma.examSubmission.count({ where: { examId, userId, ...(subExamId ? { subExamId } : {}) } });
     const attemptsAllowed = selectedSubExam?.attemptsAllowed ?? exam.attemptsAllowed;
     if (!isAdminOrTeacher && attemptsAllowed !== 999 && submissionCount >= attemptsAllowed) {
-      return res.status(403).json({ error: 'لقد استنفدت عدد المحاولات المسموح بها لهذا الامتحان.', type: 'ATTEMPTS_EXCEEDED' });
+      return res.status(403).json({ error: 'You have reached the maximum number of attempts allowed for this exam.', type: 'ATTEMPTS_EXCEEDED' });
     }
 
     // 3. Check Password
     const requiredPassword = resolveExamAccessPassword(exam, selectedSubExam);
     if (!isAdminOrTeacher && requiredPassword && requiredPassword !== password) {
-      return res.status(403).json({ error: 'كلمة السر غير صحيحة.', type: 'INVALID_PASSWORD' });
+      return res.status(403).json({ error: 'Incorrect password.', type: 'INVALID_PASSWORD' });
     }
 
-    res.json({ success: true, message: 'تم التحقق من الوصول بنجاح.' });
+    res.json({ success: true, message: 'Access verified successfully.' });
   } catch (error) {
-    res.status(500).json({ error: 'خطأ في التحقق من الوصول.' });
+    res.status(500).json({ error: 'Error verifying access.' });
   }
 };
 
@@ -1271,7 +1275,7 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
   const lockKey = `submit_exam_${userId}_${examId}_${subExamId || 'root'}`;
 
   if (!acquireLock(lockKey)) {
-    return res.status(429).json({ error: 'جاري تسليم الامتحان... الرجاء الانتظار.' });
+    return res.status(429).json({ error: 'Submitting exam... please wait.' });
   }
 
   try {
@@ -1311,34 +1315,34 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
       ? mergeStudentProfile((req as any).user, await prisma.user.findUnique({ where: { id: (req as any).user.id }, select: { grade: true, schoolId: true } }))
       : (req as any).user;
     if ((req as any).user.role === 'STUDENT' && !examMatchesStudent(exam, accessUser)) {
-      return res.status(403).json({ error: 'هذا الامتحان غير مخصص لك.' });
+      return res.status(403).json({ error: 'This exam is not assigned to you.' });
     }
 
     const isAdminOrTeacher = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER'].includes((req as any).user.role);
 
     const attemptsAllowed = selectedSubExam?.attemptsAllowed ?? exam.attemptsAllowed;
     if (!isAdminOrTeacher && attemptsAllowed !== 999 && submissionCount >= attemptsAllowed) {
-      return res.status(400).json({ error: 'لقد استنفدت عدد المحاولات المسموح بها لهذا الامتحان.' });
+      return res.status(400).json({ error: 'You have reached the maximum number of attempts allowed for this exam.' });
     }
 
     // Check dates again on submission (skip for admins and teachers testing)
     const now = new Date();
     if (!isAdminOrTeacher && exam.startDate && now < new Date(exam.startDate)) {
-      return res.status(403).json({ error: 'الامتحان لم يبدأ بعد.' });
+      return res.status(403).json({ error: 'The exam has not started yet.' });
     }
     if (!isAdminOrTeacher && exam.endDate && now > new Date(exam.endDate)) {
-      return res.status(403).json({ error: 'انتهى موعد الامتحان.' });
+      return res.status(403).json({ error: 'The exam has expired.' });
     }
     if (!isAdminOrTeacher && selectedSubExam && getAvailability(selectedSubExam, now) !== 'AVAILABLE') {
-      return res.status(403).json({ error: getAvailability(selectedSubExam, now) === 'UPCOMING' ? 'لم يبدأ هذا الاختبار بعد.' : 'انتهى موعد هذا الاختبار.' });
+      return res.status(403).json({ error: getAvailability(selectedSubExam, now) === 'UPCOMING' ? 'This exam has not started yet.' : 'This exam has expired.' });
     }
     const requiredPassword = resolveExamAccessPassword(exam, selectedSubExam);
     if (requiredPassword && requiredPassword !== password) {
-      return res.status(403).json({ error: 'كلمة السر غير صحيحة.' });
+      return res.status(403).json({ error: 'Incorrect password.' });
     }
     exam.questions = subExamId ? exam.questions.filter((question: any) => question.subExamId === subExamId) : exam.questions;
     if (exam.questions.length === 0) {
-      return res.status(400).json({ error: 'لا يمكن تسليم امتحان بدون أسئلة.' });
+      return res.status(400).json({ error: 'Cannot submit an exam without questions.' });
     }
 
     let totalScore = 0;
@@ -1362,7 +1366,7 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
     });
 
     if (maxPossibleScore <= 0) {
-      return res.status(400).json({ error: 'لا يمكن تصحيح امتحان بدون درجات.' });
+      return res.status(400).json({ error: 'Cannot grade an exam without points.' });
     }
     const percentage = (totalScore / maxPossibleScore) * 100;
 
@@ -1620,8 +1624,9 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
         return res.json({
           id: submission.id,
           createdAt: submission.createdAt,
-          exam: { title: submission.exam.title, skill: submission.exam.skill, level: submission.exam.level },
-          message: 'سيتم إظهار النتائج لاحقاً',
+          exam: { title: subExamDetails?.title || submission.exam.title, skill: submission.exam.skill, level: submission.exam.level },
+          subExam: subExamDetails,
+          message: 'Results will be revealed later',
           policy: 'HIDE_ALL'
         });
       }
@@ -1662,6 +1667,7 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
       safeExam.totalPoints = submissionXpStats.totalPoints;
 
       if (subExamDetails) {
+        safeExam.title = subExamDetails.title || safeExam.title;
         safeExam.passingScore = resolvePassingScore(safeExam.passingScore, subExamDetails.passingScore);
         safeExam.duration = subExamDetails.duration;
       }
@@ -1675,6 +1681,7 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
         totalScore: submissionXpStats.dynamicTotalScore,
         percentage: dynamicPercentage,
         exam: safeExam,
+        subExam: subExamDetails,
         answers: policy === 'SHOW_SCORE' ? [] : sanitizedAnswers,
         earnedXP: submissionXpStats.earnedXP,
         correctAnswers: submissionXpStats.correctAnswers,
@@ -1696,6 +1703,7 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
     const submissionXpStats = await buildSubmissionXpStats(submission, submission.answers);
 
     if (subExamDetails) {
+      (submission as any).exam.title = subExamDetails.title || (submission as any).exam.title;
       (submission as any).exam.passingScore = resolvePassingScore(
         (submission as any).exam.passingScore,
         subExamDetails.passingScore,
@@ -1708,6 +1716,7 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
 
     res.json({
       ...submission,
+      subExam: subExamDetails,
       totalScore: submissionXpStats.dynamicTotalScore,
       percentage: dynamicPercentage,
       answers: parsedAnswers,
@@ -1862,6 +1871,10 @@ export const deleteExamHandler20 = async (req: Request, res: Response) => {
   try {
     const { id, moduleId } = req.params;
 
+    if ((req as any).user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Access denied: Only Super Admin can delete modules.' });
+    }
+
     const exam = await prisma.exam.findUnique({ where: { id }, include: { schools: { select: { id: true } } } });
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
 
@@ -2009,6 +2022,11 @@ export const putExamHandler29 = async (req: Request, res: Response) => {
 export const deleteExamHandler30 = async (req: Request, res: Response) => {
   try {
     const { id, moduleId, subExamId } = req.params;
+
+    if ((req as any).user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Access denied: Only Super Admin can delete exams.' });
+    }
+
     const parent = await prisma.examModule.findFirst({ where: { id: moduleId, examId: id }, select: { id: true } });
     if (!parent) return res.status(404).json({ error: 'Exam module not found' });
 
@@ -2316,11 +2334,7 @@ export const deleteExamHandler24 = async (req: Request, res: Response) => {
     if (!existingFolder) return res.status(404).json({ error: 'Exam folder not found' });
 
     if ((req as any).user.role !== 'SUPER_ADMIN') {
-      const isOwner =
-        existingFolder.schoolId === (req as any).user.schoolId ||
-        existingFolder.isCentral ||
-        existingFolder.creatorId === (req as any).user.id;
-      if (!isOwner) return res.status(403).json({ error: 'Access denied: You do not have permission to delete this folder.' });
+      return res.status(403).json({ error: 'Access denied: Only Super Admin can delete exam folders.' });
     }
 
     await prisma.examFolder.update({

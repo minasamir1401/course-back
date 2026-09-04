@@ -454,7 +454,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             updateData.schoolId = effectiveIsCentral ? null : (existingExam.schoolId || req.user.schoolId);
         }
         const exam = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c;
             // --- MODULES UPSERT LOGIC ---
             let incomingModuleIds = [];
             let incomingSubExamIds = [];
@@ -712,11 +712,15 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
                 // Never infer deletes from a missing question in the payload; that can happen when
                 // frontend IDs are lost, and would hide existing StudentAnswers in reports.
-                for (const existingId of Array.from(explicitDeletedIds)) {
-                    yield tx.question.update({
-                        where: { id: existingId },
-                        data: { deletedAt: new Date() }
-                    });
+                // ONLY Super Admin is allowed to delete questions!
+                const isSuperAdmin = ((_c = req.user) === null || _c === void 0 ? void 0 : _c.role) === 'SUPER_ADMIN';
+                if (isSuperAdmin) {
+                    for (const existingId of Array.from(explicitDeletedIds)) {
+                        yield tx.question.update({
+                            where: { id: existingId },
+                            data: { deletedAt: new Date() }
+                        });
+                    }
                 }
                 // A partial autosave must not delete unseen rows. Keep those rows and append
                 // them deterministically after the sequence sent by the editor, then persist
@@ -1103,35 +1107,35 @@ const postExamHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, functi
             ? (0, examWorkflow_1.mergeStudentProfile)(req.user, yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { grade: true, schoolId: true } }))
             : req.user;
         if (req.user.role === 'STUDENT' && !(0, shared_1.examMatchesStudent)(exam, accessUser)) {
-            return res.status(403).json({ error: 'هذا الامتحان غير مخصص لك.', type: 'ACCESS_DENIED' });
+            return res.status(403).json({ error: 'This exam is not assigned to you.', type: 'ACCESS_DENIED' });
         }
         // 1. Check Dates (skip for admins and teachers testing)
         const isAdminOrTeacher = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(req.user.role);
         const now = new Date();
         if (!isAdminOrTeacher && exam.startDate && now < new Date(exam.startDate)) {
-            return res.status(403).json({ error: 'الامتحان لم يبدأ بعد.', type: 'EARLY_ACCESS' });
+            return res.status(403).json({ error: 'The exam has not started yet.', type: 'EARLY_ACCESS' });
         }
         if (!isAdminOrTeacher && exam.endDate && now > new Date(exam.endDate)) {
-            return res.status(403).json({ error: 'انتهى موعد الامتحان.', type: 'EXPIRED' });
+            return res.status(403).json({ error: 'The exam has expired.', type: 'EXPIRED' });
         }
         if (!isAdminOrTeacher && selectedSubExam && (0, examWorkflow_1.getAvailability)(selectedSubExam, now) !== 'AVAILABLE') {
-            return res.status(403).json({ error: (0, examWorkflow_1.getAvailability)(selectedSubExam, now) === 'UPCOMING' ? 'لم يبدأ هذا الاختبار بعد.' : 'انتهى موعد هذا الاختبار.', type: (0, examWorkflow_1.getAvailability)(selectedSubExam, now) });
+            return res.status(403).json({ error: (0, examWorkflow_1.getAvailability)(selectedSubExam, now) === 'UPCOMING' ? 'This exam has not started yet.' : 'This exam has expired.', type: (0, examWorkflow_1.getAvailability)(selectedSubExam, now) });
         }
         // 2. Check Attempts (999 means unlimited)
         const submissionCount = yield prisma_1.default.examSubmission.count({ where: Object.assign({ examId, userId }, (subExamId ? { subExamId } : {})) });
         const attemptsAllowed = (_b = selectedSubExam === null || selectedSubExam === void 0 ? void 0 : selectedSubExam.attemptsAllowed) !== null && _b !== void 0 ? _b : exam.attemptsAllowed;
         if (!isAdminOrTeacher && attemptsAllowed !== 999 && submissionCount >= attemptsAllowed) {
-            return res.status(403).json({ error: 'لقد استنفدت عدد المحاولات المسموح بها لهذا الامتحان.', type: 'ATTEMPTS_EXCEEDED' });
+            return res.status(403).json({ error: 'You have reached the maximum number of attempts allowed for this exam.', type: 'ATTEMPTS_EXCEEDED' });
         }
         // 3. Check Password
         const requiredPassword = (0, examWorkflow_1.resolveExamAccessPassword)(exam, selectedSubExam);
         if (!isAdminOrTeacher && requiredPassword && requiredPassword !== password) {
-            return res.status(403).json({ error: 'كلمة السر غير صحيحة.', type: 'INVALID_PASSWORD' });
+            return res.status(403).json({ error: 'Incorrect password.', type: 'INVALID_PASSWORD' });
         }
-        res.json({ success: true, message: 'تم التحقق من الوصول بنجاح.' });
+        res.json({ success: true, message: 'Access verified successfully.' });
     }
     catch (error) {
-        res.status(500).json({ error: 'خطأ في التحقق من الوصول.' });
+        res.status(500).json({ error: 'Error verifying access.' });
     }
 });
 exports.postExamHandler11 = postExamHandler11;
@@ -1173,7 +1177,7 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
     const { subExamId = null } = req.body || {};
     const lockKey = `submit_exam_${userId}_${examId}_${subExamId || 'root'}`;
     if (!(0, shared_1.acquireLock)(lockKey)) {
-        return res.status(429).json({ error: 'جاري تسليم الامتحان... الرجاء الانتظار.' });
+        return res.status(429).json({ error: 'Submitting exam... please wait.' });
     }
     try {
         const { answers, totalTime, password } = req.body; // Array of { questionId, selectedAnswer }, totalTime in seconds
@@ -1211,31 +1215,31 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
             ? (0, examWorkflow_1.mergeStudentProfile)(req.user, yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { grade: true, schoolId: true } }))
             : req.user;
         if (req.user.role === 'STUDENT' && !(0, shared_1.examMatchesStudent)(exam, accessUser)) {
-            return res.status(403).json({ error: 'هذا الامتحان غير مخصص لك.' });
+            return res.status(403).json({ error: 'This exam is not assigned to you.' });
         }
         const isAdminOrTeacher = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER'].includes(req.user.role);
         const attemptsAllowed = (_a = selectedSubExam === null || selectedSubExam === void 0 ? void 0 : selectedSubExam.attemptsAllowed) !== null && _a !== void 0 ? _a : exam.attemptsAllowed;
         if (!isAdminOrTeacher && attemptsAllowed !== 999 && submissionCount >= attemptsAllowed) {
-            return res.status(400).json({ error: 'لقد استنفدت عدد المحاولات المسموح بها لهذا الامتحان.' });
+            return res.status(400).json({ error: 'You have reached the maximum number of attempts allowed for this exam.' });
         }
         // Check dates again on submission (skip for admins and teachers testing)
         const now = new Date();
         if (!isAdminOrTeacher && exam.startDate && now < new Date(exam.startDate)) {
-            return res.status(403).json({ error: 'الامتحان لم يبدأ بعد.' });
+            return res.status(403).json({ error: 'The exam has not started yet.' });
         }
         if (!isAdminOrTeacher && exam.endDate && now > new Date(exam.endDate)) {
-            return res.status(403).json({ error: 'انتهى موعد الامتحان.' });
+            return res.status(403).json({ error: 'The exam has expired.' });
         }
         if (!isAdminOrTeacher && selectedSubExam && (0, examWorkflow_1.getAvailability)(selectedSubExam, now) !== 'AVAILABLE') {
-            return res.status(403).json({ error: (0, examWorkflow_1.getAvailability)(selectedSubExam, now) === 'UPCOMING' ? 'لم يبدأ هذا الاختبار بعد.' : 'انتهى موعد هذا الاختبار.' });
+            return res.status(403).json({ error: (0, examWorkflow_1.getAvailability)(selectedSubExam, now) === 'UPCOMING' ? 'This exam has not started yet.' : 'This exam has expired.' });
         }
         const requiredPassword = (0, examWorkflow_1.resolveExamAccessPassword)(exam, selectedSubExam);
         if (requiredPassword && requiredPassword !== password) {
-            return res.status(403).json({ error: 'كلمة السر غير صحيحة.' });
+            return res.status(403).json({ error: 'Incorrect password.' });
         }
         exam.questions = subExamId ? exam.questions.filter((question) => question.subExamId === subExamId) : exam.questions;
         if (exam.questions.length === 0) {
-            return res.status(400).json({ error: 'لا يمكن تسليم امتحان بدون أسئلة.' });
+            return res.status(400).json({ error: 'Cannot submit an exam without questions.' });
         }
         let totalScore = 0;
         let maxPossibleScore = 0;
@@ -1255,7 +1259,7 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
             });
         });
         if (maxPossibleScore <= 0) {
-            return res.status(400).json({ error: 'لا يمكن تصحيح امتحان بدون درجات.' });
+            return res.status(400).json({ error: 'Cannot grade an exam without points.' });
         }
         const percentage = (totalScore / maxPossibleScore) * 100;
         // Gamification System calculation
@@ -1500,8 +1504,9 @@ const getExamHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 return res.json({
                     id: submission.id,
                     createdAt: submission.createdAt,
-                    exam: { title: submission.exam.title, skill: submission.exam.skill, level: submission.exam.level },
-                    message: 'سيتم إظهار النتائج لاحقاً',
+                    exam: { title: (subExamDetails === null || subExamDetails === void 0 ? void 0 : subExamDetails.title) || submission.exam.title, skill: submission.exam.skill, level: submission.exam.level },
+                    subExam: subExamDetails,
+                    message: 'Results will be revealed later',
                     policy: 'HIDE_ALL'
                 });
             }
@@ -1536,12 +1541,13 @@ const getExamHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             const safeExam = Object.assign({}, submission.exam);
             safeExam.totalPoints = submissionXpStats.totalPoints;
             if (subExamDetails) {
+                safeExam.title = subExamDetails.title || safeExam.title;
                 safeExam.passingScore = (0, examPassingScore_1.resolvePassingScore)(safeExam.passingScore, subExamDetails.passingScore);
                 safeExam.duration = subExamDetails.duration;
             }
             delete safeExam.questions;
             const dynamicPercentage = submissionXpStats.totalPoints > 0 ? (submissionXpStats.dynamicTotalScore / submissionXpStats.totalPoints) * 100 : 0;
-            return res.json(Object.assign(Object.assign({}, submission), { totalScore: submissionXpStats.dynamicTotalScore, percentage: dynamicPercentage, exam: safeExam, answers: policy === 'SHOW_SCORE' ? [] : sanitizedAnswers, earnedXP: submissionXpStats.earnedXP, correctAnswers: submissionXpStats.correctAnswers, totalQuestions: submissionXpStats.totalQuestions }));
+            return res.json(Object.assign(Object.assign({}, submission), { totalScore: submissionXpStats.dynamicTotalScore, percentage: dynamicPercentage, exam: safeExam, subExam: subExamDetails, answers: policy === 'SHOW_SCORE' ? [] : sanitizedAnswers, earnedXP: submissionXpStats.earnedXP, correctAnswers: submissionXpStats.correctAnswers, totalQuestions: submissionXpStats.totalQuestions }));
         }
         // Admins see everything
         const parsedAnswers = submission.answers.map(ans => {
@@ -1556,12 +1562,13 @@ const getExamHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         });
         const submissionXpStats = yield buildSubmissionXpStats(submission, submission.answers);
         if (subExamDetails) {
+            submission.exam.title = subExamDetails.title || submission.exam.title;
             submission.exam.passingScore = (0, examPassingScore_1.resolvePassingScore)(submission.exam.passingScore, subExamDetails.passingScore);
             submission.exam.duration = subExamDetails.duration;
         }
         submission.exam.totalPoints = submissionXpStats.totalPoints;
         const dynamicPercentage = submissionXpStats.totalPoints > 0 ? (submissionXpStats.dynamicTotalScore / submissionXpStats.totalPoints) * 100 : 0;
-        res.json(Object.assign(Object.assign({}, submission), { totalScore: submissionXpStats.dynamicTotalScore, percentage: dynamicPercentage, answers: parsedAnswers, earnedXP: submissionXpStats.earnedXP, correctAnswers: submissionXpStats.correctAnswers, totalQuestions: submissionXpStats.totalQuestions }));
+        res.json(Object.assign(Object.assign({}, submission), { subExam: subExamDetails, totalScore: submissionXpStats.dynamicTotalScore, percentage: dynamicPercentage, answers: parsedAnswers, earnedXP: submissionXpStats.earnedXP, correctAnswers: submissionXpStats.correctAnswers, totalQuestions: submissionXpStats.totalQuestions }));
     }
     catch (error) {
         res.status(500).json({ error: 'Error fetching submission' });
@@ -1700,8 +1707,12 @@ const putExamHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, functio
 });
 exports.putExamHandler19 = putExamHandler19;
 const deleteExamHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id, moduleId } = req.params;
+        if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'SUPER_ADMIN') {
+            return res.status(403).json({ error: 'Access denied: Only Super Admin can delete modules.' });
+        }
         const exam = yield prisma_1.default.exam.findUnique({ where: { id }, include: { schools: { select: { id: true } } } });
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
@@ -1854,8 +1865,12 @@ const putExamHandler29 = (req, res) => __awaiter(void 0, void 0, void 0, functio
 });
 exports.putExamHandler29 = putExamHandler29;
 const deleteExamHandler30 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id, moduleId, subExamId } = req.params;
+        if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'SUPER_ADMIN') {
+            return res.status(403).json({ error: 'Access denied: Only Super Admin can delete exams.' });
+        }
         const parent = yield prisma_1.default.examModule.findFirst({ where: { id: moduleId, examId: id }, select: { id: true } });
         if (!parent)
             return res.status(404).json({ error: 'Exam module not found' });
@@ -2151,11 +2166,7 @@ const deleteExamHandler24 = (req, res) => __awaiter(void 0, void 0, void 0, func
         if (!existingFolder)
             return res.status(404).json({ error: 'Exam folder not found' });
         if (req.user.role !== 'SUPER_ADMIN') {
-            const isOwner = existingFolder.schoolId === req.user.schoolId ||
-                existingFolder.isCentral ||
-                existingFolder.creatorId === req.user.id;
-            if (!isOwner)
-                return res.status(403).json({ error: 'Access denied: You do not have permission to delete this folder.' });
+            return res.status(403).json({ error: 'Access denied: Only Super Admin can delete exam folders.' });
         }
         yield prisma_1.default.examFolder.update({
             where: { id },
