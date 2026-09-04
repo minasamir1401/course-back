@@ -25,6 +25,16 @@ import {
   normalizeLegacyCourses, acquireLock, releaseLock, extractAndSaveBase64Images
 } from '../shared';
 
+
+const normalizeBackendDok = (raw: any): string | null => {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = s.match(/^(?:dok\s*|level\s*|مستوى\s*)?([1-4])(?:\.0)?$/i);
+  if (m) return `DOK ${m[1]}`;
+  return sanitizeHtml(s);
+};
+
 export const canManageExam = async (
   user: any,
   exam: {
@@ -236,12 +246,12 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
             points: parseInt(q.points) || 1,
             xpPoints: parseInt(q.xpPoints) || 10,
             skill: q.skill ? sanitizeHtml(q.skill) : null,
-            learningOutcome: q.learningOutcome ? sanitizeHtml(q.learningOutcome) : null,
-            standard: q.standard ? sanitizeHtml(q.standard) : null,
+            learningOutcome: (q.standard || q.learningOutcome) ? sanitizeHtml(q.standard || q.learningOutcome) : null,
+            standard: (q.standard || q.learningOutcome) ? sanitizeHtml(q.standard || q.learningOutcome) : null,
             indicator: q.indicator ? sanitizeHtml(q.indicator) : null,
             videoUrl: q.videoUrl ? sanitizeHtml(q.videoUrl) : null,
             level: q.level ? sanitizeHtml(q.level) : 'Medium',
-            dok: q.dok ? sanitizeHtml(q.dok) : null,
+            dok: normalizeBackendDok(q.dok),
             cognitive: q.cognitive ? sanitizeHtml(q.cognitive) : null,
             course: q.course ? sanitizeHtml(q.course) : null,
             section: q.section ? sanitizeHtml(q.section) : null,
@@ -681,12 +691,12 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             points: parseInt(q.points) || 1,
             xpPoints: parseInt(q.xpPoints) || 10,
             skill: q.skill !== undefined ? (q.skill ? sanitizeHtml(q.skill) : null) : undefined,
-            learningOutcome: q.learningOutcome !== undefined ? (q.learningOutcome ? sanitizeHtml(q.learningOutcome) : null) : undefined,
-            standard: q.standard !== undefined ? (q.standard ? sanitizeHtml(q.standard) : null) : undefined,
+            learningOutcome: (q.standard !== undefined || q.learningOutcome !== undefined) ? ((q.standard || q.learningOutcome) ? sanitizeHtml(q.standard || q.learningOutcome) : null) : undefined,
+            standard: (q.standard !== undefined || q.learningOutcome !== undefined) ? ((q.standard || q.learningOutcome) ? sanitizeHtml(q.standard || q.learningOutcome) : null) : undefined,
             indicator: q.indicator !== undefined ? (q.indicator ? sanitizeHtml(q.indicator) : null) : undefined,
             videoUrl: q.videoUrl !== undefined ? (q.videoUrl ? sanitizeHtml(q.videoUrl) : null) : undefined,
             level: q.level ? sanitizeHtml(q.level) : 'Medium',
-            dok: q.dok !== undefined ? (q.dok ? sanitizeHtml(q.dok) : null) : undefined,
+            dok: q.dok !== undefined ? normalizeBackendDok(q.dok) : undefined,
             cognitive: q.cognitive !== undefined ? (q.cognitive ? sanitizeHtml(q.cognitive) : null) : undefined,
             course: q.course !== undefined ? (q.course ? sanitizeHtml(q.course) : null) : undefined,
             section: q.section !== undefined ? (q.section ? sanitizeHtml(q.section) : null) : undefined,
@@ -2093,16 +2103,16 @@ export const getExamHandler31 = async (req: Request, res: Response) => {
         points: question.points,
         xpPoints: question.xpPoints,
         skill: question.skill,
-        learningOutcome: question.learningOutcome,
+        learningOutcome: question.standard || question.learningOutcome || null,
         indicator: question.indicator,
         videoUrl: question.videoUrl,
         level: question.level,
-        dok: question.dok,
+        dok: normalizeBackendDok(question.dok),
         cognitive: question.cognitive,
         course: question.course,
         section: question.section,
         domain: question.domain,
-        standard: question.standard,
+        standard: question.standard || question.learningOutcome || null,
         subskill: question.subskill,
         microSkill: question.microSkill,
         gradeTarget: question.gradeTarget,
@@ -2174,16 +2184,16 @@ export const postExamHandler32 = async (req: Request, res: Response) => {
             points: parseInt(question.points) || 1,
             xpPoints: parseInt(question.xpPoints) || 10,
             skill: question.skill ? sanitizeHtml(question.skill) : null,
-            learningOutcome: question.learningOutcome ? sanitizeHtml(question.learningOutcome) : null,
+            learningOutcome: (question.standard || question.learningOutcome) ? sanitizeHtml(question.standard || question.learningOutcome) : null,
             indicator: question.indicator ? sanitizeHtml(question.indicator) : null,
             videoUrl: question.videoUrl ? sanitizeHtml(question.videoUrl) : null,
             level: question.level ? sanitizeHtml(question.level) : 'Medium',
-            dok: question.dok ? sanitizeHtml(question.dok) : null,
+            dok: normalizeBackendDok(question.dok),
             cognitive: question.cognitive ? sanitizeHtml(question.cognitive) : null,
             course: question.course ? sanitizeHtml(question.course) : null,
             section: question.section ? sanitizeHtml(question.section) : null,
             domain: question.domain ? sanitizeHtml(question.domain) : null,
-            standard: question.standard ? sanitizeHtml(question.standard) : null,
+            standard: (question.standard || question.learningOutcome) ? sanitizeHtml(question.standard || question.learningOutcome) : null,
             subskill: question.subskill ? sanitizeHtml(question.subskill) : null,
             microSkill: question.microSkill ? sanitizeHtml(question.microSkill) : null,
             gradeTarget: question.gradeTarget ? sanitizeHtml(question.gradeTarget) : null,
