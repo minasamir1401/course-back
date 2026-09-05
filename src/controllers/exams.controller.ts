@@ -1121,31 +1121,109 @@ export const getExamHandler9 = async (req: Request, res: Response) => {
 };
 
 
+export const getExamQuestionsHandler = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
+    const moduleId = typeof req.query.moduleId === 'string' ? req.query.moduleId : null;
+
+    const exam = await prisma.exam.findUnique({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        isCentral: true,
+        schoolId: true,
+        schools: { select: { id: true } }
+      }
+    });
+
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+
+    const role = (req as any).user.role;
+    const isPrivilegedRole = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR', 'STUDENT'].includes(role);
+    if (!isPrivilegedRole) {
+      return res.status(403).json({ error: 'Access denied (Role: ' + role + ')' });
+    }
+
+    if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
+      const canAccessExam = await canManageExam((req as any).user, exam);
+      if (!canAccessExam) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    const where: any = { examId: id, deletedAt: null };
+    if (subExamId) where.subExamId = subExamId;
+    if (moduleId) where.moduleId = moduleId;
+
+    const questions = await prisma.question.findMany({
+      where,
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
+    });
+
+    const parsedQuestions = questions.map(q => {
+      let options = [];
+      try {
+        options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+      } catch (e) {
+        options = [];
+      }
+      if (role === 'STUDENT') {
+        const { correctAnswer, explanation, ...rest } = q;
+        return { ...rest, options };
+      }
+      return { ...q, options };
+    });
+
+    res.json({ questions: parsedQuestions });
+  } catch (error) {
+    logExamRequestError('detail', req, error);
+    res.status(500).json({ error: 'Error fetching exam questions' });
+  }
+};
+
 export const getExamHandler10 = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
+    const includeQuestions = req.query.includeQuestions !== 'false';
+    const onlyQuestions = req.query.onlyQuestions === 'true';
+
+    if (onlyQuestions) {
+      return getExamQuestionsHandler(req, res);
+    }
+
     const queryStartTime = Date.now();
     const exam = await prisma.exam.findUnique({
       where: { id, deletedAt: null },
       include: {
         schools: { select: { id: true, name: true } },
-        modules: { orderBy: { order: 'asc' }, include: { subExams: { orderBy: { order: 'asc' }, include: { _count: { select: { questions: { where: { deletedAt: null } } } } } } } },
-        questions: {
-          where: subExamId ? { subExamId, deletedAt: null } : { deletedAt: null },
-          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
-        }
+        modules: {
+          orderBy: { order: 'asc' },
+          include: {
+            _count: { select: { questions: { where: { deletedAt: null } } } },
+            subExams: {
+              orderBy: { order: 'asc' },
+              include: { _count: { select: { questions: { where: { deletedAt: null } } } } }
+            }
+          }
+        },
+        ...(includeQuestions ? {
+          questions: {
+            where: subExamId ? { subExamId, deletedAt: null } : { deletedAt: null },
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
+          }
+        } : {})
       }
     });
     const queryDuration = Date.now() - queryStartTime;
     if (queryDuration > 1000) {
-      console.log(`[Exam GET] Exam "${exam?.title || id}" query took ${queryDuration}ms (${exam?.questions?.length || 0} questions)`);
+      console.log(`[Exam GET] Exam "${exam?.title || id}" query took ${queryDuration}ms (${includeQuestions ? ((exam as any)?.questions?.length || 0) : 0} questions)`);
     }
 
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
     const role = (req as any).user.role;
     const userId = (req as any).user.id;
-    const userSchoolId = (req as any).user.schoolId;
 
     const isPrivilegedRole = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR', 'STUDENT'].includes(role);
     if (!isPrivilegedRole) {
@@ -1169,15 +1247,29 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
       : null;
     if (subExamId && !selectedSubExam) return res.status(404).json({ error: 'Exam section not found' });
 
-    let parsedQuestions = exam.questions.map(q => {
-      let options = [];
-      try {
-        options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-      } catch (e) {
-        options = [];
-      }
-      return { ...q, options };
-    });
+    let parsedQuestions: any[] = [];
+    if (includeQuestions && Array.isArray((exam as any).questions)) {
+      parsedQuestions = (exam as any).questions.map((q: any) => {
+        let options = [];
+        try {
+          options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+        } catch (e) {
+          options = [];
+        }
+        return { ...q, options };
+      });
+    }
+
+    // Attach questionsCount to modules and subExams for instant frontend display
+    const enrichedModules = (exam.modules || []).map((module: any) => ({
+      ...module,
+      questionsCount: module._count?.questions || 0,
+      subExams: (module.subExams || []).map((subExam: any) => ({
+        ...subExam,
+        questionsCount: subExam._count?.questions || 0,
+        questions: subExam.questions || []
+      }))
+    }));
 
     // If student, hide correct answers
     const activePassword = resolveExamAccessPassword(exam, selectedSubExam);
@@ -1187,10 +1279,22 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
         const { correctAnswer, explanation, ...rest } = q;
         return rest;
       });
-      return res.json({ ...sanitizeExam(exam), selectedSubExam, password: activePassword ? true : null, questions: sanitizedQuestions });
+      return res.json({
+        ...sanitizeExam(exam),
+        modules: enrichedModules,
+        selectedSubExam,
+        password: activePassword ? true : null,
+        questions: sanitizedQuestions
+      });
     }
 
-    res.json({ ...sanitizeExam(exam), selectedSubExam, password: activePassword, questions: parsedQuestions });
+    res.json({
+      ...sanitizeExam(exam),
+      modules: enrichedModules,
+      selectedSubExam,
+      password: activePassword,
+      questions: parsedQuestions
+    });
   } catch (error) {
     logExamRequestError('detail', req, error);
     res.status(500).json({ error: 'Error fetching exam details' });

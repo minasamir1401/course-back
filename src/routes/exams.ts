@@ -80,6 +80,9 @@ router.post('/api/admin/questions/:id/restore', verifyToken, checkRole(['SUPER_A
 
 router.get('/api/exams/:id/analytics', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.getExamHandler9);
 
+// 3.8 Get Exam Questions only (Deferred/Background Load)
+router.get('/api/exams/:id/questions', verifyToken, examsController.getExamQuestionsHandler);
+
 // 4. Get Exam Details
 router.get('/api/exams/:id', verifyToken, examsController.getExamHandler10);
 
