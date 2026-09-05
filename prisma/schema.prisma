@@ -567,23 +567,27 @@ model DeletedTombstone {
 }
 
 model ExamModule {
-  id            String      @id @default(uuid())
-  examId        String
-  title         String
-  description   String?
-  order         Int         @default(0)
-  duration      Int?
-  passingScore  Int?
-  gradeTarget   String?
-  publishDate   DateTime?
-  cutOffDate    DateTime?
-  exam          Exam        @relation(fields: [examId], references: [id], onDelete: Cascade)
-  questions     Question[]
-  subExams      SubExam[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id             String       @id @default(uuid())
+  examId         String
+  parentModuleId String?
+  title          String
+  description    String?
+  order          Int          @default(0)
+  duration       Int?
+  passingScore   Int?
+  gradeTarget    String?
+  publishDate    DateTime?
+  cutOffDate     DateTime?
+  exam           Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  parentModule   ExamModule?  @relation("ModuleHierarchy", fields: [parentModuleId], references: [id], onDelete: Cascade)
+  subModules     ExamModule[] @relation("ModuleHierarchy")
+  questions      Question[]
+  subExams       SubExam[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   
   @@index([examId, order])
+  @@index([parentModuleId])
 }
 
 model SubExam {

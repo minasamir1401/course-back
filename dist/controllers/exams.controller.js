@@ -23,7 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.postExamHandler26 = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = void 0;
+exports.postExamHandler26 = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.postMoveModuleHandler = exports.postMoveAllSubExamsHandler = exports.postMoveSubExamHandler = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamQuestionsHandler = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = void 0;
 exports.formatCorrectAnswer = formatCorrectAnswer;
 exports.formatExplanation = formatExplanation;
 const prisma_1 = __importDefault(require("../lib/prisma"));
@@ -34,6 +34,17 @@ const examDeletionPolicy_1 = require("../utils/examDeletionPolicy");
 const examPassingScore_1 = require("../utils/examPassingScore");
 const examAccessPolicy_1 = require("../utils/examAccessPolicy");
 const shared_1 = require("../shared");
+const normalizeBackendDok = (raw) => {
+    if (!raw)
+        return null;
+    const s = String(raw).trim();
+    if (!s)
+        return null;
+    const m = s.match(/^(?:dok\s*|level\s*|مستوى\s*)?([1-4])(?:\.0)?$/i);
+    if (m)
+        return `DOK ${m[1]}`;
+    return (0, shared_1.sanitizeHtml)(s);
+};
 const canManageExam = (user, exam) => __awaiter(void 0, void 0, void 0, function* () {
     let hasTeacherCourseAccess = false;
     if (user.role === 'TEACHER' && exam.courseId) {
@@ -101,14 +112,30 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         if (questions && !Array.isArray(questions)) {
             return res.status(400).json({ error: 'questions must be an array.' });
         }
-        // Prepare target schools
-        const effectiveIsCentral = !!isCentral;
-        const finalSchoolIds = req.user.role === 'SCHOOL_ADMIN'
-            ? (effectiveIsCentral ? [] : [req.user.schoolId])
-            : (effectiveIsCentral ? [] : (schoolIds || (schoolId ? [schoolId] : [req.user.schoolId])).filter(Boolean));
+        // Prepare target schools — only SUPER_ADMIN may mark an exam as Central
+        const effectiveIsCentral = req.user.role === 'SUPER_ADMIN' ? !!isCentral : false;
+        let schoolAdminSchoolId = req.user.schoolId;
+        if (req.user.role === 'SCHOOL_ADMIN' && !schoolAdminSchoolId && req.user.id) {
+            const u = yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { schoolId: true } });
+            schoolAdminSchoolId = (u === null || u === void 0 ? void 0 : u.schoolId) || null;
+        }
+        const rawCreateSchoolList = schoolIds !== undefined && Array.isArray(schoolIds) && schoolIds.length > 0
+            ? schoolIds
+            : (schoolId ? [schoolId] : [req.user.schoolId || schoolAdminSchoolId]);
+        const finalSchoolIds = effectiveIsCentral
+            ? []
+            : req.user.role === 'SCHOOL_ADMIN'
+                ? (schoolAdminSchoolId ? [schoolAdminSchoolId] : [])
+                : (Array.isArray(rawCreateSchoolList) ? rawCreateSchoolList : [rawCreateSchoolList])
+                    .map((s) => (typeof s === 'object' && s ? s.id : s))
+                    .filter((id) => Boolean(id && typeof id === 'string' && id !== 'null' && id !== 'undefined' && id.trim() !== ''))
+                    .map((id) => id.trim());
         const ownerSchoolId = req.user.role === 'SCHOOL_ADMIN'
-            ? (effectiveIsCentral ? null : req.user.schoolId)
-            : (effectiveIsCentral ? null : (schoolId || req.user.schoolId));
+            ? (effectiveIsCentral ? null : schoolAdminSchoolId)
+            : (effectiveIsCentral ? null : (finalSchoolIds.length > 0 ? finalSchoolIds[0] : (schoolId || req.user.schoolId || schoolAdminSchoolId)));
+        if (ownerSchoolId && !finalSchoolIds.includes(ownerSchoolId)) {
+            finalSchoolIds.push(ownerSchoolId);
+        }
         // Check if duplicate exam already exists in the same target school
         if (req.body.status !== 'DRAFT') {
             const existingExam = yield prisma_1.default.exam.findFirst({
@@ -165,11 +192,33 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                     gradeTarget: gradeTarget ? (0, shared_1.sanitizeHtml)(gradeTarget) : null
                 }
             });
-            // Sequential Module Creation
+            // Sequential Module Creation with Deduplication
+            const seenModuleKeys = new Set();
+            const deduplicatedModules = [];
+            for (const m of sanitizedModulesInput) {
+                if (!m)
+                    continue;
+                const key = m.id ? String(m.id).trim() : (m.title ? String(m.title).trim().toLowerCase() : `__index_${deduplicatedModules.length}`);
+                if (seenModuleKeys.has(key))
+                    continue;
+                seenModuleKeys.add(key);
+                const seenSubExamKeys = new Set();
+                const deduplicatedSubExams = [];
+                for (const s of (Array.isArray(m.subExams) ? m.subExams : [])) {
+                    if (!s)
+                        continue;
+                    const subKey = s.id ? String(s.id).trim() : (s.title ? String(s.title).trim().toLowerCase() : `__sub_${deduplicatedSubExams.length}`);
+                    if (seenSubExamKeys.has(subKey))
+                        continue;
+                    seenSubExamKeys.add(subKey);
+                    deduplicatedSubExams.push(s);
+                }
+                deduplicatedModules.push(Object.assign(Object.assign({}, m), { subExams: deduplicatedSubExams }));
+            }
             const moduleIdMap = {};
             const subExamIdMap = {};
-            for (let i = 0; i < sanitizedModulesInput.length; i++) {
-                const m = sanitizedModulesInput[i];
+            for (let i = 0; i < deduplicatedModules.length; i++) {
+                const m = deduplicatedModules[i];
                 const frontendModuleId = m.id;
                 const createdMod = yield tx.examModule.create({
                     data: {
@@ -222,12 +271,12 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                         points: parseInt(q.points) || 1,
                         xpPoints: parseInt(q.xpPoints) || 10,
                         skill: q.skill ? (0, shared_1.sanitizeHtml)(q.skill) : null,
-                        learningOutcome: q.learningOutcome ? (0, shared_1.sanitizeHtml)(q.learningOutcome) : null,
-                        standard: q.standard ? (0, shared_1.sanitizeHtml)(q.standard) : null,
+                        learningOutcome: (q.standard || q.learningOutcome) ? (0, shared_1.sanitizeHtml)(q.standard || q.learningOutcome) : null,
+                        standard: (q.standard || q.learningOutcome) ? (0, shared_1.sanitizeHtml)(q.standard || q.learningOutcome) : null,
                         indicator: q.indicator ? (0, shared_1.sanitizeHtml)(q.indicator) : null,
                         videoUrl: q.videoUrl ? (0, shared_1.sanitizeHtml)(q.videoUrl) : null,
                         level: q.level ? (0, shared_1.sanitizeHtml)(q.level) : 'Medium',
-                        dok: q.dok ? (0, shared_1.sanitizeHtml)(q.dok) : null,
+                        dok: normalizeBackendDok(q.dok),
                         cognitive: q.cognitive ? (0, shared_1.sanitizeHtml)(q.cognitive) : null,
                         course: q.course ? (0, shared_1.sanitizeHtml)(q.course) : null,
                         section: q.section ? (0, shared_1.sanitizeHtml)(q.section) : null,
@@ -278,6 +327,12 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (folderId) {
             where.folderId = folderId;
         }
+        const buildGradeFilter = (g) => ({
+            OR: [
+                { grade: g },
+                { grades: { contains: `"${g}"` } }
+            ]
+        });
         if (isCentral === 'true') {
             where.isCentral = true;
         }
@@ -289,25 +344,44 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     { schools: { some: { id: schoolId } } }
                 ];
             }
-            if (grade)
-                where.grade = grade;
+            if (grade) {
+                where.AND = [
+                    ...(where.AND || []),
+                    buildGradeFilter(grade)
+                ];
+            }
         }
         else if (req.user.role === 'SCHOOL_ADMIN') {
+            let schoolIdToUse = req.user.schoolId;
+            if (!schoolIdToUse && req.user.id) {
+                const u = yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { schoolId: true } });
+                schoolIdToUse = (u === null || u === void 0 ? void 0 : u.schoolId) || null;
+            }
             where.OR = [
                 { isCentral: true },
-                { schoolId: req.user.schoolId },
-                { schools: { some: { id: req.user.schoolId } } }
+                ...(schoolIdToUse ? [
+                    { schoolId: schoolIdToUse },
+                    { schools: { some: { id: schoolIdToUse } } }
+                ] : [])
             ];
-            if (grade)
-                where.grade = grade;
+            if (grade) {
+                where.AND = [
+                    ...(where.AND || []),
+                    buildGradeFilter(grade)
+                ];
+            }
         }
         else if (req.user.role === 'TEACHER') {
             where.OR = [
                 { creatorId: req.user.id },
                 { course: { teachers: { some: { teacherId: req.user.id } } } }
             ];
-            if (grade)
-                where.grade = grade;
+            if (grade) {
+                where.AND = [
+                    ...(where.AND || []),
+                    buildGradeFilter(grade)
+                ];
+            }
         }
         else if (req.user.role === 'STUDENT') {
             // Fetch latest user info to get current grade if not in token
@@ -351,11 +425,34 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 schools: { select: { name: true, id: true } },
                 creator: { select: { name: true } },
                 _count: { select: { questions: { where: { deletedAt: null } } } },
-                modules: { include: { subExams: { include: { _count: { select: { questions: { where: { deletedAt: null } } } } } }, _count: { select: { questions: { where: { deletedAt: null } } } } } }
+                modules: {
+                    orderBy: { order: 'asc' },
+                    include: {
+                        parentModule: { select: { id: true, title: true } },
+                        subModules: {
+                            orderBy: { order: 'asc' },
+                            include: {
+                                _count: { select: { questions: { where: { deletedAt: null } } } },
+                                subExams: {
+                                    orderBy: { order: 'asc' },
+                                    include: { _count: { select: { questions: { where: { deletedAt: null } } } } }
+                                }
+                            }
+                        },
+                        subExams: {
+                            orderBy: { order: 'asc' },
+                            include: { _count: { select: { questions: { where: { deletedAt: null } } } } }
+                        },
+                        _count: { select: { questions: { where: { deletedAt: null } } } }
+                    }
+                }
             },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
         });
-        res.json(exams.map((exam) => (Object.assign(Object.assign({}, exam), { modules: (exam.modules || []).map((module) => (Object.assign(Object.assign(Object.assign({}, module), (0, examWorkflow_1.countModuleContent)(module)), { availability: (0, examWorkflow_1.getAvailability)(module), subExams: (module.subExams || []).map((subExam) => {
+        res.json(exams.map((exam) => (Object.assign(Object.assign({}, exam), { modules: (exam.modules || []).map((module) => (Object.assign(Object.assign(Object.assign({}, module), (0, examWorkflow_1.countModuleContent)(module)), { availability: (0, examWorkflow_1.getAvailability)(module), subModules: (module.subModules || []).map((sm) => (Object.assign(Object.assign(Object.assign({}, sm), (0, examWorkflow_1.countModuleContent)(sm)), { availability: (0, examWorkflow_1.getAvailability)(sm), subExams: (sm.subExams || []).map((subExam) => {
+                        var _a;
+                        return (Object.assign(Object.assign({}, subExam), { questionsCount: ((_a = subExam._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, availability: (0, examWorkflow_1.getAvailability)(subExam) }));
+                    }) }))), subExams: (module.subExams || []).map((subExam) => {
                     var _a;
                     return (Object.assign(Object.assign({}, subExam), { questionsCount: ((_a = subExam._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, availability: (0, examWorkflow_1.getAvailability)(subExam) }));
                 }) }))) }))));
@@ -440,18 +537,39 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (req.user.role === 'SUPER_ADMIN') {
             const effectiveIsCentral = isCentral !== undefined ? !!isCentral : existingExam.isCentral;
             updateData.isCentral = effectiveIsCentral;
-            updateData.schoolId = effectiveIsCentral ? null : (req.body.schoolId || existingExam.schoolId);
-            if (schoolIds !== undefined) {
-                updateData.schools = {
-                    set: [],
-                    connect: (schoolIds || []).filter((sid) => sid && sid !== 'null').map((sid) => ({ id: sid }))
-                };
+            if (effectiveIsCentral) {
+                updateData.schoolId = null;
+                updateData.schools = { set: [] };
+            }
+            else {
+                const rawSchoolList = schoolIds !== undefined ? schoolIds : (req.body.schoolId ? [req.body.schoolId] : []);
+                const sanitizedSchoolIds = (Array.isArray(rawSchoolList) ? rawSchoolList : [rawSchoolList])
+                    .map((sid) => (typeof sid === "object" && sid ? sid.id : sid))
+                    .filter((sid) => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
+                    .map((sid) => sid.trim());
+                updateData.schoolId = sanitizedSchoolIds.length > 0 ? sanitizedSchoolIds[0] : (req.body.schoolId && req.body.schoolId !== "null" ? req.body.schoolId : existingExam.schoolId);
+                if (schoolIds !== undefined || req.body.schoolId !== undefined) {
+                    updateData.schools = {
+                        set: [],
+                        connect: sanitizedSchoolIds.map((sid) => ({ id: sid })),
+                    };
+                }
             }
         }
         else {
-            const effectiveIsCentral = isCentral !== undefined ? !!isCentral : existingExam.isCentral;
+            const effectiveIsCentral = false;
             updateData.isCentral = effectiveIsCentral;
-            updateData.schoolId = effectiveIsCentral ? null : (existingExam.schoolId || req.user.schoolId);
+            let schoolIdToUse = existingExam.schoolId || req.user.schoolId;
+            if (!schoolIdToUse && req.user.id) {
+                const u = yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { schoolId: true } });
+                schoolIdToUse = (u === null || u === void 0 ? void 0 : u.schoolId) || null;
+            }
+            updateData.schoolId = schoolIdToUse;
+            if (schoolIdToUse) {
+                updateData.schools = {
+                    connect: [{ id: schoolIdToUse }]
+                };
+            }
         }
         const exam = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
             var _a, _b, _c;
@@ -496,9 +614,32 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         }
                     });
                 }
-                // Upsert incoming modules
-                for (let i = 0; i < sanitizedModules.length; i++) {
-                    const m = sanitizedModules[i];
+                // Deduplicate incoming modules by id or title
+                const seenModuleKeys = new Set();
+                const deduplicatedModules = [];
+                for (const m of sanitizedModules) {
+                    if (!m)
+                        continue;
+                    const key = m.id ? String(m.id).trim() : (m.title ? String(m.title).trim().toLowerCase() : `__index_${deduplicatedModules.length}`);
+                    if (seenModuleKeys.has(key))
+                        continue;
+                    seenModuleKeys.add(key);
+                    const seenSubExamKeys = new Set();
+                    const deduplicatedSubExams = [];
+                    for (const s of (Array.isArray(m.subExams) ? m.subExams : [])) {
+                        if (!s)
+                            continue;
+                        const subKey = s.id ? String(s.id).trim() : (s.title ? String(s.title).trim().toLowerCase() : `__sub_${deduplicatedSubExams.length}`);
+                        if (seenSubExamKeys.has(subKey))
+                            continue;
+                        seenSubExamKeys.add(subKey);
+                        deduplicatedSubExams.push(s);
+                    }
+                    deduplicatedModules.push(Object.assign(Object.assign({}, m), { subExams: deduplicatedSubExams }));
+                }
+                // Upsert deduplicated modules
+                for (let i = 0; i < deduplicatedModules.length; i++) {
+                    const m = deduplicatedModules[i];
                     const mData = {
                         title: m.title ? (0, shared_1.sanitizeHtml)(m.title) : `Module ${i + 1}`,
                         description: m.description ? (0, shared_1.sanitizeHtml)(m.description) : null,
@@ -510,7 +651,17 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         cutOffDate: m.cutOffDate ? new Date(m.cutOffDate) : null
                     };
                     let moduleId = m.id;
-                    if (m.id) {
+                    const existingMod = m.id
+                        ? yield tx.examModule.findFirst({ where: { OR: [{ id: m.id }, { examId: id, title: mData.title }] } })
+                        : yield tx.examModule.findFirst({ where: { examId: id, title: mData.title } });
+                    if (existingMod) {
+                        moduleId = existingMod.id;
+                        yield tx.examModule.update({
+                            where: { id: existingMod.id },
+                            data: mData
+                        });
+                    }
+                    else if (m.id) {
                         yield tx.examModule.upsert({
                             where: { id: m.id },
                             update: mData,
@@ -536,7 +687,16 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                             publishDate: s.publishDate ? new Date(s.publishDate) : null,
                             cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null
                         };
-                        if (s.id) {
+                        const existingSub = s.id
+                            ? yield tx.subExam.findFirst({ where: { OR: [{ id: s.id }, { moduleId, title: sData.title }] } })
+                            : yield tx.subExam.findFirst({ where: { moduleId, title: sData.title } });
+                        if (existingSub) {
+                            yield tx.subExam.update({
+                                where: { id: existingSub.id },
+                                data: sData
+                            });
+                        }
+                        else if (s.id) {
                             yield tx.subExam.upsert({
                                 where: { id: s.id },
                                 update: sData,
@@ -548,6 +708,25 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                                 data: Object.assign({ moduleId: moduleId }, sData)
                             });
                         }
+                    }
+                }
+                // Clean up any empty duplicate modules for this exam
+                const allModulesInExam = yield tx.examModule.findMany({
+                    where: { examId: id },
+                    include: { _count: { select: { questions: { where: { deletedAt: null } }, subExams: true } } }
+                });
+                const seenTitleMap = new Map();
+                for (const curMod of allModulesInExam) {
+                    const normTitle = String(curMod.title || '').trim().toLowerCase();
+                    if (!normTitle)
+                        continue;
+                    if (seenTitleMap.has(normTitle)) {
+                        if (curMod._count.questions === 0 && curMod._count.subExams === 0) {
+                            yield tx.examModule.delete({ where: { id: curMod.id } }).catch(() => { });
+                        }
+                    }
+                    else {
+                        seenTitleMap.set(normTitle, curMod.id);
                     }
                 }
             }
@@ -625,12 +804,12 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         points: parseInt(q.points) || 1,
                         xpPoints: parseInt(q.xpPoints) || 10,
                         skill: q.skill !== undefined ? (q.skill ? (0, shared_1.sanitizeHtml)(q.skill) : null) : undefined,
-                        learningOutcome: q.learningOutcome !== undefined ? (q.learningOutcome ? (0, shared_1.sanitizeHtml)(q.learningOutcome) : null) : undefined,
-                        standard: q.standard !== undefined ? (q.standard ? (0, shared_1.sanitizeHtml)(q.standard) : null) : undefined,
+                        learningOutcome: (q.standard !== undefined || q.learningOutcome !== undefined) ? ((q.standard || q.learningOutcome) ? (0, shared_1.sanitizeHtml)(q.standard || q.learningOutcome) : null) : undefined,
+                        standard: (q.standard !== undefined || q.learningOutcome !== undefined) ? ((q.standard || q.learningOutcome) ? (0, shared_1.sanitizeHtml)(q.standard || q.learningOutcome) : null) : undefined,
                         indicator: q.indicator !== undefined ? (q.indicator ? (0, shared_1.sanitizeHtml)(q.indicator) : null) : undefined,
                         videoUrl: q.videoUrl !== undefined ? (q.videoUrl ? (0, shared_1.sanitizeHtml)(q.videoUrl) : null) : undefined,
                         level: q.level ? (0, shared_1.sanitizeHtml)(q.level) : 'Medium',
-                        dok: q.dok !== undefined ? (q.dok ? (0, shared_1.sanitizeHtml)(q.dok) : null) : undefined,
+                        dok: q.dok !== undefined ? normalizeBackendDok(q.dok) : undefined,
                         cognitive: q.cognitive !== undefined ? (q.cognitive ? (0, shared_1.sanitizeHtml)(q.cognitive) : null) : undefined,
                         course: q.course !== undefined ? (q.course ? (0, shared_1.sanitizeHtml)(q.course) : null) : undefined,
                         section: q.section !== undefined ? (q.section ? (0, shared_1.sanitizeHtml)(q.section) : null) : undefined,
@@ -1005,32 +1184,112 @@ const getExamHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, function
     }
 });
 exports.getExamHandler9 = getExamHandler9;
+const getExamQuestionsHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = req.params;
+        const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
+        const moduleId = typeof req.query.moduleId === 'string' ? req.query.moduleId : null;
+        const exam = yield prisma_1.default.exam.findUnique({
+            where: { id, deletedAt: null },
+            select: {
+                id: true,
+                isCentral: true,
+                schoolId: true,
+                schools: { select: { id: true } }
+            }
+        });
+        if (!exam)
+            return res.status(404).json({ error: 'Exam not found' });
+        const role = req.user.role;
+        const isPrivilegedRole = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR', 'STUDENT'].includes(role);
+        if (!isPrivilegedRole) {
+            return res.status(403).json({ error: 'Access denied (Role: ' + role + ')' });
+        }
+        if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
+            const canAccessExam = yield (0, exports.canManageExam)(req.user, exam);
+            if (!canAccessExam) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+        }
+        const where = { examId: id, deletedAt: null };
+        if (subExamId)
+            where.subExamId = subExamId;
+        if (moduleId)
+            where.moduleId = moduleId;
+        const questions = yield prisma_1.default.question.findMany({
+            where,
+            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
+        });
+        const parsedQuestions = questions.map(q => {
+            let options = [];
+            try {
+                options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+            }
+            catch (e) {
+                options = [];
+            }
+            if (role === 'STUDENT') {
+                const { correctAnswer, explanation } = q, rest = __rest(q, ["correctAnswer", "explanation"]);
+                return Object.assign(Object.assign({}, rest), { options });
+            }
+            return Object.assign(Object.assign({}, q), { options });
+        });
+        res.json({ questions: parsedQuestions });
+    }
+    catch (error) {
+        (0, examErrorLog_1.logExamRequestError)('detail', req, error);
+        res.status(500).json({ error: 'Error fetching exam questions' });
+    }
+});
+exports.getExamQuestionsHandler = getExamQuestionsHandler;
 const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     try {
         const { id } = req.params;
         const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
+        const includeQuestions = req.query.includeQuestions !== 'false';
+        const onlyQuestions = req.query.onlyQuestions === 'true';
+        if (onlyQuestions) {
+            return (0, exports.getExamQuestionsHandler)(req, res);
+        }
         const queryStartTime = Date.now();
         const exam = yield prisma_1.default.exam.findUnique({
             where: { id, deletedAt: null },
-            include: {
-                schools: { select: { id: true, name: true } },
-                modules: { orderBy: { order: 'asc' }, include: { subExams: { orderBy: { order: 'asc' }, include: { _count: { select: { questions: { where: { deletedAt: null } } } } } } } },
+            include: Object.assign({ schools: { select: { id: true, name: true } }, modules: {
+                    orderBy: { order: 'asc' },
+                    include: {
+                        parentModule: { select: { id: true, title: true } },
+                        subModules: {
+                            orderBy: { order: 'asc' },
+                            include: {
+                                _count: { select: { questions: { where: { deletedAt: null } } } },
+                                subExams: {
+                                    orderBy: { order: 'asc' },
+                                    include: { _count: { select: { questions: { where: { deletedAt: null } } } } }
+                                }
+                            }
+                        },
+                        _count: { select: { questions: { where: { deletedAt: null } } } },
+                        subExams: {
+                            orderBy: { order: 'asc' },
+                            include: { _count: { select: { questions: { where: { deletedAt: null } } } } }
+                        }
+                    }
+                } }, (includeQuestions ? {
                 questions: {
                     where: subExamId ? { subExamId, deletedAt: null } : { deletedAt: null },
                     orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
                 }
-            }
+            } : {}))
         });
         const queryDuration = Date.now() - queryStartTime;
         if (queryDuration > 1000) {
-            console.log(`[Exam GET] Exam "${(exam === null || exam === void 0 ? void 0 : exam.title) || id}" query took ${queryDuration}ms (${((_a = exam === null || exam === void 0 ? void 0 : exam.questions) === null || _a === void 0 ? void 0 : _a.length) || 0} questions)`);
+            console.log(`[Exam GET] Exam "${(exam === null || exam === void 0 ? void 0 : exam.title) || id}" query took ${queryDuration}ms (${includeQuestions ? (((_a = exam === null || exam === void 0 ? void 0 : exam.questions) === null || _a === void 0 ? void 0 : _a.length) || 0) : 0} questions)`);
         }
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
         const role = req.user.role;
         const userId = req.user.id;
-        const userSchoolId = req.user.schoolId;
         const isPrivilegedRole = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR', 'STUDENT'].includes(role);
         if (!isPrivilegedRole) {
             return res.status(403).json({ error: 'Access denied (Role: ' + role + ')' });
@@ -1048,19 +1307,39 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             }
         }
         const selectedSubExam = subExamId
-            ? exam.modules.flatMap((module) => module.subExams || []).find((subExam) => subExam.id === subExamId)
+            ? exam.modules.flatMap((module) => [
+                ...(module.subExams || []),
+                ...((module.subModules || []).flatMap((sm) => sm.subExams || []))
+            ]).find((subExam) => subExam.id === subExamId)
             : null;
         if (subExamId && !selectedSubExam)
             return res.status(404).json({ error: 'Exam section not found' });
-        let parsedQuestions = exam.questions.map(q => {
-            let options = [];
-            try {
-                options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-            }
-            catch (e) {
-                options = [];
-            }
-            return Object.assign(Object.assign({}, q), { options });
+        let parsedQuestions = [];
+        if (includeQuestions && Array.isArray(exam.questions)) {
+            parsedQuestions = exam.questions.map((q) => {
+                let options = [];
+                try {
+                    options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+                }
+                catch (e) {
+                    options = [];
+                }
+                return Object.assign(Object.assign({}, q), { options });
+            });
+        }
+        // Attach questionsCount to modules, subModules, and subExams for instant frontend display
+        const enrichedModules = (exam.modules || []).map((module) => {
+            var _a;
+            return (Object.assign(Object.assign({}, module), { questionsCount: ((_a = module._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, subModules: (module.subModules || []).map((sm) => {
+                    var _a;
+                    return (Object.assign(Object.assign({}, sm), { questionsCount: ((_a = sm._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, subExams: (sm.subExams || []).map((subExam) => {
+                            var _a;
+                            return (Object.assign(Object.assign({}, subExam), { questionsCount: ((_a = subExam._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, questions: subExam.questions || [] }));
+                        }) }));
+                }), subExams: (module.subExams || []).map((subExam) => {
+                    var _a;
+                    return (Object.assign(Object.assign({}, subExam), { questionsCount: ((_a = subExam._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, questions: subExam.questions || [] }));
+                }) }));
         });
         // If student, hide correct answers
         const activePassword = (0, examWorkflow_1.resolveExamAccessPassword)(exam, selectedSubExam);
@@ -1069,9 +1348,9 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 const { correctAnswer, explanation } = q, rest = __rest(q, ["correctAnswer", "explanation"]);
                 return rest;
             });
-            return res.json(Object.assign(Object.assign({}, (0, shared_1.sanitizeExam)(exam)), { selectedSubExam, password: activePassword ? true : null, questions: sanitizedQuestions }));
+            return res.json(Object.assign(Object.assign({}, (0, shared_1.sanitizeExam)(exam)), { modules: enrichedModules, selectedSubExam, password: activePassword ? true : null, questions: sanitizedQuestions }));
         }
-        res.json(Object.assign(Object.assign({}, (0, shared_1.sanitizeExam)(exam)), { selectedSubExam, password: activePassword, questions: parsedQuestions }));
+        res.json(Object.assign(Object.assign({}, (0, shared_1.sanitizeExam)(exam)), { modules: enrichedModules, selectedSubExam, password: activePassword, questions: parsedQuestions }));
     }
     catch (error) {
         (0, examErrorLog_1.logExamRequestError)('detail', req, error);
@@ -1650,7 +1929,7 @@ exports.postExamHandler17 = postExamHandler17;
 const postExamHandler18 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
-        const { title, description, order, duration, passingScore } = req.body;
+        const { title, description, order, duration, passingScore, parentModuleId } = req.body;
         if (!title)
             return res.status(400).json({ error: 'Title is required' });
         const exam = yield prisma_1.default.exam.findUnique({ where: { id }, include: { schools: { select: { id: true } } } });
@@ -1659,9 +1938,16 @@ const postExamHandler18 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         if (!(yield (0, exports.canManageExam)(req.user, exam))) {
             return res.status(403).json({ error: 'Access denied: You do not have permission to modify this exam.' });
         }
+        if (parentModuleId) {
+            const parentMod = yield prisma_1.default.examModule.findFirst({ where: { id: parentModuleId, examId: id } });
+            if (!parentMod) {
+                return res.status(400).json({ error: 'Specified parent module not found in this exam.' });
+            }
+        }
         const module = yield prisma_1.default.examModule.create({
             data: {
                 examId: id,
+                parentModuleId: parentModuleId ? String(parentModuleId).trim() : null,
                 title,
                 description,
                 order: order || 0,
@@ -1680,12 +1966,21 @@ exports.postExamHandler18 = postExamHandler18;
 const putExamHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id, moduleId } = req.params;
-        const { title, description, order, duration, passingScore, gradeTarget } = req.body;
+        const { title, description, order, duration, passingScore, gradeTarget, parentModuleId, publishDate, cutOffDate } = req.body;
         const exam = yield prisma_1.default.exam.findUnique({ where: { id }, include: { schools: { select: { id: true } } } });
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
         if (!(yield (0, exports.canManageExam)(req.user, exam))) {
             return res.status(403).json({ error: 'Access denied: You do not have permission to modify this exam.' });
+        }
+        if (parentModuleId !== undefined && parentModuleId !== null) {
+            if (parentModuleId === moduleId) {
+                return res.status(400).json({ error: 'Cannot set a module as its own parent.' });
+            }
+            const parentMod = yield prisma_1.default.examModule.findFirst({ where: { id: parentModuleId, examId: id } });
+            if (!parentMod) {
+                return res.status(400).json({ error: 'Specified parent module not found in this exam.' });
+            }
         }
         const module = yield prisma_1.default.examModule.update({
             where: { id: moduleId },
@@ -1696,6 +1991,9 @@ const putExamHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 duration: duration !== undefined ? (duration ? parseInt(duration) : null) : undefined,
                 passingScore: passingScore !== undefined ? (passingScore ? parseInt(passingScore) : null) : undefined,
                 gradeTarget: gradeTarget !== undefined ? (gradeTarget ? (0, shared_1.sanitizeHtml)(gradeTarget) : null) : undefined,
+                parentModuleId: parentModuleId !== undefined ? (parentModuleId ? String(parentModuleId).trim() : null) : undefined,
+                publishDate: publishDate !== undefined ? (publishDate ? new Date(publishDate) : null) : undefined,
+                cutOffDate: cutOffDate !== undefined ? (cutOffDate ? new Date(cutOffDate) : null) : undefined,
             }
         });
         res.json(module);
@@ -1891,6 +2189,413 @@ const deleteExamHandler30 = (req, res) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.deleteExamHandler30 = deleteExamHandler30;
+const postMoveSubExamHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id, moduleId, subExamId } = req.params;
+        const { targetModuleId, newModuleTitle, targetExamId } = req.body || {};
+        const trimmedNewTitle = newModuleTitle ? String(newModuleTitle).trim() : '';
+        if (!targetModuleId && !trimmedNewTitle) {
+            return res.status(400).json({ error: 'Either targetModuleId or newModuleTitle is required.' });
+        }
+        const sourceModule = yield prisma_1.default.examModule.findFirst({
+            where: { id: moduleId, examId: id },
+            select: { id: true, title: true }
+        });
+        if (!sourceModule) {
+            return res.status(404).json({ error: 'Source module not found in this exam.' });
+        }
+        const subExam = yield prisma_1.default.subExam.findFirst({
+            where: { id: subExamId, moduleId },
+            include: {
+                _count: {
+                    select: { questions: { where: { deletedAt: null } } }
+                }
+            }
+        });
+        if (!subExam) {
+            return res.status(404).json({ error: 'Exam not found inside source module.' });
+        }
+        let destinationModuleId = targetModuleId ? String(targetModuleId).trim() : '';
+        let destinationExamId = id;
+        const result = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+            var _a;
+            if (trimmedNewTitle) {
+                const destExamId = targetExamId ? String(targetExamId).trim() : id;
+                destinationExamId = destExamId;
+                if (destExamId !== id) {
+                    const destExam = yield tx.exam.findUnique({
+                        where: { id: destExamId },
+                        include: { schools: { select: { id: true } } }
+                    });
+                    if (!destExam) {
+                        throw new Error('Destination exam not found.');
+                    }
+                    if (!(yield (0, exports.canManageExam)(req.user, destExam))) {
+                        throw new Error('Access denied: You do not have permission to add modules to destination exam.');
+                    }
+                }
+                const lastModule = yield tx.examModule.findFirst({
+                    where: { examId: destExamId },
+                    orderBy: { order: 'desc' },
+                    select: { order: true }
+                });
+                const nextOrder = ((_a = lastModule === null || lastModule === void 0 ? void 0 : lastModule.order) !== null && _a !== void 0 ? _a : -1) + 1;
+                const createdModule = yield tx.examModule.create({
+                    data: {
+                        examId: destExamId,
+                        title: (0, shared_1.sanitizeHtml)(trimmedNewTitle),
+                        order: nextOrder,
+                    }
+                });
+                destinationModuleId = createdModule.id;
+            }
+            else {
+                const targetMod = yield tx.examModule.findUnique({
+                    where: { id: destinationModuleId },
+                    include: { exam: { include: { schools: { select: { id: true } } } } }
+                });
+                if (!targetMod) {
+                    throw new Error('Destination module not found.');
+                }
+                if (targetMod.id === moduleId) {
+                    throw new Error('Destination module cannot be the same as the current module.');
+                }
+                destinationExamId = targetMod.examId;
+                if (destinationExamId !== id) {
+                    if (!(yield (0, exports.canManageExam)(req.user, targetMod.exam))) {
+                        throw new Error('Access denied: You do not have permission to move to destination exam.');
+                    }
+                }
+            }
+            const destSubExamsCount = yield tx.subExam.count({
+                where: { moduleId: destinationModuleId }
+            });
+            const updatedSubExam = yield tx.subExam.update({
+                where: { id: subExamId },
+                data: {
+                    moduleId: destinationModuleId,
+                    order: destSubExamsCount,
+                }
+            });
+            const updatedQuestions = yield tx.question.updateMany({
+                where: {
+                    examId: id,
+                    subExamId: subExamId,
+                },
+                data: {
+                    examId: destinationExamId,
+                    moduleId: destinationModuleId,
+                }
+            });
+            const destinationModule = yield tx.examModule.findUnique({
+                where: { id: destinationModuleId },
+                include: {
+                    subExams: {
+                        orderBy: { order: 'asc' }
+                    }
+                }
+            });
+            return {
+                subExam: updatedSubExam,
+                destinationModule,
+                destinationExamId,
+                movedQuestionsCount: updatedQuestions.count,
+                isNewModule: Boolean(trimmedNewTitle),
+                isCrossExam: destinationExamId !== id,
+            };
+        }));
+        res.json(Object.assign({ success: true, message: 'Exam and its questions moved successfully.' }, result));
+    }
+    catch (error) {
+        console.error('Error moving subExam to module:', error);
+        res.status(400).json({ error: (error === null || error === void 0 ? void 0 : error.message) || 'Failed to move exam to destination module.' });
+    }
+});
+exports.postMoveSubExamHandler = postMoveSubExamHandler;
+const postMoveAllSubExamsHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id, moduleId } = req.params;
+        const { targetModuleId, newModuleTitle, targetExamId } = req.body || {};
+        const trimmedNewTitle = newModuleTitle ? String(newModuleTitle).trim() : '';
+        if (!targetModuleId && !trimmedNewTitle) {
+            return res.status(400).json({ error: 'Either targetModuleId or newModuleTitle is required.' });
+        }
+        const sourceModule = yield prisma_1.default.examModule.findFirst({
+            where: { id: moduleId, examId: id },
+            select: { id: true, title: true }
+        });
+        if (!sourceModule) {
+            return res.status(404).json({ error: 'Source module not found in this exam.' });
+        }
+        const subExams = yield prisma_1.default.subExam.findMany({
+            where: { moduleId },
+            orderBy: { order: 'asc' },
+            select: { id: true, title: true }
+        });
+        if (subExams.length === 0) {
+            return res.status(400).json({ error: 'No sub-exams found in this module to move.' });
+        }
+        const subExamIds = subExams.map((s) => s.id);
+        let destinationModuleId = targetModuleId ? String(targetModuleId).trim() : '';
+        let destinationExamId = id;
+        const result = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+            var _a;
+            if (trimmedNewTitle) {
+                const destExamId = targetExamId ? String(targetExamId).trim() : id;
+                destinationExamId = destExamId;
+                if (destExamId !== id) {
+                    const destExam = yield tx.exam.findUnique({
+                        where: { id: destExamId },
+                        include: { schools: { select: { id: true } } }
+                    });
+                    if (!destExam) {
+                        throw new Error('Destination exam not found.');
+                    }
+                    if (!(yield (0, exports.canManageExam)(req.user, destExam))) {
+                        throw new Error('Access denied: You do not have permission to add modules to destination exam.');
+                    }
+                }
+                const lastModule = yield tx.examModule.findFirst({
+                    where: { examId: destExamId },
+                    orderBy: { order: 'desc' },
+                    select: { order: true }
+                });
+                const nextOrder = ((_a = lastModule === null || lastModule === void 0 ? void 0 : lastModule.order) !== null && _a !== void 0 ? _a : -1) + 1;
+                const createdModule = yield tx.examModule.create({
+                    data: {
+                        examId: destExamId,
+                        title: (0, shared_1.sanitizeHtml)(trimmedNewTitle),
+                        order: nextOrder,
+                    }
+                });
+                destinationModuleId = createdModule.id;
+            }
+            else {
+                const targetMod = yield tx.examModule.findUnique({
+                    where: { id: destinationModuleId },
+                    include: { exam: { include: { schools: { select: { id: true } } } } }
+                });
+                if (!targetMod) {
+                    throw new Error('Destination module not found.');
+                }
+                if (targetMod.id === moduleId) {
+                    throw new Error('Destination module cannot be the same as the current module.');
+                }
+                destinationExamId = targetMod.examId;
+                if (destinationExamId !== id) {
+                    if (!(yield (0, exports.canManageExam)(req.user, targetMod.exam))) {
+                        throw new Error('Access denied: You do not have permission to move to destination exam.');
+                    }
+                }
+            }
+            const destSubExamsCount = yield tx.subExam.count({
+                where: { moduleId: destinationModuleId }
+            });
+            // Update each subExam to destinationModuleId maintaining their sequential order
+            for (let i = 0; i < subExams.length; i++) {
+                yield tx.subExam.update({
+                    where: { id: subExams[i].id },
+                    data: {
+                        moduleId: destinationModuleId,
+                        order: destSubExamsCount + i,
+                    }
+                });
+            }
+            // Update all questions attached to these subExams
+            const updatedQuestions = yield tx.question.updateMany({
+                where: {
+                    examId: id,
+                    subExamId: { in: subExamIds },
+                },
+                data: {
+                    examId: destinationExamId,
+                    moduleId: destinationModuleId,
+                }
+            });
+            // If cross-exam transfer, update exam submissions
+            if (destinationExamId !== id) {
+                yield tx.examSubmission.updateMany({
+                    where: {
+                        subExamId: { in: subExamIds }
+                    },
+                    data: {
+                        examId: destinationExamId
+                    }
+                });
+            }
+            const destinationModule = yield tx.examModule.findUnique({
+                where: { id: destinationModuleId },
+                include: {
+                    subExams: {
+                        orderBy: { order: 'asc' }
+                    }
+                }
+            });
+            return {
+                movedSubExamsCount: subExams.length,
+                movedQuestionsCount: updatedQuestions.count,
+                destinationModule,
+                destinationExamId,
+                isNewModule: Boolean(trimmedNewTitle),
+                isCrossExam: destinationExamId !== id,
+            };
+        }));
+        res.json(Object.assign({ success: true, message: 'All sub-exams and their questions moved successfully.' }, result));
+    }
+    catch (error) {
+        console.error('Error moving all subExams to module:', error);
+        res.status(400).json({ error: (error === null || error === void 0 ? void 0 : error.message) || 'Failed to move all sub-exams to destination module.' });
+    }
+});
+exports.postMoveAllSubExamsHandler = postMoveAllSubExamsHandler;
+const postMoveModuleHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id, moduleId } = req.params;
+        const { targetExamId, targetParentModuleId, newParentModuleTitle } = req.body || {};
+        const sourceModule = yield prisma_1.default.examModule.findFirst({
+            where: { id: moduleId, examId: id },
+            include: {
+                subExams: true,
+                questions: { where: { deletedAt: null } },
+                subModules: true,
+            }
+        });
+        if (!sourceModule) {
+            return res.status(404).json({ error: 'Source module not found in this exam.' });
+        }
+        let destinationExamId = targetExamId ? String(targetExamId).trim() : id;
+        let destinationParentModuleId = targetParentModuleId ? String(targetParentModuleId).trim() : null;
+        if (destinationParentModuleId === moduleId) {
+            return res.status(400).json({ error: 'Cannot move a module inside itself.' });
+        }
+        // Verify destination exam access if moving cross-exam
+        if (destinationExamId !== id) {
+            const destExam = yield prisma_1.default.exam.findUnique({
+                where: { id: destinationExamId },
+                include: { schools: { select: { id: true } } }
+            });
+            if (!destExam) {
+                return res.status(404).json({ error: 'Destination exam not found.' });
+            }
+            if (!(yield (0, exports.canManageExam)(req.user, destExam))) {
+                return res.status(403).json({ error: 'Access denied: You do not have permission to move to destination exam.' });
+            }
+        }
+        const trimmedNewTitle = newParentModuleTitle ? String(newParentModuleTitle).trim() : '';
+        const result = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+            var _a, _b;
+            // If user wants to create a new Main Module to receive this module
+            if (trimmedNewTitle) {
+                const lastMod = yield tx.examModule.findFirst({
+                    where: { examId: destinationExamId, parentModuleId: null },
+                    orderBy: { order: 'desc' },
+                    select: { order: true }
+                });
+                const nextOrder = ((_a = lastMod === null || lastMod === void 0 ? void 0 : lastMod.order) !== null && _a !== void 0 ? _a : -1) + 1;
+                const createdParent = yield tx.examModule.create({
+                    data: {
+                        examId: destinationExamId,
+                        title: (0, shared_1.sanitizeHtml)(trimmedNewTitle),
+                        order: nextOrder,
+                        parentModuleId: null,
+                    }
+                });
+                destinationParentModuleId = createdParent.id;
+            }
+            else if (destinationParentModuleId) {
+                // Verify target parent module exists
+                const targetParent = yield tx.examModule.findUnique({
+                    where: { id: destinationParentModuleId }
+                });
+                if (!targetParent) {
+                    throw new Error('Destination parent module not found.');
+                }
+                // Check cycle: ensure destinationParentModuleId is not a child of sourceModule
+                let checkParent = targetParent;
+                while (checkParent && checkParent.parentModuleId) {
+                    if (checkParent.parentModuleId === moduleId) {
+                        throw new Error('Cannot move a module into one of its own sub-modules (cycle detected).');
+                    }
+                    checkParent = yield tx.examModule.findUnique({ where: { id: checkParent.parentModuleId } });
+                }
+                destinationExamId = targetParent.examId;
+            }
+            // Calculate next order in destination parent
+            const lastSibling = yield tx.examModule.findFirst({
+                where: {
+                    examId: destinationExamId,
+                    parentModuleId: destinationParentModuleId
+                },
+                orderBy: { order: 'desc' },
+                select: { order: true }
+            });
+            const nextSiblingOrder = ((_b = lastSibling === null || lastSibling === void 0 ? void 0 : lastSibling.order) !== null && _b !== void 0 ? _b : -1) + 1;
+            // Update sourceModule
+            const updatedModule = yield tx.examModule.update({
+                where: { id: moduleId },
+                data: {
+                    examId: destinationExamId,
+                    parentModuleId: destinationParentModuleId,
+                    order: nextSiblingOrder,
+                }
+            });
+            // If cross-exam transfer, update all nested entities
+            if (destinationExamId !== id) {
+                // Collect all descendant module IDs recursively
+                const collectModuleIds = (mId) => __awaiter(void 0, void 0, void 0, function* () {
+                    const children = yield tx.examModule.findMany({ where: { parentModuleId: mId }, select: { id: true } });
+                    const childIds = children.map(c => c.id);
+                    let allDescendants = [...childIds];
+                    for (const cId of childIds) {
+                        allDescendants = allDescendants.concat(yield collectModuleIds(cId));
+                    }
+                    return allDescendants;
+                });
+                const allModuleIds = [moduleId, ...(yield collectModuleIds(moduleId))];
+                // Update all descendant modules examId
+                yield tx.examModule.updateMany({
+                    where: { id: { in: allModuleIds } },
+                    data: { examId: destinationExamId }
+                });
+                // Find all subExams under these modules
+                const affectedSubExams = yield tx.subExam.findMany({
+                    where: { moduleId: { in: allModuleIds } },
+                    select: { id: true }
+                });
+                const subExamIds = affectedSubExams.map(s => s.id);
+                // Update questions
+                yield tx.question.updateMany({
+                    where: {
+                        OR: [
+                            { moduleId: { in: allModuleIds } },
+                            { subExamId: { in: subExamIds } }
+                        ]
+                    },
+                    data: { examId: destinationExamId }
+                });
+                // Update student submissions
+                if (subExamIds.length > 0) {
+                    yield tx.examSubmission.updateMany({
+                        where: { subExamId: { in: subExamIds } },
+                        data: { examId: destinationExamId }
+                    });
+                }
+            }
+            return {
+                module: updatedModule,
+                destinationExamId,
+                destinationParentModuleId,
+                isCrossExam: destinationExamId !== id,
+            };
+        }));
+        res.json(Object.assign({ success: true, message: 'Module moved successfully.' }, result));
+    }
+    catch (error) {
+        console.error('Error moving module:', error);
+        res.status(400).json({ error: (error === null || error === void 0 ? void 0 : error.message) || 'Failed to move module.' });
+    }
+});
+exports.postMoveModuleHandler = postMoveModuleHandler;
 const getExamHandler31 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id, moduleId, subExamId } = req.params;
@@ -1935,16 +2640,16 @@ const getExamHandler31 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 points: question.points,
                 xpPoints: question.xpPoints,
                 skill: question.skill,
-                learningOutcome: question.learningOutcome,
+                learningOutcome: question.standard || question.learningOutcome || null,
                 indicator: question.indicator,
                 videoUrl: question.videoUrl,
                 level: question.level,
-                dok: question.dok,
+                dok: normalizeBackendDok(question.dok),
                 cognitive: question.cognitive,
                 course: question.course,
                 section: question.section,
                 domain: question.domain,
-                standard: question.standard,
+                standard: question.standard || question.learningOutcome || null,
                 subskill: question.subskill,
                 microSkill: question.microSkill,
                 gradeTarget: question.gradeTarget,
@@ -2014,16 +2719,16 @@ const postExamHandler32 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                         points: parseInt(question.points) || 1,
                         xpPoints: parseInt(question.xpPoints) || 10,
                         skill: question.skill ? (0, shared_1.sanitizeHtml)(question.skill) : null,
-                        learningOutcome: question.learningOutcome ? (0, shared_1.sanitizeHtml)(question.learningOutcome) : null,
+                        learningOutcome: (question.standard || question.learningOutcome) ? (0, shared_1.sanitizeHtml)(question.standard || question.learningOutcome) : null,
                         indicator: question.indicator ? (0, shared_1.sanitizeHtml)(question.indicator) : null,
                         videoUrl: question.videoUrl ? (0, shared_1.sanitizeHtml)(question.videoUrl) : null,
                         level: question.level ? (0, shared_1.sanitizeHtml)(question.level) : 'Medium',
-                        dok: question.dok ? (0, shared_1.sanitizeHtml)(question.dok) : null,
+                        dok: normalizeBackendDok(question.dok),
                         cognitive: question.cognitive ? (0, shared_1.sanitizeHtml)(question.cognitive) : null,
                         course: question.course ? (0, shared_1.sanitizeHtml)(question.course) : null,
                         section: question.section ? (0, shared_1.sanitizeHtml)(question.section) : null,
                         domain: question.domain ? (0, shared_1.sanitizeHtml)(question.domain) : null,
-                        standard: question.standard ? (0, shared_1.sanitizeHtml)(question.standard) : null,
+                        standard: (question.standard || question.learningOutcome) ? (0, shared_1.sanitizeHtml)(question.standard || question.learningOutcome) : null,
                         subskill: question.subskill ? (0, shared_1.sanitizeHtml)(question.subskill) : null,
                         microSkill: question.microSkill ? (0, shared_1.sanitizeHtml)(question.microSkill) : null,
                         gradeTarget: question.gradeTarget ? (0, shared_1.sanitizeHtml)(question.gradeTarget) : null,

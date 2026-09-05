@@ -22,13 +22,19 @@ function countQuestions(item) {
 }
 function countModuleContent(module) {
     const subExams = Array.isArray(module.subExams) ? module.subExams : [];
+    const subModules = Array.isArray(module.subModules) ? module.subModules : [];
+    let examsCount = subExams.length;
+    let questionsCount = subExams.length > 0
+        ? subExams.reduce((total, subExam) => total + countQuestions(subExam), 0)
+        : countQuestions(module);
+    for (const sm of subModules) {
+        const smContent = countModuleContent(sm);
+        examsCount += smContent.examsCount;
+        questionsCount += smContent.questionsCount;
+    }
     return {
-        examsCount: subExams.length,
-        // New workflow owns questions on child Exams. Direct Module questions are
-        // legacy content and must not inflate totals when child Exams exist.
-        questionsCount: subExams.length > 0
-            ? subExams.reduce((total, subExam) => total + countQuestions(subExam), 0)
-            : countQuestions(module),
+        examsCount,
+        questionsCount,
     };
 }
 function getAvailability(entity, now = new Date()) {

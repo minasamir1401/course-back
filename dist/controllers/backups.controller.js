@@ -1012,12 +1012,16 @@ const postBackupHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, func
             // 3. Connect implicit M:N relationships
             if (data.courseToSchool && data.courseToSchool.length > 0) {
                 for (const item of data.courseToSchool) {
-                    if (item.schools && item.schools.length > 0) {
+                    const validSchools = (item.schools || [])
+                        .map((s) => (typeof s === "object" && s ? s.id : s))
+                        .filter((id) => Boolean(id && typeof id === "string" && id !== "null" && id !== "undefined" && id.trim() !== ""))
+                        .map((id) => ({ id: id.trim() }));
+                    if (validSchools.length > 0) {
                         yield tx.course.update({
                             where: { id: item.id },
                             data: {
                                 schools: {
-                                    connect: item.schools.map((s) => ({ id: s.id }))
+                                    connect: validSchools
                                 }
                             }
                         });
@@ -1026,12 +1030,16 @@ const postBackupHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, func
             }
             if (data.examToSchool && data.examToSchool.length > 0) {
                 for (const item of data.examToSchool) {
-                    if (item.schools && item.schools.length > 0) {
+                    const validSchools = (item.schools || [])
+                        .map((s) => (typeof s === "object" && s ? s.id : s))
+                        .filter((id) => Boolean(id && typeof id === "string" && id !== "null" && id !== "undefined" && id.trim() !== ""))
+                        .map((id) => ({ id: id.trim() }));
+                    if (validSchools.length > 0) {
                         yield tx.exam.update({
                             where: { id: item.id },
                             data: {
                                 schools: {
-                                    connect: item.schools.map((s) => ({ id: s.id }))
+                                    connect: validSchools
                                 }
                             }
                         });

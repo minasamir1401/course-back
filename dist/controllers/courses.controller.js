@@ -329,11 +329,16 @@ const postCourseHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, func
                 .json({ error: "Only Super Admin can create central courses." });
         }
         // Determine the target school ID
+        const rawCreateSchoolList = schoolIds !== undefined ? schoolIds : (schoolId ? [schoolId] : []);
+        const sanitizedCreateSchoolIds = (Array.isArray(rawCreateSchoolList) ? rawCreateSchoolList : [rawCreateSchoolList])
+            .map((sid) => (typeof sid === "object" && sid ? sid.id : sid))
+            .filter((sid) => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
+            .map((sid) => sid.trim());
         const targetSchoolId = req.user.role === "SCHOOL_ADMIN" || req.user.role === "TEACHER"
             ? req.user.schoolId
             : isCentral
                 ? null
-                : schoolId || req.user.schoolId;
+                : (sanitizedCreateSchoolIds.length > 0 ? sanitizedCreateSchoolIds[0] : (schoolId && schoolId !== "null" && typeof schoolId === "string" && schoolId.trim() !== "" ? schoolId.trim() : null)) || req.user.schoolId;
         // Check if duplicate course already exists in the target school
         const existingCourse = yield prisma_1.default.course.findFirst({
             where: {
@@ -410,9 +415,8 @@ const postCourseHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, func
                     schoolId: targetSchoolId,
                     schools: req.user.role === "SUPER_ADMIN" &&
                         !isCentral &&
-                        Array.isArray(schoolIds) &&
-                        schoolIds.length > 0
-                        ? { connect: schoolIds.map((id) => ({ id })) }
+                        sanitizedCreateSchoolIds.length > 0
+                        ? { connect: sanitizedCreateSchoolIds.map((id) => ({ id })) }
                         : undefined,
                     lessons: {
                         create: lessonsData,
@@ -586,6 +590,12 @@ const putCourseHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                 };
             })))
             : null;
+        console.log("[Course PUT] Raw schoolIds:", JSON.stringify(schoolIds), "schoolId:", schoolId);
+        const rawSchoolList = schoolIds !== undefined ? schoolIds : (schoolId ? [schoolId] : []);
+        const sanitizedSchoolIds = (Array.isArray(rawSchoolList) ? rawSchoolList : [rawSchoolList])
+            .map((sid) => (typeof sid === "object" && sid ? sid.id : sid))
+            .filter((sid) => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
+            .map((sid) => sid.trim());
         const updatedCourse = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
             yield tx.course.update({
                 where: { id },
@@ -605,19 +615,16 @@ const putCourseHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                     country: country || "مصر",
                     isCentral: req.user.role === "SUPER_ADMIN" ? !!isCentral : false,
                     schoolId: req.user.role === "SCHOOL_ADMIN" || req.user.role === "TEACHER"
-                        ? req.user.schoolId
+                        ? (req.user.schoolId || existingCourse.schoolId)
                         : isCentral
                             ? null
-                            : schoolId || req.user.schoolId,
+                            : (sanitizedSchoolIds.length > 0 ? sanitizedSchoolIds[0] : (schoolId && schoolId !== "null" && typeof schoolId === "string" && schoolId.trim() !== "" ? schoolId.trim() : null)),
                     schools: req.user.role === "SUPER_ADMIN" && isCentral
                         ? { set: [] }
-                        : req.user.role === "SUPER_ADMIN" && !isCentral && schoolIds !== undefined
+                        : req.user.role === "SUPER_ADMIN" && !isCentral && (schoolIds !== undefined || schoolId !== undefined)
                             ? {
-                                set: Array.isArray(schoolIds)
-                                    ? schoolIds.map((sid) => ({ id: sid }))
-                                    : schoolId
-                                        ? [{ id: schoolId }]
-                                        : [],
+                                set: [],
+                                connect: sanitizedSchoolIds.map((sid) => ({ id: sid })),
                             }
                             : undefined,
                 },

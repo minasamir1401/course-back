@@ -20,18 +20,27 @@ export function countQuestions(item: CountedQuestions | null | undefined): numbe
   return Array.isArray(item.questions) ? item.questions.length : 0;
 }
 
-export function countModuleContent(module: CountedQuestions & { subExams?: CountedQuestions[] }): {
+export function countModuleContent(module: CountedQuestions & { subExams?: CountedQuestions[]; subModules?: any[] }): {
   examsCount: number;
   questionsCount: number;
 } {
   const subExams = Array.isArray(module.subExams) ? module.subExams : [];
+  const subModules = Array.isArray(module.subModules) ? module.subModules : [];
+  
+  let examsCount = subExams.length;
+  let questionsCount = subExams.length > 0
+    ? subExams.reduce((total, subExam) => total + countQuestions(subExam), 0)
+    : countQuestions(module);
+
+  for (const sm of subModules) {
+    const smContent = countModuleContent(sm);
+    examsCount += smContent.examsCount;
+    questionsCount += smContent.questionsCount;
+  }
+
   return {
-    examsCount: subExams.length,
-    // New workflow owns questions on child Exams. Direct Module questions are
-    // legacy content and must not inflate totals when child Exams exist.
-    questionsCount: subExams.length > 0
-      ? subExams.reduce((total, subExam) => total + countQuestions(subExam), 0)
-      : countQuestions(module),
+    examsCount,
+    questionsCount,
   };
 }
 
