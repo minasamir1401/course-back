@@ -9,6 +9,13 @@ param(
 Write-Host "`n🚀 بدء رفع التعديلات..." -ForegroundColor Cyan
 Write-Host "📝 رسالة الـ commit: $Message`n" -ForegroundColor Yellow
 
+# Detect git early
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    if (Test-Path "C:\Program Files\Git\cmd\git.exe") {
+        $env:Path += ";C:\Program Files\Git\cmd"
+    }
+}
+
 # 1. Stage all changes
 Write-Host "1️⃣  Stage all changes..." -ForegroundColor White
 git add -A
@@ -21,15 +28,6 @@ Write-Host "2️⃣  Commit..." -ForegroundColor White
 git commit -m $Message
 if ($LASTEXITCODE -ne 0) {
     Write-Host "⚠️  لا يوجد تغييرات جديدة أو فشل الـ commit" -ForegroundColor Yellow
-}
-
-# Detect git
-$gitCmd = "git"
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    if (Test-Path "C:\Program Files\Git\cmd\git.exe") {
-        $gitCmd = "& 'C:\Program Files\Git\cmd\git.exe'"
-        $env:Path += ";C:\Program Files\Git\cmd"
-    }
 }
 
 # 3. Split frontend branch (تحديث)
