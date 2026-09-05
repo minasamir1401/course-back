@@ -195,11 +195,31 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
         }
       });
 
-      // Sequential Module Creation
+      // Sequential Module Creation with Deduplication
+      const seenModuleKeys = new Set<string>();
+      const deduplicatedModules: any[] = [];
+      for (const m of sanitizedModulesInput) {
+        if (!m) continue;
+        const key = m.id ? String(m.id).trim() : (m.title ? String(m.title).trim().toLowerCase() : `__index_${deduplicatedModules.length}`);
+        if (seenModuleKeys.has(key)) continue;
+        seenModuleKeys.add(key);
+
+        const seenSubExamKeys = new Set<string>();
+        const deduplicatedSubExams: any[] = [];
+        for (const s of (Array.isArray(m.subExams) ? m.subExams : [])) {
+          if (!s) continue;
+          const subKey = s.id ? String(s.id).trim() : (s.title ? String(s.title).trim().toLowerCase() : `__sub_${deduplicatedSubExams.length}`);
+          if (seenSubExamKeys.has(subKey)) continue;
+          seenSubExamKeys.add(subKey);
+          deduplicatedSubExams.push(s);
+        }
+        deduplicatedModules.push({ ...m, subExams: deduplicatedSubExams });
+      }
+
       const moduleIdMap: Record<string, string> = {};
       const subExamIdMap: Record<string, string> = {};
-      for (let i = 0; i < sanitizedModulesInput.length; i++) {
-        const m = sanitizedModulesInput[i];
+      for (let i = 0; i < deduplicatedModules.length; i++) {
+        const m = deduplicatedModules[i];
         const frontendModuleId = m.id;
         const createdMod = await tx.examModule.create({
           data: {
@@ -566,21 +586,52 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           });
         }
 
-        // Upsert incoming modules
-        for (let i = 0; i < sanitizedModules.length; i++) {
-          const m = sanitizedModules[i];
+        // Deduplicate incoming modules by id or title
+        const seenModuleKeys = new Set<string>();
+        const deduplicatedModules: any[] = [];
+        for (const m of sanitizedModules) {
+          if (!m) continue;
+          const key = m.id ? String(m.id).trim() : (m.title ? String(m.title).trim().toLowerCase() : `__index_${deduplicatedModules.length}`);
+          if (seenModuleKeys.has(key)) continue;
+          seenModuleKeys.add(key);
+
+          const seenSubExamKeys = new Set<string>();
+          const deduplicatedSubExams: any[] = [];
+          for (const s of (Array.isArray(m.subExams) ? m.subExams : [])) {
+            if (!s) continue;
+            const subKey = s.id ? String(s.id).trim() : (s.title ? String(s.title).trim().toLowerCase() : `__sub_${deduplicatedSubExams.length}`);
+            if (seenSubExamKeys.has(subKey)) continue;
+            seenSubExamKeys.add(subKey);
+            deduplicatedSubExams.push(s);
+          }
+          deduplicatedModules.push({ ...m, subExams: deduplicatedSubExams });
+        }
+
+        // Upsert deduplicated modules
+        for (let i = 0; i < deduplicatedModules.length; i++) {
+          const m = deduplicatedModules[i];
           const mData = {
             title: m.title ? sanitizeHtml(m.title) : `Module ${i + 1}`,
             description: m.description ? sanitizeHtml(m.description) : null,
             order: m.order !== undefined ? parseInt(m.order) : i,
             duration: m.duration ? parseInt(m.duration) : null,
             passingScore: m.passingScore ? parseInt(m.passingScore) : null,
-            gradeTarget: m.gradeTarget ? sanitizeHtml(m.gradeTarget) : null
-            , publishDate: m.publishDate ? new Date(m.publishDate) : null
-            , cutOffDate: m.cutOffDate ? new Date(m.cutOffDate) : null
+            gradeTarget: m.gradeTarget ? sanitizeHtml(m.gradeTarget) : null,
+            publishDate: m.publishDate ? new Date(m.publishDate) : null,
+            cutOffDate: m.cutOffDate ? new Date(m.cutOffDate) : null
           };
           let moduleId = m.id;
-          if (m.id) {
+          const existingMod = m.id
+            ? await tx.examModule.findFirst({ where: { OR: [{ id: m.id }, { examId: id, title: mData.title }] } })
+            : await tx.examModule.findFirst({ where: { examId: id, title: mData.title } });
+
+          if (existingMod) {
+            moduleId = existingMod.id;
+            await tx.examModule.update({
+              where: { id: existingMod.id },
+              data: mData
+            });
+          } else if (m.id) {
             await tx.examModule.upsert({
               where: { id: m.id },
               update: mData,
@@ -606,7 +657,17 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
               publishDate: s.publishDate ? new Date(s.publishDate) : null,
               cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null
             };
-            if (s.id) {
+
+            const existingSub = s.id
+              ? await tx.subExam.findFirst({ where: { OR: [{ id: s.id }, { moduleId, title: sData.title }] } })
+              : await tx.subExam.findFirst({ where: { moduleId, title: sData.title } });
+
+            if (existingSub) {
+              await tx.subExam.update({
+                where: { id: existingSub.id },
+                data: sData
+              });
+            } else if (s.id) {
               await tx.subExam.upsert({
                 where: { id: s.id },
                 update: sData,
@@ -617,6 +678,24 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
                 data: { moduleId: moduleId, ...sData }
               });
             }
+          }
+        }
+
+        // Clean up any empty duplicate modules for this exam
+        const allModulesInExam = await tx.examModule.findMany({
+          where: { examId: id },
+          include: { _count: { select: { questions: { where: { deletedAt: null } }, subExams: true } } }
+        });
+        const seenTitleMap = new Map<string, string>();
+        for (const curMod of allModulesInExam) {
+          const normTitle = String(curMod.title || '').trim().toLowerCase();
+          if (!normTitle) continue;
+          if (seenTitleMap.has(normTitle)) {
+            if (curMod._count.questions === 0 && curMod._count.subExams === 0) {
+              await tx.examModule.delete({ where: { id: curMod.id } }).catch(() => {});
+            }
+          } else {
+            seenTitleMap.set(normTitle, curMod.id);
           }
         }
       }
