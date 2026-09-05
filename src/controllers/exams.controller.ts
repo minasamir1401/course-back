@@ -119,8 +119,8 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'questions must be an array.' });
     }
 
-    // Prepare target schools
-    const effectiveIsCentral = !!isCentral;
+    // Prepare target schools — only SUPER_ADMIN may mark an exam as Central
+    const effectiveIsCentral = (req as any).user.role === 'SUPER_ADMIN' ? !!isCentral : false;
     const rawCreateSchoolList = schoolIds !== undefined ? schoolIds : (schoolId ? [schoolId] : [(req as any).user.schoolId]);
     const finalSchoolIds: string[] = effectiveIsCentral
       ? []
