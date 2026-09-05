@@ -2078,7 +2078,7 @@ export const deleteExamHandler30 = async (req: Request, res: Response) => {
 export const postMoveSubExamHandler = async (req: Request, res: Response) => {
   try {
     const { id, moduleId, subExamId } = req.params;
-    const { targetModuleId, newModuleTitle } = req.body || {};
+    const { targetModuleId, newModuleTitle, targetExamId } = req.body || {};
 
     const trimmedNewTitle = newModuleTitle ? String(newModuleTitle).trim() : '';
     if (!targetModuleId && !trimmedNewTitle) {
@@ -2106,11 +2106,28 @@ export const postMoveSubExamHandler = async (req: Request, res: Response) => {
     }
 
     let destinationModuleId = targetModuleId ? String(targetModuleId).trim() : '';
+    let destinationExamId = id;
 
     const result = await prisma.$transaction(async (tx) => {
       if (trimmedNewTitle) {
+        const destExamId = targetExamId ? String(targetExamId).trim() : id;
+        destinationExamId = destExamId;
+
+        if (destExamId !== id) {
+          const destExam = await tx.exam.findUnique({
+            where: { id: destExamId },
+            include: { schools: { select: { id: true } } }
+          });
+          if (!destExam) {
+            throw new Error('Destination exam not found.');
+          }
+          if (!await canManageExam((req as any).user, destExam)) {
+            throw new Error('Access denied: You do not have permission to add modules to destination exam.');
+          }
+        }
+
         const lastModule = await tx.examModule.findFirst({
-          where: { examId: id },
+          where: { examId: destExamId },
           orderBy: { order: 'desc' },
           select: { order: true }
         });
@@ -2118,22 +2135,29 @@ export const postMoveSubExamHandler = async (req: Request, res: Response) => {
 
         const createdModule = await tx.examModule.create({
           data: {
-            examId: id,
+            examId: destExamId,
             title: sanitizeHtml(trimmedNewTitle),
             order: nextOrder,
           }
         });
         destinationModuleId = createdModule.id;
       } else {
-        const targetMod = await tx.examModule.findFirst({
-          where: { id: destinationModuleId, examId: id },
-          select: { id: true, title: true }
+        const targetMod = await tx.examModule.findUnique({
+          where: { id: destinationModuleId },
+          include: { exam: { include: { schools: { select: { id: true } } } } }
         });
         if (!targetMod) {
-          throw new Error('Destination module not found in this exam.');
+          throw new Error('Destination module not found.');
         }
         if (targetMod.id === moduleId) {
           throw new Error('Destination module cannot be the same as the current module.');
+        }
+        destinationExamId = targetMod.examId;
+
+        if (destinationExamId !== id) {
+          if (!await canManageExam((req as any).user, targetMod.exam)) {
+            throw new Error('Access denied: You do not have permission to move to destination exam.');
+          }
         }
       }
 
@@ -2155,6 +2179,7 @@ export const postMoveSubExamHandler = async (req: Request, res: Response) => {
           subExamId: subExamId,
         },
         data: {
+          examId: destinationExamId,
           moduleId: destinationModuleId,
         }
       });
@@ -2171,8 +2196,10 @@ export const postMoveSubExamHandler = async (req: Request, res: Response) => {
       return {
         subExam: updatedSubExam,
         destinationModule,
+        destinationExamId,
         movedQuestionsCount: updatedQuestions.count,
         isNewModule: Boolean(trimmedNewTitle),
+        isCrossExam: destinationExamId !== id,
       };
     });
 
