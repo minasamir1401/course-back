@@ -23,16 +23,25 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "⚠️  لا يوجد تغييرات جديدة أو فشل الـ commit" -ForegroundColor Yellow
 }
 
+# Detect git
+$gitCmd = "git"
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    if (Test-Path "C:\Program Files\Git\cmd\git.exe") {
+        $gitCmd = "& 'C:\Program Files\Git\cmd\git.exe'"
+        $env:Path += ";C:\Program Files\Git\cmd"
+    }
+}
+
 # 3. Split frontend branch (تحديث)
 Write-Host "`n3️⃣  تحديث frontend-only branch..." -ForegroundColor White
 git branch -D frontend-only 2>$null
-git subtree split --prefix=frontend -b frontend-only 2>&1 | Select-Object -Last 3
+git subtree split --prefix=front -b frontend-only 2>&1 | Select-Object -Last 3
 Write-Host "✅ Frontend branch محدثة" -ForegroundColor Green
 
 # 4. Split backend branch (تحديث)
 Write-Host "`n4️⃣  تحديث backend-only branch..." -ForegroundColor White
 git branch -D backend-only 2>$null
-git subtree split --prefix=backend -b backend-only 2>&1 | Select-Object -Last 3
+git subtree split --prefix=back -b backend-only 2>&1 | Select-Object -Last 3
 Write-Host "✅ Backend branch محدثة" -ForegroundColor Green
 
 # 5. Push Frontend
