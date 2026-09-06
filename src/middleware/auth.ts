@@ -70,7 +70,10 @@ export const verifyToken = async (req: Request, res: Response, next: NextFunctio
   if (authorization && !/^Bearer\s+\S+$/i.test(authorization)) {
     return res.status(401).json({ error: 'Invalid Authorization header.' });
   }
-  let token = authorization ? authorization.replace(/^Bearer\s+/i, '') : req.cookies?.auth_token;
+  const bearerToken = authorization?.replace(/^Bearer\s+/i, '');
+  // Web login stores this marker, not a JWT. Only the actual httpOnly cookie
+  // authenticates it; all other explicit tokens retain priority over cookies.
+  let token = bearerToken && bearerToken !== 'cookie_auth' ? bearerToken : req.cookies?.auth_token;
 
   // Priority 3: Query parameter (needed for direct downloads like backups via window.open)
   if (!token && req.query.token) {

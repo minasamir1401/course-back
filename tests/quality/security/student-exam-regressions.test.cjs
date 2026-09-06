@@ -41,6 +41,24 @@ test('cookie-only clients can still authenticate', async () => {
   expect(next).toHaveBeenCalledTimes(1);
   expect(req.user.id).toBe('cookie-student');
 });
+test.each(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'STUDENT'])('cookie_auth marker authenticates the actual cookie for %s', async (role) => {
+  const req = { cookies: { auth_token: jwt.sign({ id: `cookie-${role}`, role }, process.env.JWT_SECRET) },
+    headers: { authorization: 'Bearer cookie_auth' }, query: {} };
+  const res = response();
+  const next = jest.fn();
+  await verifyToken(req, res, next);
+  expect(res.statusCode).toBe(200);
+  expect(next).toHaveBeenCalledTimes(1);
+  expect(req.user.role).toBe(role);
+});
+test('cookie_auth without an actual cookie is unauthenticated, not an invalid JWT', async () => {
+  const req = { cookies: {}, headers: { authorization: 'Bearer cookie_auth' }, query: {} };
+  const res = response();
+  const next = jest.fn();
+  await verifyToken(req, res, next);
+  expect(res.statusCode).toBe(401);
+  expect(next).not.toHaveBeenCalled();
+});
 test.each(['Bearer invalid', 'Basic invalid'])('invalid explicit credentials never fall back to an admin cookie: %s', async (authorization) => {
   const req = { cookies: { auth_token: jwt.sign({ id: 'admin', role: 'SUPER_ADMIN' }, process.env.JWT_SECRET) }, headers: { authorization }, query: {} };
   const next = jest.fn();
