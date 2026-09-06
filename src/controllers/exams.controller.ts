@@ -574,6 +574,20 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
 
     const sanitizedQuestions = sanitizeDeep(questions || []);
 
+    if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
+      return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
+    }
+    // Removing an unsaved draft row is allowed; persisted deletions require Super Admin.
+    const requestedDeletes = (deletedQuestionIds || []).filter((value: unknown): value is string => typeof value === 'string');
+    if ((req as any).user.role !== 'SUPER_ADMIN' && requestedDeletes.length > 0) {
+      const persistedDeletes = await prisma.question.count({
+        where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
+      });
+      if (persistedDeletes > 0) {
+        return res.status(403).json({ error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.' });
+      }
+    }
+
     const updateData: any = {
       title: title !== undefined ? sanitizeHtml(title) : undefined,
       description: description !== undefined ? (description ? extractAndSaveBase64Images(sanitizeHtml(description)) : null) : undefined,
@@ -927,7 +941,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             // ✅ ROOT CAUSE FIX: If the new explanation is null (frontend sent empty/[])
             // AND the DB has an existing non-null explanation → preserve it.
             // Only overwrite explanation if the incoming payload has real content.
-            if (updatePayload.explanation === null) {
+            if (updatePayload.explanation === null && q.clearExplanation !== true) {
               const preservedExplanation = existingExplanationMap.get(targetQuestionId);
               if (preservedExplanation) {
                 // Keep the existing explanation — don't wipe it
