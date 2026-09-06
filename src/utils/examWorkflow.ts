@@ -1,11 +1,10 @@
 export type Availability = 'UPCOMING' | 'EXPIRED' | 'AVAILABLE';
 
 export function mergeStudentProfile(tokenUser: Record<string, unknown> & { grade?: string | null; schoolId?: string | null }, dbUser?: { grade?: string | null; schoolId?: string | null } | null) {
-  if (!dbUser) return tokenUser;
   return {
     ...tokenUser,
-    grade: dbUser.grade ?? tokenUser.grade,
-    schoolId: dbUser.schoolId ?? tokenUser.schoolId,
+    grade: dbUser?.grade ?? null,
+    schoolId: dbUser?.schoolId ?? null,
   };
 }
 

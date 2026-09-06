@@ -64,13 +64,13 @@ const checkUserActiveStatus = async (userId: string): Promise<boolean> => {
 };
 
 export const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
-  // Priority 1: httpOnly cookie (most secure — not accessible to JavaScript)
-  let token = req.cookies?.auth_token;
-
-  // Priority 2: Authorization header (backward-compatible — legacy clients / mobile)
-  if (!token) {
-    token = req.headers.authorization?.split(' ')[1];
+  // An explicit session belongs to the current app/account. A leftover cookie
+  // from another role must not silently turn a student request into an admin request.
+  const authorization = req.headers.authorization;
+  if (authorization && !/^Bearer\s+\S+$/i.test(authorization)) {
+    return res.status(401).json({ error: 'Invalid Authorization header.' });
   }
+  let token = authorization ? authorization.replace(/^Bearer\s+/i, '') : req.cookies?.auth_token;
 
   // Priority 3: Query parameter (needed for direct downloads like backups via window.open)
   if (!token && req.query.token) {

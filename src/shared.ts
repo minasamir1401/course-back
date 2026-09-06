@@ -756,11 +756,18 @@ export const examMatchesStudent = (exam: any, user: any) => {
     return false;
   }
 
+  // If the exam is assigned to specific schools, the student MUST belong to one of those schools
+  const hasAssignedSchools = Boolean(exam.schoolId || (exam.schools && exam.schools.length > 0));
+  if (hasAssignedSchools) {
+    const belongsToAssignedSchool = exam.schools?.some((school: any) => school.id === user.schoolId);
+    const isOwnerSchool = exam.schoolId === user.schoolId;
+    return Boolean(isOwnerSchool || belongsToAssignedSchool);
+  }
+
+  // Central exams (no specific school assignment) are accessible to all students
   if (exam.isCentral) return true;
 
-  const belongsToAssignedSchool = exam.schools?.some((school: any) => school.id === user.schoolId);
-  const isOwnerSchool = exam.schoolId === user.schoolId;
-  return Boolean(isOwnerSchool || belongsToAssignedSchool);
+  return false;
 };
 
 export const buildStudentCourseWhere = (student: any) => {
@@ -839,6 +846,11 @@ export async function ensurePerformanceIndexes() {
       } catch (lockErr: any) {
         console.warn(`[DB Index Setup] Advisory lock/cleanup notice: ${lockErr.message}`);
       }
+      try {
+        await prisma.$executeRawUnsafe('ALTER TABLE "ExamModule" ADD COLUMN IF NOT EXISTS "parentModuleId" TEXT;');
+      } catch (colErr: any) {
+        console.warn(`[DB Schema Setup] Notice adding parentModuleId: ${colErr.message}`);
+      }
     }
 
     const statements = [
@@ -863,6 +875,7 @@ export async function ensurePerformanceIndexes() {
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_moduleId_idx" ON "Question" ("moduleId")',
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_deletedAt_idx" ON "Question" ("deletedAt")',
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_examId_idx" ON "ExamModule" ("examId")',
+      'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_parentModuleId_idx" ON "ExamModule" ("parentModuleId")',
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS "SubExam_moduleId_idx" ON "SubExam" ("moduleId")'
     ];
 
