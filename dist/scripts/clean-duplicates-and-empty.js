@@ -85,12 +85,14 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
         console.log('===========================================================');
         console.log(`🚀 Starting Safe Question Deduplication & Empty Cleanup ${targetExamId ? `for Exam ${targetExamId}` : '(All Exams)'}`);
         console.log('🔒 SAFETY RULE: Questions with student answers will NEVER be deleted.');
-        console.log('===========================================================\n');
+        console.log('===========================================================');
         let duplicatesDeleted = 0;
+        let duplicatesSoftDeleted = 0;
         let emptyQuestionsDeleted = 0;
+        let emptyQuestionsSoftDeleted = 0;
         let preservedWithAnswers = 0;
         // ---------------------------------------------------------
-        // PHASE 1: DEDUPLICATE QUESTIONS WITHIN EXAMS
+        // PHASE 1: CHECK AND RESOLVE DUPLICATE QUESTIONS
         // ---------------------------------------------------------
         console.log('--- Phase 1: Checking for duplicate questions ---');
         const examWhere = targetExamId ? { id: targetExamId } : {};
@@ -100,7 +102,7 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
         });
         for (const exam of exams) {
             const questions = yield prisma.question.findMany({
-                where: { examId: exam.id },
+                where: { examId: exam.id, deletedAt: null },
                 orderBy: { createdAt: 'asc' },
                 select: {
                     id: true,
@@ -141,15 +143,12 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                 // Separate into those with answers and those without
                 const withAnswers = questionsWithAnswerCounts.filter((q) => q.answersCount > 0);
                 const withoutAnswers = questionsWithAnswerCounts.filter((q) => q.answersCount === 0);
-                if (withAnswers.length > 1) {
-                    console.warn(`   ⚠️ [PRESERVED] Multiple duplicates have student answers (${withAnswers.length} items). Preserving all of them for safety.`);
-                    preservedWithAnswers += withAnswers.length;
-                }
-                // Determine which question to keep (prefer one with student answers, or the earliest created)
-                const questionToKeep = withAnswers[0] || withoutAnswers[0];
-                // Safe to delete: questions with 0 answers that are not questionToKeep
-                const toDelete = withoutAnswers.filter((q) => q.id !== questionToKeep.id);
-                for (const item of toDelete) {
+                // Determine which question to keep (prefer the one with the most answers, or earliest created)
+                const sortedWithAnswers = [...withAnswers].sort((a, b) => b.answersCount - a.answersCount);
+                const questionToKeep = sortedWithAnswers[0] || withoutAnswers[0];
+                // 1. Questions with 0 answers: safe to permanently delete
+                const toHardDelete = withoutAnswers.filter((q) => q.id !== questionToKeep.id);
+                for (const item of toHardDelete) {
                     try {
                         yield prisma.xPHistory.deleteMany({ where: { questionId: item.id } }).catch(() => { });
                         yield prisma.question.delete({ where: { id: item.id } });
@@ -160,14 +159,32 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                         console.error(`   ❌ Failed to delete duplicate question ${item.id}:`, delErr.message);
                     }
                 }
+                // 2. Extra duplicates that HAVE student answers:
+                // SOFT-DELETE them (set deletedAt). This preserves all StudentAnswer records and past exam
+                // submissions in the database, while removing the duplicate copies from active exams & editor!
+                const toSoftDelete = sortedWithAnswers.filter((q) => q.id !== questionToKeep.id);
+                for (const item of toSoftDelete) {
+                    try {
+                        yield prisma.question.update({
+                            where: { id: item.id },
+                            data: { deletedAt: new Date() },
+                        });
+                        duplicatesSoftDeleted++;
+                        preservedWithAnswers++;
+                        console.log(`   🛡️ [SOFT-DELETED DUPLICATE] Question ${item.id} (${item.answersCount} answers preserved in DB) - kept active ${questionToKeep.id}`);
+                    }
+                    catch (softErr) {
+                        console.error(`   ❌ Failed to soft-delete duplicate question ${item.id}:`, softErr.message);
+                    }
+                }
             }
         }
-        console.log(`\nPhase 1 Complete: Deleted ${duplicatesDeleted} duplicate questions.`);
+        console.log(`\nPhase 1 Complete: Deleted ${duplicatesDeleted} zero-answer duplicates, Soft-deleted ${duplicatesSoftDeleted} duplicates with answers preserved.`);
         // ---------------------------------------------------------
         // PHASE 2: CLEANUP EMPTY QUESTIONS
         // ---------------------------------------------------------
-        console.log('\n--- Phase 2: Checking for empty questions with 0 answers ---');
-        const questionWhere = targetExamId ? { examId: targetExamId } : {};
+        console.log('\n--- Phase 2: Checking for empty questions ---');
+        const questionWhere = targetExamId ? { examId: targetExamId, deletedAt: null } : { deletedAt: null };
         const allQuestions = yield prisma.question.findMany({
             where: questionWhere,
             select: {
@@ -189,35 +206,50 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                     where: { questionId: q.id },
                 });
                 if (answersCount > 0) {
-                    console.warn(`   ⚠️ [PRESERVED EMPTY] Empty question ${q.id} in Exam "${(_a = q.exam) === null || _a === void 0 ? void 0 : _a.title}" has ${answersCount} student answers. Preserved for safety.`);
-                    preservedWithAnswers++;
-                    continue;
+                    // Soft-delete empty question so it disappears from the active exam without deleting student answers
+                    try {
+                        yield prisma.question.update({
+                            where: { id: q.id },
+                            data: { deletedAt: new Date() },
+                        });
+                        emptyQuestionsSoftDeleted++;
+                        preservedWithAnswers++;
+                        console.log(`   🛡️ [SOFT-DELETED EMPTY] Blank question ${q.id} in Exam "${(_a = q.exam) === null || _a === void 0 ? void 0 : _a.title}" (${answersCount} answers preserved in DB).`);
+                    }
+                    catch (softErr) {
+                        console.error(`   ❌ Failed to soft-delete empty question ${q.id}:`, softErr.message);
+                    }
                 }
-                try {
-                    yield prisma.xPHistory.deleteMany({ where: { questionId: q.id } }).catch(() => { });
-                    yield prisma.question.delete({ where: { id: q.id } });
-                    emptyQuestionsDeleted++;
-                    console.log(`   ✅ [DELETED EMPTY] Removed blank question ${q.id} (0 answers).`);
-                }
-                catch (delErr) {
-                    console.error(`   ❌ Failed to delete empty question ${q.id}:`, delErr.message);
+                else {
+                    // Hard-delete empty question with 0 answers
+                    try {
+                        yield prisma.xPHistory.deleteMany({ where: { questionId: q.id } }).catch(() => { });
+                        yield prisma.question.delete({ where: { id: q.id } });
+                        emptyQuestionsDeleted++;
+                        console.log(`   ✅ [DELETED EMPTY] Removed blank question ${q.id} (0 answers).`);
+                    }
+                    catch (delErr) {
+                        console.error(`   ❌ Failed to delete empty question ${q.id}:`, delErr.message);
+                    }
                 }
             }
         }
-        console.log(`Phase 2 Complete: Deleted ${emptyQuestionsDeleted} empty questions.\n`);
+        console.log(`Phase 2 Complete: Deleted ${emptyQuestionsDeleted} zero-answer empty questions, Soft-deleted ${emptyQuestionsSoftDeleted} empty questions with answers preserved.\n`);
         const remainingQuestions = targetExamId
-            ? yield prisma.question.count({ where: { examId: targetExamId } })
-            : yield prisma.question.count();
+            ? yield prisma.question.count({ where: { examId: targetExamId, deletedAt: null } })
+            : yield prisma.question.count({ where: { deletedAt: null } });
         console.log('===========================================================');
         console.log('🎉 Cleanup Summary:');
-        console.log(`   - Duplicate Questions Removed: ${duplicatesDeleted}`);
-        console.log(`   - Empty Questions Removed:     ${emptyQuestionsDeleted}`);
-        console.log(`   - Questions Protected/Answers: ${preservedWithAnswers}`);
-        console.log(`   - Remaining Questions:         ${remainingQuestions}`);
+        console.log(`   - Duplicate Questions Hard-Deleted (0 answers): ${duplicatesDeleted}`);
+        console.log(`   - Duplicate Questions Soft-Deleted (answers kept): ${duplicatesSoftDeleted}`);
+        console.log(`   - Empty Questions Hard-Deleted (0 answers):     ${emptyQuestionsDeleted}`);
+        console.log(`   - Empty Questions Soft-Deleted (answers kept): ${emptyQuestionsSoftDeleted}`);
+        console.log(`   - Total Answers Protected in DB:               ${preservedWithAnswers}`);
+        console.log(`   - Remaining Active Questions:                   ${remainingQuestions}`);
         console.log('===========================================================\n');
         return {
-            duplicatesDeleted,
-            emptyQuestionsDeleted,
+            duplicatesDeleted: duplicatesDeleted + duplicatesSoftDeleted,
+            emptyQuestionsDeleted: emptyQuestionsDeleted + emptyQuestionsSoftDeleted,
             preservedWithAnswers,
             remainingQuestions,
         };
