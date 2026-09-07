@@ -79,6 +79,9 @@ router.get('/api/exams', auth_1.verifyToken, examsController.getExamHandler3);
 router.get('/api/bank/questions', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.getExamHandler4);
 // 3. Update Exam
 router.put('/api/exams/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler5);
+// Clean duplicate & empty questions in exam
+router.post('/api/exams/:id/clean-duplicates', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.cleanDuplicatesHandler);
+router.post('/api/admin/clean-duplicates', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), examsController.cleanDuplicatesHandler);
 // 4. Get Exam Details
 router.delete('/api/exams/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), examsController.deleteExamHandler6);
 // Restore Exam

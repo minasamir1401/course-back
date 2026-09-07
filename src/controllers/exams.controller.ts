@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
 import prisma from '../lib/prisma';
+import { runSafeDeduplicationAndEmptyCleanup } from '../scripts/clean-duplicates-and-empty';
 import {
   buildQuestionFingerprint,
   pickReconciliationCandidate,
@@ -23,7 +24,7 @@ import {
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
   normalizeLegacyCourses, acquireLock, releaseLock, extractAndSaveBase64Images,
-  robustNormalizeText
+  robustNormalizeText, getQuestionCoreSignature
 } from '../shared';
 
 
@@ -915,6 +916,13 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             order: i
           };
 
+          // Skip completely empty question rows that have no text and no media
+          const qNormText = robustNormalizeText(qData.text);
+          if (qNormText.length < 2 && !qData.imageUrl && !qData.videoUrl) {
+            console.warn(`[Exam Update] Skipping empty question row with no text or media (index ${i})`);
+            continue;
+          }
+
           const incomingFingerprint = buildQuestionFingerprint(qData);
           let targetQuestionId = typeof q.id === 'string' && existingIds.has(q.id) ? q.id : undefined;
 
@@ -965,16 +973,17 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             }
           } else {
             // Last-resort duplicate guard: before creating a new question, check if an
-            // existing un-used question already has the same normalized text. This handles
-            // the race where two concurrent autosaves each sent the same ID-less question
-            // before the DB id was reconciled back to the frontend.
+            // existing un-used question already has the same normalized text or core signature.
+            // This handles autosave races and prefix variations (e.g. Question 1 (College Board):)
+            const incomingSig = getQuestionCoreSignature(qData.text);
             const incomingTextNorm = robustNormalizeText(qData.text);
-            const textDuplicateId = incomingTextNorm.length > 5
+            const textDuplicateId = (incomingSig.length >= 5 || incomingTextNorm.length > 5)
               ? existingQuestionsWithExp.find(
                 (eq) =>
                   !usedExistingIds.has(eq.id) &&
                   !explicitDeletedIds.has(eq.id) &&
-                  robustNormalizeText(eq.text) === incomingTextNorm,
+                  ((incomingSig.length >= 5 && getQuestionCoreSignature(eq.text) === incomingSig) ||
+                   robustNormalizeText(eq.text) === incomingTextNorm),
               )?.id
               : undefined;
 
@@ -3536,3 +3545,18 @@ export function formatExplanation(q: any): string | null {
   }
   return null;
 }
+
+export const cleanDuplicatesHandler = async (req: Request, res: Response) => {
+  try {
+    const examId = req.params.id || req.body?.examId;
+    const result = await runSafeDeduplicationAndEmptyCleanup(examId);
+    return res.json({
+      success: true,
+      message: `تم تنظيف ${result.duplicatesDeleted} سؤال مكرر و ${result.emptyQuestionsDeleted} سؤال فارغ بنجاح!`,
+      ...result,
+    });
+  } catch (err: any) {
+    console.error('cleanDuplicatesHandler error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to clean duplicates' });
+  }
+};

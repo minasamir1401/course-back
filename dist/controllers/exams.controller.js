@@ -23,10 +23,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.postExamHandler26 = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.postMoveModuleHandler = exports.postMoveAllSubExamsHandler = exports.postMoveSubExamHandler = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamQuestionsHandler = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = void 0;
+exports.cleanDuplicatesHandler = exports.postExamHandler26 = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.postMoveModuleHandler = exports.postMoveAllSubExamsHandler = exports.postMoveSubExamHandler = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamQuestionsHandler = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = void 0;
 exports.formatCorrectAnswer = formatCorrectAnswer;
 exports.formatExplanation = formatExplanation;
 const prisma_1 = __importDefault(require("../lib/prisma"));
+const clean_duplicates_and_empty_1 = require("../scripts/clean-duplicates-and-empty");
 const contentReconciliation_1 = require("../lib/contentReconciliation");
 const examWorkflow_1 = require("../utils/examWorkflow");
 const examErrorLog_1 = require("../utils/examErrorLog");
@@ -837,6 +838,12 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         subExamId: cleanSubExamId && validSubExamIdSet.has(cleanSubExamId) ? cleanSubExamId : null,
                         order: i
                     };
+                    // Skip completely empty question rows that have no text and no media
+                    const qNormText = (0, shared_1.robustNormalizeText)(qData.text);
+                    if (qNormText.length < 2 && !qData.imageUrl && !qData.videoUrl) {
+                        console.warn(`[Exam Update] Skipping empty question row with no text or media (index ${i})`);
+                        continue;
+                    }
                     const incomingFingerprint = (0, contentReconciliation_1.buildQuestionFingerprint)(qData);
                     let targetQuestionId = typeof q.id === 'string' && existingIds.has(q.id) ? q.id : undefined;
                     // POST/PUT autosave responses can be interrupted before the editor receives
@@ -879,14 +886,15 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     }
                     else {
                         // Last-resort duplicate guard: before creating a new question, check if an
-                        // existing un-used question already has the same normalized text. This handles
-                        // the race where two concurrent autosaves each sent the same ID-less question
-                        // before the DB id was reconciled back to the frontend.
+                        // existing un-used question already has the same normalized text or core signature.
+                        // This handles autosave races and prefix variations (e.g. Question 1 (College Board):)
+                        const incomingSig = (0, shared_1.getQuestionCoreSignature)(qData.text);
                         const incomingTextNorm = (0, shared_1.robustNormalizeText)(qData.text);
-                        const textDuplicateId = incomingTextNorm.length > 5
+                        const textDuplicateId = (incomingSig.length >= 5 || incomingTextNorm.length > 5)
                             ? (_b = existingQuestionsWithExp.find((eq) => !usedExistingIds.has(eq.id) &&
                                 !explicitDeletedIds.has(eq.id) &&
-                                (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm)) === null || _b === void 0 ? void 0 : _b.id
+                                ((incomingSig.length >= 5 && (0, shared_1.getQuestionCoreSignature)(eq.text) === incomingSig) ||
+                                    (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm))) === null || _b === void 0 ? void 0 : _b.id
                             : undefined;
                         if (textDuplicateId) {
                             console.warn(`[Exam Update] Prevented duplicate question creation – updating existing row instead: ${textDuplicateId}`);
@@ -3189,3 +3197,16 @@ function formatExplanation(q) {
     }
     return null;
 }
+const cleanDuplicatesHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    try {
+        const examId = req.params.id || ((_a = req.body) === null || _a === void 0 ? void 0 : _a.examId);
+        const result = yield (0, clean_duplicates_and_empty_1.runSafeDeduplicationAndEmptyCleanup)(examId);
+        return res.json(Object.assign({ success: true, message: `تم تنظيف ${result.duplicatesDeleted} سؤال مكرر و ${result.emptyQuestionsDeleted} سؤال فارغ بنجاح!` }, result));
+    }
+    catch (err) {
+        console.error('cleanDuplicatesHandler error:', err);
+        return res.status(500).json({ error: err.message || 'Failed to clean duplicates' });
+    }
+});
+exports.cleanDuplicatesHandler = cleanDuplicatesHandler;

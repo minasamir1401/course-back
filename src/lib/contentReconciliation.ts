@@ -1,3 +1,5 @@
+import { getQuestionCoreSignature, robustNormalizeText } from '../shared';
+
 export interface PersistedOrderedItem {
   id: string;
   order?: number | null;
@@ -118,16 +120,25 @@ export const pickReconciliationCandidate = (
   const exactMatch = available.find((item) => item.fingerprint === incomingFingerprint);
   if (exactMatch) return exactMatch;
 
-  // 2. Order-based fallback — only when the question text is identical.
+  // 1.5 Match by core signature (handles HTML tag differences, question number prefixes)
+  const incomingText = extractText(incomingFingerprint);
+  const incomingSig = getQuestionCoreSignature(incomingText);
+  if (incomingSig && incomingSig.length >= 5) {
+    const sigMatch = available.find((item) => {
+      const itemSig = getQuestionCoreSignature(extractText(item.fingerprint));
+      return itemSig === incomingSig || robustNormalizeText(extractText(item.fingerprint)) === robustNormalizeText(incomingText);
+    });
+    if (sigMatch) return sigMatch;
+  }
+
+  // 2. Order-based fallback — only when the question text core signature matches.
   //    This guards against matching a completely different question that happens
   //    to sit at the same position after an interleaved autosave.
-  if (allowOrderFallback) {
-    const incomingText = extractText(incomingFingerprint);
+  if (allowOrderFallback && incomingSig && incomingSig.length >= 5) {
     return available.find(
       (item) =>
         (item.order ?? 0) === incomingOrder &&
-        incomingText !== '' &&
-        extractText(item.fingerprint) === incomingText,
+        getQuestionCoreSignature(extractText(item.fingerprint)) === incomingSig,
     );
   }
 

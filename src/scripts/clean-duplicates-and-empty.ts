@@ -2,22 +2,40 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-function normalizeText(text: string | null | undefined): string {
+export function normalizeQuestionText(text: string | null | undefined): string {
   if (!text) return '';
-  return text
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  let clean = text
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[−–—]/g, '-')
     .replace(/\s+/g, ' ')
-    .toLowerCase()
-    .trim();
+    .trim()
+    .toLowerCase();
+
+  // Strip leading question labels like "Question 1 (College Board):" or "سؤال 1:"
+  clean = clean.replace(/^(question|سؤال|q)\s*\d+(\s*\([^)]*\))?[:.\s-]*/i, '').trim();
+  return clean;
 }
 
-function normalizeOptions(optionsRaw: string | null | undefined): string {
+export function getQuestionCoreSignature(text: string | null | undefined, optionsRaw?: string | null | undefined): string {
+  const clean = normalizeQuestionText(text);
+  const alphaCore = clean.replace(/[^a-z0-9\u0600-\u06FF]/gi, '');
+  if (alphaCore.length >= 15) {
+    // 35 chars of alphanumeric text is overwhelmingly unique and ignores end-of-string differences
+    return `core:${alphaCore.substring(0, 35)}`;
+  }
+  if (clean.length > 0) {
+    return `text:${clean}`;
+  }
+  return '';
+}
+
+export function normalizeOptions(optionsRaw: string | null | undefined): string {
   if (!optionsRaw) return '';
   try {
     let parsed: any = optionsRaw;
@@ -37,22 +55,23 @@ function normalizeOptions(optionsRaw: string | null | undefined): string {
       choices = [parsed];
     }
     return choices
-      .map((c) => normalizeText(c))
+      .map((c) => normalizeQuestionText(c))
       .filter((c) => c.length > 0)
       .sort()
       .join('|');
   } catch {
-    return normalizeText(optionsRaw);
+    return normalizeQuestionText(optionsRaw);
   }
 }
 
-export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
+export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string): Promise<{
   duplicatesDeleted: number;
   emptyQuestionsDeleted: number;
   preservedWithAnswers: number;
+  remainingQuestions: number;
 }> {
   console.log('===========================================================');
-  console.log('🚀 Starting Safe Question Deduplication & Empty Cleanup');
+  console.log(`🚀 Starting Safe Question Deduplication & Empty Cleanup ${targetExamId ? `for Exam ${targetExamId}` : '(All Exams)'}`);
   console.log('🔒 SAFETY RULE: Questions with student answers will NEVER be deleted.');
   console.log('===========================================================\n');
 
@@ -63,9 +82,11 @@ export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
   // ---------------------------------------------------------
   // PHASE 1: DEDUPLICATE QUESTIONS WITHIN EXAMS
   // ---------------------------------------------------------
-  console.log('--- Phase 1: Checking for duplicate questions per exam ---');
+  console.log('--- Phase 1: Checking for duplicate questions ---');
 
+  const examWhere = targetExamId ? { id: targetExamId } : {};
   const exams = await prisma.exam.findMany({
+    where: examWhere,
     select: { id: true, title: true },
   });
 
@@ -80,33 +101,31 @@ export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
         subExamId: true,
         moduleId: true,
         imageUrl: true,
+        videoUrl: true,
         createdAt: true,
       },
     });
 
     if (questions.length <= 1) continue;
 
-    // Group by subExam/module context + normalized text + normalized options
+    // Group by core signature
     const groups = new Map<string, typeof questions>();
 
     for (const q of questions) {
-      const normText = normalizeText(q.text);
-      // If question is completely empty, Phase 2 will handle it
-      if (!normText && !q.imageUrl) continue;
+      const sig = getQuestionCoreSignature(q.text, q.options);
+      // Empty questions will be handled in Phase 2
+      if (!sig && !q.imageUrl && !q.videoUrl) continue;
 
-      const normOpt = normalizeOptions(q.options);
-      const subContext = q.subExamId || q.moduleId || 'root';
-      const sig = `${subContext}:::${normText}:::${normOpt}`;
-
-      const existing = groups.get(sig) || [];
+      const groupKey = sig || `img:${q.imageUrl || q.id}`;
+      const existing = groups.get(groupKey) || [];
       existing.push(q);
-      groups.set(sig, existing);
+      groups.set(groupKey, existing);
     }
 
     for (const [sig, group] of groups.entries()) {
       if (group.length <= 1) continue;
 
-      console.log(`\n🔎 Found ${group.length} duplicates in Exam "${exam.title}" (${exam.id})`);
+      console.log(`\n🔎 Found ${group.length} duplicate questions in Exam "${exam.title}" (${exam.id}) [Sig: ${sig}]`);
 
       // Check student answers for all questions in this duplicate group
       const questionsWithAnswerCounts = await Promise.all(
@@ -129,15 +148,14 @@ export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
         preservedWithAnswers += withAnswers.length;
       }
 
-      // Determine which single question to keep
-      let questionToKeep = withAnswers[0] || withoutAnswers[0];
+      // Determine which question to keep (prefer one with student answers, or the earliest created)
+      const questionToKeep = withAnswers[0] || withoutAnswers[0];
 
-      // Questions safe to delete: any question in withoutAnswers that is not questionToKeep
+      // Safe to delete: questions with 0 answers that are not questionToKeep
       const toDelete = withoutAnswers.filter((q) => q.id !== questionToKeep.id);
 
       for (const item of toDelete) {
         try {
-          // Clean XPHistory first if any
           await prisma.xPHistory.deleteMany({ where: { questionId: item.id } }).catch(() => {});
           await prisma.question.delete({ where: { id: item.id } });
           duplicatesDeleted++;
@@ -156,7 +174,9 @@ export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
   // ---------------------------------------------------------
   console.log('\n--- Phase 2: Checking for empty questions with 0 answers ---');
 
+  const questionWhere = targetExamId ? { examId: targetExamId } : {};
   const allQuestions = await prisma.question.findMany({
+    where: questionWhere,
     select: {
       id: true,
       text: true,
@@ -167,12 +187,12 @@ export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
   });
 
   for (const q of allQuestions) {
-    const normText = normalizeText(q.text);
+    const cleanText = normalizeQuestionText(q.text);
     const hasImage = Boolean(q.imageUrl && q.imageUrl.trim().length > 0);
     const hasVideo = Boolean(q.videoUrl && q.videoUrl.trim().length > 0);
 
-    // If completely empty of content
-    if (!normText && !hasImage && !hasVideo) {
+    // If completely empty text (< 2 non-whitespace characters) and no image/video
+    if (cleanText.length < 2 && !hasImage && !hasVideo) {
       // Check for student answers
       const answersCount = await prisma.studentAnswer.count({
         where: { questionId: q.id },
@@ -199,17 +219,23 @@ export async function runSafeDeduplicationAndEmptyCleanup(): Promise<{
 
   console.log(`Phase 2 Complete: Deleted ${emptyQuestionsDeleted} empty questions.\n`);
 
+  const remainingQuestions = targetExamId
+    ? await prisma.question.count({ where: { examId: targetExamId } })
+    : await prisma.question.count();
+
   console.log('===========================================================');
   console.log('🎉 Cleanup Summary:');
   console.log(`   - Duplicate Questions Removed: ${duplicatesDeleted}`);
   console.log(`   - Empty Questions Removed:     ${emptyQuestionsDeleted}`);
   console.log(`   - Questions Protected/Answers: ${preservedWithAnswers}`);
+  console.log(`   - Remaining Questions:         ${remainingQuestions}`);
   console.log('===========================================================\n');
 
   return {
     duplicatesDeleted,
     emptyQuestionsDeleted,
     preservedWithAnswers,
+    remainingQuestions,
   };
 }
 
@@ -218,10 +244,9 @@ if (require.main === module) {
   runSafeDeduplicationAndEmptyCleanup()
     .then(() => {
       prisma.$disconnect();
-      process.exit(0);
     })
     .catch((err) => {
-      console.error('Fatal error during cleanup:', err);
+      console.error('Fatal cleanup error:', err);
       prisma.$disconnect();
       process.exit(1);
     });

@@ -1054,16 +1054,27 @@ export const releaseLock = (key: string): void => {
 export const robustNormalizeText = (t: string | null | undefined): string => {
   if (!t) return '';
   return String(t)
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[−–—]/g, '-')
     .replace(/\\\(|\\\)|\\\[|\\\]/g, '')
     .replace(/\s+/g, ' ')
+    .trim()
     .toLowerCase()
+    .replace(/^(question|سؤال|q)\s*\d+(\s*\([^)]*\))?[:.\s-]*/i, '')
     .trim();
+};
+
+export const getQuestionCoreSignature = (t: string | null | undefined): string => {
+  const norm = robustNormalizeText(t);
+  const alpha = norm.replace(/[^a-z0-9\u0600-\u06FF]/gi, '');
+  return alpha.length >= 15 ? alpha.substring(0, 35) : norm;
 };
 

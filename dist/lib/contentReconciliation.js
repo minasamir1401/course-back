@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pickReconciliationCandidate = exports.sortPersistedOrder = exports.comparePersistedOrder = exports.buildLessonFingerprint = exports.buildQuestionFingerprint = exports.canonicalContent = void 0;
+const shared_1 = require("../shared");
 const parseJsonish = (value) => {
     if (typeof value !== 'string')
         return value;
@@ -111,16 +112,25 @@ const pickReconciliationCandidate = (existing, incomingOrder, incomingFingerprin
     const exactMatch = available.find((item) => item.fingerprint === incomingFingerprint);
     if (exactMatch)
         return exactMatch;
-    // 2. Order-based fallback — only when the question text is identical.
+    // 1.5 Match by core signature (handles HTML tag differences, question number prefixes)
+    const incomingText = extractText(incomingFingerprint);
+    const incomingSig = (0, shared_1.getQuestionCoreSignature)(incomingText);
+    if (incomingSig && incomingSig.length >= 5) {
+        const sigMatch = available.find((item) => {
+            const itemSig = (0, shared_1.getQuestionCoreSignature)(extractText(item.fingerprint));
+            return itemSig === incomingSig || (0, shared_1.robustNormalizeText)(extractText(item.fingerprint)) === (0, shared_1.robustNormalizeText)(incomingText);
+        });
+        if (sigMatch)
+            return sigMatch;
+    }
+    // 2. Order-based fallback — only when the question text core signature matches.
     //    This guards against matching a completely different question that happens
     //    to sit at the same position after an interleaved autosave.
-    if (allowOrderFallback) {
-        const incomingText = extractText(incomingFingerprint);
+    if (allowOrderFallback && incomingSig && incomingSig.length >= 5) {
         return available.find((item) => {
             var _a;
             return ((_a = item.order) !== null && _a !== void 0 ? _a : 0) === incomingOrder &&
-                incomingText !== '' &&
-                extractText(item.fingerprint) === incomingText;
+                (0, shared_1.getQuestionCoreSignature)(extractText(item.fingerprint)) === incomingSig;
         });
     }
     return undefined;
