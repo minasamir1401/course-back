@@ -642,6 +642,8 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
       let incomingModuleIds: string[] = [];
       let incomingSubExamIds: string[] = [];
       let modulesProvided = false;
+      const moduleIdMap = new Map<string, string>();
+      const subExamIdMap = new Map<string, string>();
 
       if (req.body.modules !== undefined) {
         modulesProvided = true;
@@ -741,12 +743,84 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           }
 
           if (!moduleUpdated) {
+            const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateModuleId || '');
+            let idToUse: string | undefined = undefined;
+            if (isValidUuid && candidateModuleId) {
+              const alreadyExists = await tx.examModule.findUnique({ where: { id: candidateModuleId } });
+              if (!alreadyExists) {
+                idToUse = candidateModuleId;
+              }
+            }
             const newMod = await tx.examModule.create({
-              data: { examId: id, ...mData }
+              data: {
+                ...(idToUse ? { id: idToUse } : {}),
+                examId: id,
+                ...mData
+              }
             });
             moduleId = newMod.id;
           }
 
+          if (m.id) {
+            moduleIdMap.set(String(m.id).trim(), moduleId);
+          }
+          moduleIdMap.set(moduleId, moduleId);
+
+          // Sub-modules if any
+          const sanitizedSubModules = Array.isArray(m.subModules) ? m.subModules : [];
+          for (let smIdx = 0; smIdx < sanitizedSubModules.length; smIdx++) {
+            const sm = sanitizedSubModules[smIdx];
+            if (!sm) continue;
+            const smData = {
+              examId: id,
+              parentModuleId: moduleId,
+              title: sm.title ? sanitizeHtml(sm.title) : `Sub-Module ${smIdx + 1}`,
+              description: sm.description ? sanitizeHtml(sm.description) : null,
+              order: sm.order !== undefined ? parseInt(sm.order) : smIdx,
+              duration: sm.duration ? parseInt(sm.duration) : null,
+              passingScore: sm.passingScore ? parseInt(sm.passingScore) : null,
+              gradeTarget: sm.gradeTarget ? sanitizeHtml(sm.gradeTarget) : null,
+            };
+            const existingSubMod = sm.id
+              ? await tx.examModule.findFirst({ where: { examId: id, OR: [{ id: sm.id }, { title: smData.title }] } })
+              : await tx.examModule.findFirst({ where: { examId: id, parentModuleId: moduleId, title: smData.title } });
+
+            const candidateSubModId = existingSubMod?.id || (sm.id ? String(sm.id).trim() : null);
+            let subModUpdated = false;
+            let subModId = sm.id;
+
+            if (candidateSubModId) {
+              const upd = await tx.examModule.updateMany({
+                where: { id: candidateSubModId, examId: id },
+                data: smData
+              });
+              if (upd.count > 0) {
+                subModId = candidateSubModId;
+                subModUpdated = true;
+              }
+            }
+
+            if (!subModUpdated) {
+              const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateSubModId || '');
+              let smIdToUse: string | undefined = undefined;
+              if (isUuid && candidateSubModId) {
+                const ex = await tx.examModule.findUnique({ where: { id: candidateSubModId } });
+                if (!ex) smIdToUse = candidateSubModId;
+              }
+              const createdSm = await tx.examModule.create({
+                data: {
+                  ...(smIdToUse ? { id: smIdToUse } : {}),
+                  ...smData
+                }
+              });
+              subModId = createdSm.id;
+            }
+
+            if (sm.id) moduleIdMap.set(String(sm.id).trim(), subModId);
+            moduleIdMap.set(subModId, subModId);
+          }
+
+          // Sub-exams
           const sanitizedSubExams = Array.isArray(m.subExams) ? m.subExams : [];
           for (let j = 0; j < sanitizedSubExams.length; j++) {
             const s = sanitizedSubExams[j];
@@ -767,6 +841,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
 
             const candidateSubId = existingSub?.id || (s.id ? String(s.id).trim() : null);
             let subUpdated = false;
+            let subExamId = s.id;
 
             if (candidateSubId) {
               const updateSubRes = await tx.subExam.updateMany({
@@ -774,15 +849,32 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
                 data: sData
               });
               if (updateSubRes.count > 0) {
+                subExamId = candidateSubId;
                 subUpdated = true;
               }
             }
 
             if (!subUpdated) {
-              await tx.subExam.create({
-                data: { moduleId, ...sData }
+              const isValidSubUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateSubId || '');
+              let subIdToUse: string | undefined = undefined;
+              if (isValidSubUuid && candidateSubId) {
+                const subAlreadyExists = await tx.subExam.findUnique({ where: { id: candidateSubId } });
+                if (!subAlreadyExists) {
+                  subIdToUse = candidateSubId;
+                }
+              }
+              const createdSub = await tx.subExam.create({
+                data: {
+                  ...(subIdToUse ? { id: subIdToUse } : {}),
+                  moduleId,
+                  ...sData
+                }
               });
+              subExamId = createdSub.id;
             }
+
+            if (s.id) subExamIdMap.set(String(s.id).trim(), subExamId);
+            subExamIdMap.set(subExamId, subExamId);
           }
         }
 
@@ -860,15 +952,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           select: { id: true }
         });
 
-        const validModuleIdSet = new Set<string>([
-          ...existingExamModules.map(m => m.id),
-          ...(modulesProvided ? incomingModuleIds : [])
-        ]);
-
-        const validSubExamIdSet = new Set<string>([
-          ...existingSubExams.map(s => s.id),
-          ...(modulesProvided ? incomingSubExamIds : [])
-        ]);
+        // 🔒 100% FOREIGN KEY SAFE: ONLY real DB IDs confirmed to exist in the database!
+        // Unverified client IDs from incomingModuleIds or incomingSubExamIds MUST NEVER be added directly.
+        const validModuleIdSet = new Set<string>(existingExamModules.map(m => m.id));
+        const validSubExamIdSet = new Set<string>(existingSubExams.map(s => s.id));
 
         // ✅ KEY FIX: Track which IDs the client explicitly sent in the payload
         // We only soft-delete questions the client KNEW about (had their ID) but chose to remove.
@@ -881,8 +968,15 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           }
           const newExplanation = formatExplanation(q);
 
-          const cleanModuleId = q.moduleId ? sanitizeHtml(q.moduleId) : null;
-          const cleanSubExamId = q.subExamId ? sanitizeHtml(q.subExamId) : null;
+          const cleanModuleId = q.moduleId ? sanitizeHtml(String(q.moduleId).trim()) : null;
+          const cleanSubExamId = q.subExamId ? sanitizeHtml(String(q.subExamId).trim()) : null;
+
+          // 🔒 Resolve client temporary or mapped IDs to actual DB IDs, strictly verifying FK existence
+          const mappedModuleId = cleanModuleId ? (moduleIdMap.get(cleanModuleId) || cleanModuleId) : null;
+          const resolvedModuleId = mappedModuleId && validModuleIdSet.has(mappedModuleId) ? mappedModuleId : null;
+
+          const mappedSubExamId = cleanSubExamId ? (subExamIdMap.get(cleanSubExamId) || cleanSubExamId) : null;
+          const resolvedSubExamId = mappedSubExamId && validSubExamIdSet.has(mappedSubExamId) ? mappedSubExamId : null;
 
           const qData = {
             text: extractAndSaveBase64Images(sanitizeHtml(q.text || '')),
@@ -909,10 +1003,9 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? sanitizeHtml(q.estimatedTime) : null) : undefined,
             explanation: newExplanation,
             imageUrl: q.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(q.imageUrl)) : null,
-            // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in validModuleIdSet / validSubExamIdSet.
-            // If stale ID, deleted module, or autosave race without modules payload, set to null to avoid P2003.
-            moduleId: cleanModuleId && validModuleIdSet.has(cleanModuleId) ? cleanModuleId : null,
-            subExamId: cleanSubExamId && validSubExamIdSet.has(cleanSubExamId) ? cleanSubExamId : null,
+            // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
+            moduleId: resolvedModuleId,
+            subExamId: resolvedSubExamId,
             order: i
           };
 

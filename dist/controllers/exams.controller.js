@@ -592,6 +592,8 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             let incomingModuleIds = [];
             let incomingSubExamIds = [];
             let modulesProvided = false;
+            const moduleIdMap = new Map();
+            const subExamIdMap = new Map();
             if (req.body.modules !== undefined) {
                 modulesProvided = true;
                 const sanitizedModules = Array.isArray(req.body.modules) ? req.body.modules : [];
@@ -682,11 +684,73 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         }
                     }
                     if (!moduleUpdated) {
+                        const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateModuleId || '');
+                        let idToUse = undefined;
+                        if (isValidUuid && candidateModuleId) {
+                            const alreadyExists = yield tx.examModule.findUnique({ where: { id: candidateModuleId } });
+                            if (!alreadyExists) {
+                                idToUse = candidateModuleId;
+                            }
+                        }
                         const newMod = yield tx.examModule.create({
-                            data: Object.assign({ examId: id }, mData)
+                            data: Object.assign(Object.assign(Object.assign({}, (idToUse ? { id: idToUse } : {})), { examId: id }), mData)
                         });
                         moduleId = newMod.id;
                     }
+                    if (m.id) {
+                        moduleIdMap.set(String(m.id).trim(), moduleId);
+                    }
+                    moduleIdMap.set(moduleId, moduleId);
+                    // Sub-modules if any
+                    const sanitizedSubModules = Array.isArray(m.subModules) ? m.subModules : [];
+                    for (let smIdx = 0; smIdx < sanitizedSubModules.length; smIdx++) {
+                        const sm = sanitizedSubModules[smIdx];
+                        if (!sm)
+                            continue;
+                        const smData = {
+                            examId: id,
+                            parentModuleId: moduleId,
+                            title: sm.title ? (0, shared_1.sanitizeHtml)(sm.title) : `Sub-Module ${smIdx + 1}`,
+                            description: sm.description ? (0, shared_1.sanitizeHtml)(sm.description) : null,
+                            order: sm.order !== undefined ? parseInt(sm.order) : smIdx,
+                            duration: sm.duration ? parseInt(sm.duration) : null,
+                            passingScore: sm.passingScore ? parseInt(sm.passingScore) : null,
+                            gradeTarget: sm.gradeTarget ? (0, shared_1.sanitizeHtml)(sm.gradeTarget) : null,
+                        };
+                        const existingSubMod = sm.id
+                            ? yield tx.examModule.findFirst({ where: { examId: id, OR: [{ id: sm.id }, { title: smData.title }] } })
+                            : yield tx.examModule.findFirst({ where: { examId: id, parentModuleId: moduleId, title: smData.title } });
+                        const candidateSubModId = (existingSubMod === null || existingSubMod === void 0 ? void 0 : existingSubMod.id) || (sm.id ? String(sm.id).trim() : null);
+                        let subModUpdated = false;
+                        let subModId = sm.id;
+                        if (candidateSubModId) {
+                            const upd = yield tx.examModule.updateMany({
+                                where: { id: candidateSubModId, examId: id },
+                                data: smData
+                            });
+                            if (upd.count > 0) {
+                                subModId = candidateSubModId;
+                                subModUpdated = true;
+                            }
+                        }
+                        if (!subModUpdated) {
+                            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateSubModId || '');
+                            let smIdToUse = undefined;
+                            if (isUuid && candidateSubModId) {
+                                const ex = yield tx.examModule.findUnique({ where: { id: candidateSubModId } });
+                                if (!ex)
+                                    smIdToUse = candidateSubModId;
+                            }
+                            const createdSm = yield tx.examModule.create({
+                                data: Object.assign(Object.assign({}, (smIdToUse ? { id: smIdToUse } : {})), smData)
+                            });
+                            subModId = createdSm.id;
+                        }
+                        if (sm.id)
+                            moduleIdMap.set(String(sm.id).trim(), subModId);
+                        moduleIdMap.set(subModId, subModId);
+                    }
+                    // Sub-exams
                     const sanitizedSubExams = Array.isArray(m.subExams) ? m.subExams : [];
                     for (let j = 0; j < sanitizedSubExams.length; j++) {
                         const s = sanitizedSubExams[j];
@@ -705,20 +769,34 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                             : yield tx.subExam.findFirst({ where: { moduleId, title: sData.title } });
                         const candidateSubId = (existingSub === null || existingSub === void 0 ? void 0 : existingSub.id) || (s.id ? String(s.id).trim() : null);
                         let subUpdated = false;
+                        let subExamId = s.id;
                         if (candidateSubId) {
                             const updateSubRes = yield tx.subExam.updateMany({
                                 where: { id: candidateSubId, moduleId },
                                 data: sData
                             });
                             if (updateSubRes.count > 0) {
+                                subExamId = candidateSubId;
                                 subUpdated = true;
                             }
                         }
                         if (!subUpdated) {
-                            yield tx.subExam.create({
-                                data: Object.assign({ moduleId }, sData)
+                            const isValidSubUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateSubId || '');
+                            let subIdToUse = undefined;
+                            if (isValidSubUuid && candidateSubId) {
+                                const subAlreadyExists = yield tx.subExam.findUnique({ where: { id: candidateSubId } });
+                                if (!subAlreadyExists) {
+                                    subIdToUse = candidateSubId;
+                                }
+                            }
+                            const createdSub = yield tx.subExam.create({
+                                data: Object.assign(Object.assign(Object.assign({}, (subIdToUse ? { id: subIdToUse } : {})), { moduleId }), sData)
                             });
+                            subExamId = createdSub.id;
                         }
+                        if (s.id)
+                            subExamIdMap.set(String(s.id).trim(), subExamId);
+                        subExamIdMap.set(subExamId, subExamId);
                     }
                 }
                 // Clean up any empty duplicate modules for this exam
@@ -787,14 +865,10 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     where: { module: { examId: id } },
                     select: { id: true }
                 });
-                const validModuleIdSet = new Set([
-                    ...existingExamModules.map(m => m.id),
-                    ...(modulesProvided ? incomingModuleIds : [])
-                ]);
-                const validSubExamIdSet = new Set([
-                    ...existingSubExams.map(s => s.id),
-                    ...(modulesProvided ? incomingSubExamIds : [])
-                ]);
+                // 🔒 100% FOREIGN KEY SAFE: ONLY real DB IDs confirmed to exist in the database!
+                // Unverified client IDs from incomingModuleIds or incomingSubExamIds MUST NEVER be added directly.
+                const validModuleIdSet = new Set(existingExamModules.map(m => m.id));
+                const validSubExamIdSet = new Set(existingSubExams.map(s => s.id));
                 // ✅ KEY FIX: Track which IDs the client explicitly sent in the payload
                 // We only soft-delete questions the client KNEW about (had their ID) but chose to remove.
                 // Questions sent without an ID are new — they never trigger deletions.
@@ -805,8 +879,13 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         continue;
                     }
                     const newExplanation = formatExplanation(q);
-                    const cleanModuleId = q.moduleId ? (0, shared_1.sanitizeHtml)(q.moduleId) : null;
-                    const cleanSubExamId = q.subExamId ? (0, shared_1.sanitizeHtml)(q.subExamId) : null;
+                    const cleanModuleId = q.moduleId ? (0, shared_1.sanitizeHtml)(String(q.moduleId).trim()) : null;
+                    const cleanSubExamId = q.subExamId ? (0, shared_1.sanitizeHtml)(String(q.subExamId).trim()) : null;
+                    // 🔒 Resolve client temporary or mapped IDs to actual DB IDs, strictly verifying FK existence
+                    const mappedModuleId = cleanModuleId ? (moduleIdMap.get(cleanModuleId) || cleanModuleId) : null;
+                    const resolvedModuleId = mappedModuleId && validModuleIdSet.has(mappedModuleId) ? mappedModuleId : null;
+                    const mappedSubExamId = cleanSubExamId ? (subExamIdMap.get(cleanSubExamId) || cleanSubExamId) : null;
+                    const resolvedSubExamId = mappedSubExamId && validSubExamIdSet.has(mappedSubExamId) ? mappedSubExamId : null;
                     const qData = {
                         text: (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.text || '')),
                         type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type === 'QUESTION' && q.label ? q.label : q.type) ? (0, shared_1.sanitizeHtml)(q.type === 'QUESTION' && q.label ? q.label : q.type) : 'MCQ',
@@ -832,10 +911,9 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? (0, shared_1.sanitizeHtml)(q.estimatedTime) : null) : undefined,
                         explanation: newExplanation,
                         imageUrl: q.imageUrl ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.imageUrl)) : null,
-                        // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in validModuleIdSet / validSubExamIdSet.
-                        // If stale ID, deleted module, or autosave race without modules payload, set to null to avoid P2003.
-                        moduleId: cleanModuleId && validModuleIdSet.has(cleanModuleId) ? cleanModuleId : null,
-                        subExamId: cleanSubExamId && validSubExamIdSet.has(cleanSubExamId) ? cleanSubExamId : null,
+                        // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
+                        moduleId: resolvedModuleId,
+                        subExamId: resolvedSubExamId,
                         order: i
                     };
                     // Skip completely empty question rows that have no text and no media
