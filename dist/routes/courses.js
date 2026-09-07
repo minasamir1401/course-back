@@ -96,6 +96,8 @@ router.delete("/api/school/courses/:id", auth_1.verifyToken, (0, auth_1.checkRol
 router.get("/api/admin/trash", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.getCourseHandler23);
 router.post("/api/admin/trash/bulk-restore", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.postCourseHandler24);
 router.delete("/api/admin/trash/empty", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.deleteCourseHandler25);
+router.post("/api/admin/trash/bulk-delete", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.postTrashBulkDeleteHandler);
+router.delete("/api/admin/trash/item/:type/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.deleteTrashItemHandler);
 // Restore Course
 router.post("/api/school/courses/:id/restore", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.postCourseHandler26);
 // Restore Lesson

@@ -39,8 +39,13 @@ router.post('/api/auth/register', (req, res) => __awaiter(void 0, void 0, void 0
         if (missing) {
             return res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
         }
-        if (role !== 'TEACHER' && role !== 'STUDENT') {
-            return res.status(400).json({ error: 'Invalid role. Only TEACHER or STUDENT roles can self-register.' });
+        // A public request cannot prove membership of a school's teaching staff.
+        // Teachers must be created through the existing authenticated admin workflow.
+        if (role === 'TEACHER') {
+            return res.status(403).json({ error: 'حسابات المعلمين تُنشأ بواسطة إدارة المدرسة. يرجى التواصل مع إدارة مدرستك.' });
+        }
+        if (role !== 'STUDENT') {
+            return res.status(400).json({ error: 'Invalid role. Only STUDENT accounts can self-register.' });
         }
         // Check if username already exists
         const existingUser = yield prisma_1.default.user.findUnique({ where: { username } });
@@ -69,6 +74,12 @@ router.post('/api/auth/register', (req, res) => __awaiter(void 0, void 0, void 0
         res.status(500).json({ error: 'Error registering user' });
     }
 }));
+// Resolve the same current identity used by authenticated writes before offline replay.
+router.get('/api/auth/session', auth_1.verifyToken, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const { id, role, schoolId } = req.user;
+    res.json({ user: { id, role, schoolId: schoolId !== null && schoolId !== void 0 ? schoolId : null } });
+});
 router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -91,13 +102,7 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
             yield (0, shared_1.recordFailedLogin)(ip);
             return res.status(400).json({ error: 'Invalid username or password.' });
         }
-        let validPassword = yield bcryptjs_1.default.compare(password, user.password);
-        if (!validPassword && process.env.NODE_ENV !== 'production') {
-            const devMasterPasswords = ['admin123', 'admin', '123456', 'super-admin-password-123', 'seed-user-password-123'];
-            if (devMasterPasswords.includes(password)) {
-                validPassword = true;
-            }
-        }
+        const validPassword = yield bcryptjs_1.default.compare(password, user.password);
         if (!validPassword) {
             yield (0, shared_1.recordFailedLogin)(ip);
             return res.status(400).json({ error: 'Invalid username or password.' });

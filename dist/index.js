@@ -58,6 +58,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startServer = exports.app = void 0;
 require("dotenv/config");
+const backupSnapshot_1 = require("./lib/backupSnapshot");
 // Backend API for LMS - Modularized entrypoint
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
@@ -181,13 +182,14 @@ app.use((0, cors_1.default)({
         return callback(new Error('CORS origin is not allowed'));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Offline-User-Id', 'X-Offline-School-Id'],
     credentials: true
 }));
 app.use(express_1.default.json({ limit: '100mb' }));
 app.use(express_1.default.urlencoded({ limit: '100mb', extended: true }));
 app.use((0, cookie_parser_1.default)());
 // Serve Uploaded Files with Cache-Control
+app.use('/uploads', backupSnapshot_1.blockPublicBackups);
 app.use('/uploads', (req, res, next) => {
     const fileExt = path_1.default.extname(req.path).toLowerCase();
     if (['.png', '.jpg', '.jpeg'].includes(fileExt) && req.accepts('image/webp')) {

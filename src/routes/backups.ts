@@ -1,3 +1,6 @@
+import multer from 'multer';
+import { ensureBackupStorage } from '../lib/backupSnapshot';
+import { randomUUID } from 'crypto';
 import * as backupsController from "../controllers/backups.controller";
 export { BACKUPS_DIR, performBackupAndPruning, parseBackupBuffer } from "../controllers/backups.controller";
 import { BACKUPS_DIR, parseBackupBuffer } from "../controllers/backups.controller";
@@ -51,7 +54,18 @@ async function writeJsonZip(filePath: string, entryName: string, payload: any): 
 
 
 // --- Extracted from lines 1685-1797 ---
-if (!fs.existsSync(BACKUPS_DIR)) fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+let storageReady: Promise<void> | undefined;
+router.use('/api/admin/backup', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  (storageReady ||= ensureBackupStorage()).then(() => next(), next);
+});
+const backupUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, done) => done(null, BACKUPS_DIR),
+    filename: (_req, _file, done) => done(null, 'upload-' + randomUUID() + '.tmp')
+  }),
+  limits: { fileSize: 100 * 1024 * 1024, files: 1 }
+});
 // Helper function to fetch all database records cleanly as a backup payload
 // Helper function to perform data backup — saves locally AND to Cloud Backup cloud
 // --- Extracted from lines 1984-2304 ---
@@ -82,7 +96,7 @@ router.get('/api/admin/backup/download-all', verifyToken, checkRole(['SUPER_ADMI
 // 3.6 Manual Bundle All Backups to DB
 router.post('/api/admin/backup/bundle-manual', verifyToken, checkRole(['SUPER_ADMIN']), backupsController.postBackupHandler10);
 // 4. Upload Backup
-router.post('/api/admin/backup/upload', verifyToken, checkRole(['SUPER_ADMIN']), multerUpload.single('file'), backupsController.postBackupHandler11);
+router.post('/api/admin/backup/upload', verifyToken, checkRole(['SUPER_ADMIN']), backupUpload.single('file'), backupsController.postBackupHandler11);
 // Delete Backup
 router.delete('/api/admin/backup/:filename', verifyToken, checkRole(['SUPER_ADMIN']), backupsController.deleteBackupHandler12);
 // 5. Restore Backup (local file OR cloud backup)

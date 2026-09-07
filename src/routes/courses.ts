@@ -269,6 +269,20 @@ router.delete(
   coursesController.deleteCourseHandler25,
 );
 
+router.post(
+  "/api/admin/trash/bulk-delete",
+  verifyToken,
+  checkRole(["SUPER_ADMIN"]),
+  coursesController.postTrashBulkDeleteHandler,
+);
+
+router.delete(
+  "/api/admin/trash/item/:type/:id",
+  verifyToken,
+  checkRole(["SUPER_ADMIN"]),
+  coursesController.deleteTrashItemHandler,
+);
+
 // Restore Course
 router.post(
   "/api/school/courses/:id/restore",

@@ -112,8 +112,6 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         if (questions && !Array.isArray(questions)) {
             return res.status(400).json({ error: 'questions must be an array.' });
         }
-        // Prepare target schools — only SUPER_ADMIN may mark an exam as Central
-        const effectiveIsCentral = req.user.role === 'SUPER_ADMIN' ? !!isCentral : false;
         let schoolAdminSchoolId = req.user.schoolId;
         if (req.user.role === 'SCHOOL_ADMIN' && !schoolAdminSchoolId && req.user.id) {
             const u = yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { schoolId: true } });
@@ -121,18 +119,23 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         }
         const rawCreateSchoolList = schoolIds !== undefined && Array.isArray(schoolIds) && schoolIds.length > 0
             ? schoolIds
-            : (schoolId ? [schoolId] : [req.user.schoolId || schoolAdminSchoolId]);
+            : (schoolId ? [schoolId] : (req.user.role === 'SCHOOL_ADMIN' ? [schoolAdminSchoolId] : []));
+        const sanitizedCreateSchoolIds = (Array.isArray(rawCreateSchoolList) ? rawCreateSchoolList : [rawCreateSchoolList])
+            .map((s) => (typeof s === 'object' && s ? s.id : s))
+            .filter((id) => Boolean(id && typeof id === 'string' && id !== 'null' && id !== 'undefined' && id.trim() !== ''))
+            .map((id) => id.trim());
+        // Prepare target schools — only SUPER_ADMIN may mark an exam as Central, and only when no specific schools are targeted
+        const effectiveIsCentral = req.user.role === 'SUPER_ADMIN'
+            ? (isCentral === false ? false : (sanitizedCreateSchoolIds.length > 0 ? false : (isCentral !== undefined ? !!isCentral : true)))
+            : false;
         const finalSchoolIds = effectiveIsCentral
             ? []
             : req.user.role === 'SCHOOL_ADMIN'
-                ? (schoolAdminSchoolId ? [schoolAdminSchoolId] : [])
-                : (Array.isArray(rawCreateSchoolList) ? rawCreateSchoolList : [rawCreateSchoolList])
-                    .map((s) => (typeof s === 'object' && s ? s.id : s))
-                    .filter((id) => Boolean(id && typeof id === 'string' && id !== 'null' && id !== 'undefined' && id.trim() !== ''))
-                    .map((id) => id.trim());
-        const ownerSchoolId = req.user.role === 'SCHOOL_ADMIN'
-            ? (effectiveIsCentral ? null : schoolAdminSchoolId)
-            : (effectiveIsCentral ? null : (finalSchoolIds.length > 0 ? finalSchoolIds[0] : (schoolId || req.user.schoolId || schoolAdminSchoolId)));
+                ? (schoolAdminSchoolId ? [schoolAdminSchoolId] : sanitizedCreateSchoolIds)
+                : sanitizedCreateSchoolIds;
+        const ownerSchoolId = effectiveIsCentral
+            ? null
+            : (finalSchoolIds.length > 0 ? finalSchoolIds[0] : null);
         if (ownerSchoolId && !finalSchoolIds.includes(ownerSchoolId)) {
             finalSchoolIds.push(ownerSchoolId);
         }
@@ -333,7 +336,7 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 { grades: { contains: `"${g}"` } }
             ]
         });
-        if (isCentral === 'true') {
+        if (isCentral === 'true' && req.user.role === 'SUPER_ADMIN') {
             where.isCentral = true;
         }
         else if (req.user.role === 'SUPER_ADMIN') {
@@ -384,31 +387,38 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
             }
         }
         else if (req.user.role === 'STUDENT') {
-            // Fetch latest user info to get current grade if not in token
-            let currentGrade = req.user.grade;
-            const schoolId = req.user.schoolId;
-            if (currentGrade === undefined) {
-                const student = yield prisma_1.default.user.findUnique({ where: { id: req.user.id } });
-                currentGrade = (student === null || student === void 0 ? void 0 : student.grade) || null;
-            }
-            // Base filters
-            const orFilters = [{ isCentral: true }];
+            const student = yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { grade: true, schoolId: true } });
+            if (!student)
+                return res.status(403).json({ error: 'Student account not found' });
+            req.user = (0, examWorkflow_1.mergeStudentProfile)(req.user, student);
+            const currentGrade = student.grade;
+            const schoolId = student.schoolId;
+            // Base filters: Truly central exams (no specific school restriction)
+            const orFilters = [
+                {
+                    isCentral: true,
+                    schoolId: null,
+                    schools: { none: {} }
+                }
+            ];
             // Only add school filters if student belongs to a school
             if (schoolId) {
                 orFilters.push({ schoolId: schoolId });
                 orFilters.push({ schools: { some: { id: schoolId } } });
             }
             const studentGrades = (0, shared_1.getStudentGradeAndStage)(currentGrade);
-            const gradeOrConditions = [{ grade: null }];
+            const gradeOrConditions = [{ grade: null, OR: [{ grades: null }, { grades: '[]' }, { grades: '' }] }];
             for (const g of studentGrades) {
                 gradeOrConditions.push({ grade: g });
                 gradeOrConditions.push({ grades: { contains: `"${g}"` } });
             }
             where.AND = [
                 { OR: orFilters },
-                { OR: gradeOrConditions }
+                ...(gradeOrConditions.length > 0 ? [{ OR: gradeOrConditions }] : [])
             ];
             where.status = 'PUBLISHED';
+            // Student must only see exams that have at least one module
+            where.modules = { some: {} };
         }
         else if (req.user.role === 'TEACHER') {
             const teacherCourses = yield prisma_1.default.teacherCourse.findMany({
@@ -449,6 +459,16 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
             },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
         });
+        if (req.user.role === 'STUDENT') {
+            exams = exams.filter((exam) => {
+                // A student must only see exams that contain at least one root module/section
+                const rootSections = (exam.modules || []).filter((m) => !m.parentModuleId);
+                if (rootSections.length === 0)
+                    return false;
+                // Double check student school and grade access
+                return (0, shared_1.examMatchesStudent)(exam, req.user);
+            });
+        }
         res.json(exams.map((exam) => (Object.assign(Object.assign({}, exam), { modules: (exam.modules || []).map((module) => (Object.assign(Object.assign(Object.assign({}, module), (0, examWorkflow_1.countModuleContent)(module)), { availability: (0, examWorkflow_1.getAvailability)(module), subModules: (module.subModules || []).map((sm) => (Object.assign(Object.assign(Object.assign({}, sm), (0, examWorkflow_1.countModuleContent)(sm)), { availability: (0, examWorkflow_1.getAvailability)(sm), subExams: (sm.subExams || []).map((subExam) => {
                         var _a;
                         return (Object.assign(Object.assign({}, subExam), { questionsCount: ((_a = subExam._count) === null || _a === void 0 ? void 0 : _a.questions) || 0, availability: (0, examWorkflow_1.getAvailability)(subExam) }));
@@ -497,12 +517,25 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 _count: { select: { submissions: true } }
             }
         });
-        if (!existingExam)
-            return res.status(404).json({ error: 'Exam not found' });
+        if (!existingExam || existingExam.deletedAt !== null)
+            return res.status(404).json({ error: 'Exam not found or has been deleted' });
         if (!(yield (0, exports.canManageExam)(req.user, existingExam))) {
             return res.status(403).json({ error: 'Access denied: You do not have permission to edit this exam.' });
         }
         const sanitizedQuestions = (0, shared_1.sanitizeDeep)(questions || []);
+        if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
+            return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
+        }
+        // Removing an unsaved draft row is allowed; persisted deletions require Super Admin.
+        const requestedDeletes = (deletedQuestionIds || []).filter((value) => typeof value === 'string');
+        if (req.user.role !== 'SUPER_ADMIN' && requestedDeletes.length > 0) {
+            const persistedDeletes = yield prisma_1.default.question.count({
+                where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
+            });
+            if (persistedDeletes > 0) {
+                return res.status(403).json({ error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.' });
+            }
+        }
         const updateData = {
             title: title !== undefined ? (0, shared_1.sanitizeHtml)(title) : undefined,
             description: description !== undefined ? (description ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(description)) : null) : undefined,
@@ -535,26 +568,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (attemptsAllowed !== undefined)
             updateData.attemptsAllowed = parseInt(attemptsAllowed) || 1;
         if (req.user.role === 'SUPER_ADMIN') {
-            const effectiveIsCentral = isCentral !== undefined ? !!isCentral : existingExam.isCentral;
-            updateData.isCentral = effectiveIsCentral;
-            if (effectiveIsCentral) {
-                updateData.schoolId = null;
-                updateData.schools = { set: [] };
-            }
-            else {
-                const rawSchoolList = schoolIds !== undefined ? schoolIds : (req.body.schoolId ? [req.body.schoolId] : []);
-                const sanitizedSchoolIds = (Array.isArray(rawSchoolList) ? rawSchoolList : [rawSchoolList])
-                    .map((sid) => (typeof sid === "object" && sid ? sid.id : sid))
-                    .filter((sid) => Boolean(sid && typeof sid === "string" && sid !== "null" && sid !== "undefined" && sid.trim() !== ""))
-                    .map((sid) => sid.trim());
-                updateData.schoolId = sanitizedSchoolIds.length > 0 ? sanitizedSchoolIds[0] : (req.body.schoolId && req.body.schoolId !== "null" ? req.body.schoolId : existingExam.schoolId);
-                if (schoolIds !== undefined || req.body.schoolId !== undefined) {
-                    updateData.schools = {
-                        set: [],
-                        connect: sanitizedSchoolIds.map((sid) => ({ id: sid })),
-                    };
-                }
-            }
+            Object.assign(updateData, (0, examAccessPolicy_1.resolveExamSchoolUpdate)(existingExam, req.body));
         }
         else {
             const effectiveIsCentral = false;
@@ -567,7 +581,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             updateData.schoolId = schoolIdToUse;
             if (schoolIdToUse) {
                 updateData.schools = {
-                    connect: [{ id: schoolIdToUse }]
+                    set: [{ id: schoolIdToUse }]
                 };
             }
         }
@@ -652,23 +666,21 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     };
                     let moduleId = m.id;
                     const existingMod = m.id
-                        ? yield tx.examModule.findFirst({ where: { OR: [{ id: m.id }, { examId: id, title: mData.title }] } })
+                        ? yield tx.examModule.findFirst({ where: { examId: id, OR: [{ id: m.id }, { title: mData.title }] } })
                         : yield tx.examModule.findFirst({ where: { examId: id, title: mData.title } });
-                    if (existingMod) {
-                        moduleId = existingMod.id;
-                        yield tx.examModule.update({
-                            where: { id: existingMod.id },
+                    const candidateModuleId = (existingMod === null || existingMod === void 0 ? void 0 : existingMod.id) || (m.id ? String(m.id).trim() : null);
+                    let moduleUpdated = false;
+                    if (candidateModuleId) {
+                        const updateRes = yield tx.examModule.updateMany({
+                            where: { id: candidateModuleId, examId: id },
                             data: mData
                         });
+                        if (updateRes.count > 0) {
+                            moduleId = candidateModuleId;
+                            moduleUpdated = true;
+                        }
                     }
-                    else if (m.id) {
-                        yield tx.examModule.upsert({
-                            where: { id: m.id },
-                            update: mData,
-                            create: Object.assign({ id: m.id, examId: id }, mData)
-                        });
-                    }
-                    else {
+                    if (!moduleUpdated) {
                         const newMod = yield tx.examModule.create({
                             data: Object.assign({ examId: id }, mData)
                         });
@@ -688,24 +700,22 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                             cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null
                         };
                         const existingSub = s.id
-                            ? yield tx.subExam.findFirst({ where: { OR: [{ id: s.id }, { moduleId, title: sData.title }] } })
+                            ? yield tx.subExam.findFirst({ where: { moduleId, OR: [{ id: s.id }, { title: sData.title }] } })
                             : yield tx.subExam.findFirst({ where: { moduleId, title: sData.title } });
-                        if (existingSub) {
-                            yield tx.subExam.update({
-                                where: { id: existingSub.id },
+                        const candidateSubId = (existingSub === null || existingSub === void 0 ? void 0 : existingSub.id) || (s.id ? String(s.id).trim() : null);
+                        let subUpdated = false;
+                        if (candidateSubId) {
+                            const updateSubRes = yield tx.subExam.updateMany({
+                                where: { id: candidateSubId, moduleId },
                                 data: sData
                             });
+                            if (updateSubRes.count > 0) {
+                                subUpdated = true;
+                            }
                         }
-                        else if (s.id) {
-                            yield tx.subExam.upsert({
-                                where: { id: s.id },
-                                update: sData,
-                                create: Object.assign({ id: s.id, moduleId: moduleId }, sData)
-                            });
-                        }
-                        else {
+                        if (!subUpdated) {
                             yield tx.subExam.create({
-                                data: Object.assign({ moduleId: moduleId }, sData)
+                                data: Object.assign({ moduleId }, sData)
                             });
                         }
                     }
@@ -722,7 +732,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         continue;
                     if (seenTitleMap.has(normTitle)) {
                         if (curMod._count.questions === 0 && curMod._count.subExams === 0) {
-                            yield tx.examModule.delete({ where: { id: curMod.id } }).catch(() => { });
+                            yield tx.examModule.deleteMany({ where: { id: curMod.id, examId: id } });
                         }
                     }
                     else {
@@ -844,35 +854,44 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         // ✅ ROOT CAUSE FIX: If the new explanation is null (frontend sent empty/[])
                         // AND the DB has an existing non-null explanation → preserve it.
                         // Only overwrite explanation if the incoming payload has real content.
-                        if (updatePayload.explanation === null) {
+                        if (updatePayload.explanation === null && q.clearExplanation !== true) {
                             const preservedExplanation = existingExplanationMap.get(targetQuestionId);
                             if (preservedExplanation) {
                                 // Keep the existing explanation — don't wipe it
                                 delete updatePayload.explanation;
                             }
                         }
-                        yield tx.question.update({
-                            where: { id: targetQuestionId },
+                        const qUpdateRes = yield tx.question.updateMany({
+                            where: { id: targetQuestionId, examId: id },
                             data: updatePayload
                         });
-                        usedExistingIds.add(targetQuestionId);
-                        incomingQuestionIds.push(targetQuestionId);
+                        if (qUpdateRes.count > 0) {
+                            usedExistingIds.add(targetQuestionId);
+                            incomingQuestionIds.push(targetQuestionId);
+                        }
+                        else {
+                            const createdQuestion = yield tx.question.create({
+                                data: Object.assign(Object.assign({}, updatePayload), { examId: id })
+                            });
+                            usedExistingIds.add(createdQuestion.id);
+                            incomingQuestionIds.push(createdQuestion.id);
+                        }
                     }
                     else {
                         // Last-resort duplicate guard: before creating a new question, check if an
                         // existing un-used question already has the same normalized text. This handles
                         // the race where two concurrent autosaves each sent the same ID-less question
                         // before the DB id was reconciled back to the frontend.
-                        const incomingTextNorm = String(qData.text || '').replace(/<[^>]+>/g, '').trim().toLowerCase();
-                        const textDuplicateId = incomingTextNorm
+                        const incomingTextNorm = (0, shared_1.robustNormalizeText)(qData.text);
+                        const textDuplicateId = incomingTextNorm.length > 5
                             ? (_b = existingQuestionsWithExp.find((eq) => !usedExistingIds.has(eq.id) &&
                                 !explicitDeletedIds.has(eq.id) &&
-                                String(eq.text || '').replace(/<[^>]+>/g, '').trim().toLowerCase() === incomingTextNorm)) === null || _b === void 0 ? void 0 : _b.id
+                                (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm)) === null || _b === void 0 ? void 0 : _b.id
                             : undefined;
                         if (textDuplicateId) {
                             console.warn(`[Exam Update] Prevented duplicate question creation – updating existing row instead: ${textDuplicateId}`);
-                            yield tx.question.update({
-                                where: { id: textDuplicateId },
+                            yield tx.question.updateMany({
+                                where: { id: textDuplicateId, examId: id },
                                 data: qData,
                             });
                             usedExistingIds.add(textDuplicateId);
@@ -895,8 +914,8 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 const isSuperAdmin = ((_c = req.user) === null || _c === void 0 ? void 0 : _c.role) === 'SUPER_ADMIN';
                 if (isSuperAdmin) {
                     for (const existingId of Array.from(explicitDeletedIds)) {
-                        yield tx.question.update({
-                            where: { id: existingId },
+                        yield tx.question.updateMany({
+                            where: { id: existingId, examId: id },
                             data: { deletedAt: new Date() }
                         });
                     }
@@ -917,8 +936,8 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         .map((question) => question.id)
                 ];
                 for (let order = 0; order < orderedQuestionIds.length; order++) {
-                    yield tx.question.update({
-                        where: { id: orderedQuestionIds[order] },
+                    yield tx.question.updateMany({
+                        where: { id: orderedQuestionIds[order], examId: id },
                         data: { order }
                     });
                 }
@@ -938,6 +957,9 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 }
             });
         }), { maxWait: 15000, timeout: 120000 });
+        if (!exam) {
+            return res.status(404).json({ error: 'Exam not found or has been deleted' });
+        }
         res.json({ message: 'Exam updated successfully', exam, modules: exam === null || exam === void 0 ? void 0 : exam.modules, questions: exam === null || exam === void 0 ? void 0 : exam.questions });
     }
     catch (error) {
@@ -1195,6 +1217,11 @@ const getExamQuestionsHandler = (req, res) => __awaiter(void 0, void 0, void 0, 
                 id: true,
                 isCentral: true,
                 schoolId: true,
+                grade: true,
+                grades: true,
+                status: true,
+                creatorId: true,
+                courseId: true,
                 schools: { select: { id: true } }
             }
         });
@@ -1205,7 +1232,13 @@ const getExamQuestionsHandler = (req, res) => __awaiter(void 0, void 0, void 0, 
         if (!isPrivilegedRole) {
             return res.status(403).json({ error: 'Access denied (Role: ' + role + ')' });
         }
-        if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
+        if (role === 'STUDENT') {
+            const student = yield prisma_1.default.user.findUnique({ where: { id: req.user.id }, select: { grade: true, schoolId: true } });
+            if (!student || !(0, shared_1.examMatchesStudent)(exam, (0, examWorkflow_1.mergeStudentProfile)(req.user, student))) {
+                return res.status(403).json({ error: 'Access denied (Student)' });
+            }
+        }
+        else if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
             const canAccessExam = yield (0, exports.canManageExam)(req.user, exam);
             if (!canAccessExam) {
                 return res.status(403).json({ error: 'Access denied' });
@@ -1426,8 +1459,16 @@ const getExamHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
         const exam = yield prisma_1.default.exam.findUnique({
             where: { id: examId },
-            select: { attemptsAllowed: true, modules: { select: { subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } } } } }
+            select: { attemptsAllowed: true, isCentral: true, schoolId: true, schools: { select: { id: true } }, grade: true, grades: true, status: true, deletedAt: true, modules: { select: { subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } } } } }
         });
+        if (!exam || exam.deletedAt)
+            return res.status(404).json({ error: 'Exam not found' });
+        if (req.user.role === 'STUDENT') {
+            const student = yield prisma_1.default.user.findUnique({ where: { id: userId }, select: { grade: true, schoolId: true } });
+            if (!student || !(0, shared_1.examMatchesStudent)(exam, (0, examWorkflow_1.mergeStudentProfile)(req.user, student))) {
+                return res.status(403).json({ error: 'Access denied (Student)' });
+            }
+        }
         const submissionCount = yield prisma_1.default.examSubmission.count({
             where: Object.assign({ examId, userId }, (subExamId ? { subExamId } : {}))
         });
@@ -2114,13 +2155,43 @@ const postExamHandler33 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                 deletedAt: null,
                 OR: sourceFilters,
             },
-            select: { id: true },
+            select: { id: true, text: true },
         });
         if (sourceQuestions.length > 0) {
-            yield prisma_1.default.question.updateMany({
-                where: { id: { in: sourceQuestions.map((question) => question.id) } },
-                data: { moduleId, subExamId },
+            // Check existing questions in target subExam to prevent duplicating questions into the subExam
+            const existingInTarget = yield prisma_1.default.question.findMany({
+                where: {
+                    examId: id,
+                    moduleId,
+                    subExamId,
+                    deletedAt: null,
+                },
+                select: { id: true, text: true },
             });
+            const targetSignatures = new Set(existingInTarget.map((q) => (0, shared_1.robustNormalizeText)(q.text)).filter((t) => t.length > 5));
+            const questionsToMove = [];
+            for (const q of sourceQuestions) {
+                const sig = (0, shared_1.robustNormalizeText)(q.text);
+                if (sig && targetSignatures.has(sig)) {
+                    // Check if this source question has any student answers
+                    const answerCount = yield prisma_1.default.studentAnswer.count({ where: { questionId: q.id } });
+                    if (answerCount === 0) {
+                        // It's a duplicate question with 0 answers; remove it from active questions
+                        yield prisma_1.default.question.update({
+                            where: { id: q.id },
+                            data: { deletedAt: new Date() },
+                        });
+                        continue;
+                    }
+                }
+                questionsToMove.push(q.id);
+            }
+            if (questionsToMove.length > 0) {
+                yield prisma_1.default.question.updateMany({
+                    where: { id: { in: questionsToMove } },
+                    data: { moduleId, subExamId },
+                });
+            }
         }
         res.json({ movedQuestionIds: sourceQuestions.map((question) => question.id) });
     }
@@ -2338,8 +2409,9 @@ const postMoveAllSubExamsHandler = (req, res) => __awaiter(void 0, void 0, void 
         const subExamIds = subExams.map((s) => s.id);
         let destinationModuleId = targetModuleId ? String(targetModuleId).trim() : '';
         let destinationExamId = id;
+        let targetMod = null;
         const result = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a;
+            var _a, _b, _c;
             if (trimmedNewTitle) {
                 const destExamId = targetExamId ? String(targetExamId).trim() : id;
                 destinationExamId = destExamId;
@@ -2371,7 +2443,7 @@ const postMoveAllSubExamsHandler = (req, res) => __awaiter(void 0, void 0, void 
                 destinationModuleId = createdModule.id;
             }
             else {
-                const targetMod = yield tx.examModule.findUnique({
+                targetMod = yield tx.examModule.findUnique({
                     where: { id: destinationModuleId },
                     include: { exam: { include: { schools: { select: { id: true } } } } }
                 });
@@ -2391,14 +2463,13 @@ const postMoveAllSubExamsHandler = (req, res) => __awaiter(void 0, void 0, void 
             const destSubExamsCount = yield tx.subExam.count({
                 where: { moduleId: destinationModuleId }
             });
-            // Update each subExam to destinationModuleId maintaining their sequential order
+            const destModule = targetMod || (yield tx.examModule.findUnique({ where: { id: destinationModuleId } }));
+            const targetModSettings = Object.assign(Object.assign({ publishDate: (_b = destModule === null || destModule === void 0 ? void 0 : destModule.publishDate) !== null && _b !== void 0 ? _b : null, cutOffDate: (_c = destModule === null || destModule === void 0 ? void 0 : destModule.cutOffDate) !== null && _c !== void 0 ? _c : null }, ((destModule === null || destModule === void 0 ? void 0 : destModule.duration) !== null && (destModule === null || destModule === void 0 ? void 0 : destModule.duration) !== undefined ? { duration: destModule.duration } : {})), ((destModule === null || destModule === void 0 ? void 0 : destModule.passingScore) !== null && (destModule === null || destModule === void 0 ? void 0 : destModule.passingScore) !== undefined ? { passingScore: destModule.passingScore } : {}));
+            // Update each subExam to destinationModuleId maintaining their sequential order and inheriting parent settings
             for (let i = 0; i < subExams.length; i++) {
                 yield tx.subExam.update({
                     where: { id: subExams[i].id },
-                    data: {
-                        moduleId: destinationModuleId,
-                        order: destSubExamsCount + i,
-                    }
+                    data: Object.assign({ moduleId: destinationModuleId, order: destSubExamsCount + i }, targetModSettings)
                 });
             }
             // Update all questions attached to these subExams
@@ -2407,10 +2478,7 @@ const postMoveAllSubExamsHandler = (req, res) => __awaiter(void 0, void 0, void 
                     examId: id,
                     subExamId: { in: subExamIds },
                 },
-                data: {
-                    examId: destinationExamId,
-                    moduleId: destinationModuleId,
-                }
+                data: Object.assign({ examId: destinationExamId, moduleId: destinationModuleId }, ((destModule === null || destModule === void 0 ? void 0 : destModule.gradeTarget) ? { gradeTarget: destModule.gradeTarget } : {}))
             });
             // If cross-exam transfer, update exam submissions
             if (destinationExamId !== id) {
@@ -2422,6 +2490,11 @@ const postMoveAllSubExamsHandler = (req, res) => __awaiter(void 0, void 0, void 
                         examId: destinationExamId
                     }
                 });
+                const remainingModules = yield tx.examModule.count({ where: { examId: id } });
+                const remainingQuestions = yield tx.question.count({ where: { examId: id, deletedAt: null } });
+                if (remainingModules === 0 && remainingQuestions === 0) {
+                    yield tx.exam.update({ where: { id }, data: { deletedAt: new Date() } });
+                }
             }
             const destinationModule = yield tx.examModule.findUnique({
                 where: { id: destinationModuleId },
@@ -2483,7 +2556,8 @@ const postMoveModuleHandler = (req, res) => __awaiter(void 0, void 0, void 0, fu
         }
         const trimmedNewTitle = newParentModuleTitle ? String(newParentModuleTitle).trim() : '';
         const result = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c, _d, _e, _f, _g;
+            let inheritedSettings = {};
             // If user wants to create a new Main Module to receive this module
             if (trimmedNewTitle) {
                 const lastMod = yield tx.examModule.findFirst({
@@ -2492,15 +2566,28 @@ const postMoveModuleHandler = (req, res) => __awaiter(void 0, void 0, void 0, fu
                     select: { order: true }
                 });
                 const nextOrder = ((_a = lastMod === null || lastMod === void 0 ? void 0 : lastMod.order) !== null && _a !== void 0 ? _a : -1) + 1;
+                const destExam = yield tx.exam.findUnique({ where: { id: destinationExamId } });
                 const createdParent = yield tx.examModule.create({
                     data: {
                         examId: destinationExamId,
                         title: (0, shared_1.sanitizeHtml)(trimmedNewTitle),
                         order: nextOrder,
                         parentModuleId: null,
+                        duration: (_b = destExam === null || destExam === void 0 ? void 0 : destExam.duration) !== null && _b !== void 0 ? _b : null,
+                        passingScore: (_c = destExam === null || destExam === void 0 ? void 0 : destExam.passingScore) !== null && _c !== void 0 ? _c : null,
+                        gradeTarget: (_d = destExam === null || destExam === void 0 ? void 0 : destExam.grade) !== null && _d !== void 0 ? _d : null,
+                        publishDate: (_e = destExam === null || destExam === void 0 ? void 0 : destExam.startDate) !== null && _e !== void 0 ? _e : null,
+                        cutOffDate: (_f = destExam === null || destExam === void 0 ? void 0 : destExam.endDate) !== null && _f !== void 0 ? _f : null,
                     }
                 });
                 destinationParentModuleId = createdParent.id;
+                inheritedSettings = {
+                    duration: createdParent.duration,
+                    passingScore: createdParent.passingScore,
+                    gradeTarget: createdParent.gradeTarget,
+                    publishDate: createdParent.publishDate,
+                    cutOffDate: createdParent.cutOffDate,
+                };
             }
             else if (destinationParentModuleId) {
                 // Verify target parent module exists
@@ -2519,6 +2606,13 @@ const postMoveModuleHandler = (req, res) => __awaiter(void 0, void 0, void 0, fu
                     checkParent = yield tx.examModule.findUnique({ where: { id: checkParent.parentModuleId } });
                 }
                 destinationExamId = targetParent.examId;
+                inheritedSettings = {
+                    duration: targetParent.duration,
+                    passingScore: targetParent.passingScore,
+                    gradeTarget: targetParent.gradeTarget,
+                    publishDate: targetParent.publishDate,
+                    cutOffDate: targetParent.cutOffDate,
+                };
             }
             // Calculate next order in destination parent
             const lastSibling = yield tx.examModule.findFirst({
@@ -2529,29 +2623,44 @@ const postMoveModuleHandler = (req, res) => __awaiter(void 0, void 0, void 0, fu
                 orderBy: { order: 'desc' },
                 select: { order: true }
             });
-            const nextSiblingOrder = ((_b = lastSibling === null || lastSibling === void 0 ? void 0 : lastSibling.order) !== null && _b !== void 0 ? _b : -1) + 1;
-            // Update sourceModule
+            const nextSiblingOrder = ((_g = lastSibling === null || lastSibling === void 0 ? void 0 : lastSibling.order) !== null && _g !== void 0 ? _g : -1) + 1;
+            // Update sourceModule with destination and inherited parent settings
             const updatedModule = yield tx.examModule.update({
                 where: { id: moduleId },
-                data: {
-                    examId: destinationExamId,
-                    parentModuleId: destinationParentModuleId,
-                    order: nextSiblingOrder,
-                }
+                data: Object.assign({ examId: destinationExamId, parentModuleId: destinationParentModuleId, order: nextSiblingOrder }, inheritedSettings)
             });
+            // Collect all descendant module IDs recursively
+            const collectModuleIds = (mId) => __awaiter(void 0, void 0, void 0, function* () {
+                const children = yield tx.examModule.findMany({ where: { parentModuleId: mId }, select: { id: true } });
+                const childIds = children.map(c => c.id);
+                let allDescendants = [...childIds];
+                for (const cId of childIds) {
+                    allDescendants = allDescendants.concat(yield collectModuleIds(cId));
+                }
+                return allDescendants;
+            });
+            const allModuleIds = [moduleId, ...(yield collectModuleIds(moduleId))];
+            // If moving as a sub-module, update all descendant modules and sub-exams to inherit parent settings
+            if (destinationParentModuleId) {
+                if (allModuleIds.length > 1) {
+                    yield tx.examModule.updateMany({
+                        where: { id: { in: allModuleIds.filter(mid => mid !== moduleId) } },
+                        data: Object.assign({}, inheritedSettings)
+                    });
+                }
+                yield tx.subExam.updateMany({
+                    where: { moduleId: { in: allModuleIds } },
+                    data: Object.assign(Object.assign({ publishDate: inheritedSettings.publishDate, cutOffDate: inheritedSettings.cutOffDate }, (inheritedSettings.duration !== null && inheritedSettings.duration !== undefined ? { duration: inheritedSettings.duration } : {})), (inheritedSettings.passingScore !== null && inheritedSettings.passingScore !== undefined ? { passingScore: inheritedSettings.passingScore } : {}))
+                });
+                if (inheritedSettings.gradeTarget) {
+                    yield tx.question.updateMany({
+                        where: { moduleId: { in: allModuleIds } },
+                        data: { gradeTarget: inheritedSettings.gradeTarget }
+                    });
+                }
+            }
             // If cross-exam transfer, update all nested entities
             if (destinationExamId !== id) {
-                // Collect all descendant module IDs recursively
-                const collectModuleIds = (mId) => __awaiter(void 0, void 0, void 0, function* () {
-                    const children = yield tx.examModule.findMany({ where: { parentModuleId: mId }, select: { id: true } });
-                    const childIds = children.map(c => c.id);
-                    let allDescendants = [...childIds];
-                    for (const cId of childIds) {
-                        allDescendants = allDescendants.concat(yield collectModuleIds(cId));
-                    }
-                    return allDescendants;
-                });
-                const allModuleIds = [moduleId, ...(yield collectModuleIds(moduleId))];
                 // Update all descendant modules examId
                 yield tx.examModule.updateMany({
                     where: { id: { in: allModuleIds } },
@@ -2579,6 +2688,12 @@ const postMoveModuleHandler = (req, res) => __awaiter(void 0, void 0, void 0, fu
                         where: { subExamId: { in: subExamIds } },
                         data: { examId: destinationExamId }
                     });
+                }
+                // If source exam is now empty, clean it up so no orphaned shell card remains
+                const remainingModules = yield tx.examModule.count({ where: { examId: id } });
+                const remainingQuestions = yield tx.question.count({ where: { examId: id, deletedAt: null } });
+                if (remainingModules === 0 && remainingQuestions === 0) {
+                    yield tx.exam.update({ where: { id }, data: { deletedAt: new Date() } });
                 }
             }
             return {

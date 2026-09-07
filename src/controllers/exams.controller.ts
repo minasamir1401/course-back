@@ -22,7 +22,8 @@ import {
   statsCache, CACHE_TTL, setCache, getStudentGradeAndStage, examMatchesStudent,
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
-  normalizeLegacyCourses, acquireLock, releaseLock, extractAndSaveBase64Images
+  normalizeLegacyCourses, acquireLock, releaseLock, extractAndSaveBase64Images,
+  robustNormalizeText
 } from '../shared';
 
 
@@ -967,13 +968,13 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             // existing un-used question already has the same normalized text. This handles
             // the race where two concurrent autosaves each sent the same ID-less question
             // before the DB id was reconciled back to the frontend.
-            const incomingTextNorm = String(qData.text || '').replace(/<[^>]+>/g, '').trim().toLowerCase();
-            const textDuplicateId = incomingTextNorm
+            const incomingTextNorm = robustNormalizeText(qData.text);
+            const textDuplicateId = incomingTextNorm.length > 5
               ? existingQuestionsWithExp.find(
                 (eq) =>
                   !usedExistingIds.has(eq.id) &&
                   !explicitDeletedIds.has(eq.id) &&
-                  String(eq.text || '').replace(/<[^>]+>/g, '').trim().toLowerCase() === incomingTextNorm,
+                  robustNormalizeText(eq.text) === incomingTextNorm,
               )?.id
               : undefined;
 
@@ -2367,14 +2368,49 @@ export const postExamHandler33 = async (req: Request, res: Response) => {
         deletedAt: null,
         OR: sourceFilters,
       },
-      select: { id: true },
+      select: { id: true, text: true },
     });
 
     if (sourceQuestions.length > 0) {
-      await prisma.question.updateMany({
-        where: { id: { in: sourceQuestions.map((question) => question.id) } },
-        data: { moduleId, subExamId },
+      // Check existing questions in target subExam to prevent duplicating questions into the subExam
+      const existingInTarget = await prisma.question.findMany({
+        where: {
+          examId: id,
+          moduleId,
+          subExamId,
+          deletedAt: null,
+        },
+        select: { id: true, text: true },
       });
+
+      const targetSignatures = new Set(
+        existingInTarget.map((q) => robustNormalizeText(q.text)).filter((t) => t.length > 5)
+      );
+
+      const questionsToMove: string[] = [];
+      for (const q of sourceQuestions) {
+        const sig = robustNormalizeText(q.text);
+        if (sig && targetSignatures.has(sig)) {
+          // Check if this source question has any student answers
+          const answerCount = await prisma.studentAnswer.count({ where: { questionId: q.id } });
+          if (answerCount === 0) {
+            // It's a duplicate question with 0 answers; remove it from active questions
+            await prisma.question.update({
+              where: { id: q.id },
+              data: { deletedAt: new Date() },
+            });
+            continue;
+          }
+        }
+        questionsToMove.push(q.id);
+      }
+
+      if (questionsToMove.length > 0) {
+        await prisma.question.updateMany({
+          where: { id: { in: questionsToMove } },
+          data: { moduleId, subExamId },
+        });
+      }
     }
 
     res.json({ movedQuestionIds: sourceQuestions.map((question) => question.id) });

@@ -24,6 +24,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.releaseLock = exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = exports.isLoginRateLimited = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = void 0;
+exports.robustNormalizeText = void 0;
 exports.getYoutubeDuration = getYoutubeDuration;
 exports.getVimeoDuration = getVimeoDuration;
 exports.getVideoDuration = getVideoDuration;
@@ -787,11 +788,17 @@ const examMatchesStudent = (exam, user) => {
     if (uniqueGradeTargets.length > 0 && !studentGrades.some(g => uniqueGradeTargets.includes(g))) {
         return false;
     }
+    // If the exam is assigned to specific schools, the student MUST belong to one of those schools
+    const hasAssignedSchools = Boolean(exam.schoolId || (exam.schools && exam.schools.length > 0));
+    if (hasAssignedSchools) {
+        const belongsToAssignedSchool = (_a = exam.schools) === null || _a === void 0 ? void 0 : _a.some((school) => school.id === user.schoolId);
+        const isOwnerSchool = exam.schoolId === user.schoolId;
+        return Boolean(isOwnerSchool || belongsToAssignedSchool);
+    }
+    // Central exams (no specific school assignment) are accessible to all students
     if (exam.isCentral)
         return true;
-    const belongsToAssignedSchool = (_a = exam.schools) === null || _a === void 0 ? void 0 : _a.some((school) => school.id === user.schoolId);
-    const isOwnerSchool = exam.schoolId === user.schoolId;
-    return Boolean(isOwnerSchool || belongsToAssignedSchool);
+    return false;
 };
 exports.examMatchesStudent = examMatchesStudent;
 const buildStudentCourseWhere = (student) => {
@@ -869,6 +876,12 @@ function ensurePerformanceIndexes() {
                 catch (lockErr) {
                     console.warn(`[DB Index Setup] Advisory lock/cleanup notice: ${lockErr.message}`);
                 }
+                try {
+                    yield prisma_1.default.$executeRawUnsafe('ALTER TABLE "ExamModule" ADD COLUMN IF NOT EXISTS "parentModuleId" TEXT;');
+                }
+                catch (colErr) {
+                    console.warn(`[DB Schema Setup] Notice adding parentModuleId: ${colErr.message}`);
+                }
             }
             const statements = [
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_isCentral_grade_idx" ON "Course" ("isCentral", "grade")',
@@ -892,6 +905,7 @@ function ensurePerformanceIndexes() {
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_moduleId_idx" ON "Question" ("moduleId")',
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Question_deletedAt_idx" ON "Question" ("deletedAt")',
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_examId_idx" ON "ExamModule" ("examId")',
+                'CREATE INDEX CONCURRENTLY IF NOT EXISTS "ExamModule_parentModuleId_idx" ON "ExamModule" ("parentModuleId")',
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "SubExam_moduleId_idx" ON "SubExam" ("moduleId")'
             ];
             for (const statement of statements) {
@@ -1061,3 +1075,20 @@ const releaseLock = (key) => {
     locks.delete(key);
 };
 exports.releaseLock = releaseLock;
+const robustNormalizeText = (t) => {
+    if (!t)
+        return '';
+    return String(t)
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\\\(|\\\)|\\\[|\\\]/g, '')
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
+        .trim();
+};
+exports.robustNormalizeText = robustNormalizeText;

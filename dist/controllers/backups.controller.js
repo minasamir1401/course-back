@@ -45,16 +45,20 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.normalizeRestoredValue = exports.BACKUPS_DIR = exports.postBackupHandler20 = exports.postBackupHandler19 = exports.getBackupHandler18 = exports.postBackupHandler17 = exports.postBackupHandler16 = exports.getBackupHandler15 = exports.postBackupHandler14 = exports.postBackupHandler13 = exports.deleteBackupHandler12 = exports.postBackupHandler11 = exports.postBackupHandler10 = exports.getBackupHandler9 = exports.getBackupHandler8 = exports.getBackupHandler7 = exports.postBackupHandler6 = exports.postBackupHandler5 = exports.postBackupHandler4 = exports.getBackupHandler3 = exports.getBackupHandler2 = exports.postBackupHandler1 = void 0;
+exports.normalizeRestoredValue = exports.postBackupHandler20 = exports.postBackupHandler19 = exports.getBackupHandler18 = exports.postBackupHandler17 = exports.postBackupHandler16 = exports.getBackupHandler15 = exports.postBackupHandler14 = exports.postBackupHandler13 = exports.deleteBackupHandler12 = exports.postBackupHandler11 = exports.postBackupHandler10 = exports.getBackupHandler9 = exports.getBackupHandler8 = exports.getBackupHandler7 = exports.postBackupHandler6 = exports.postBackupHandler5 = exports.postBackupHandler4 = exports.getBackupHandler3 = exports.getBackupHandler2 = exports.postBackupHandler1 = exports.BACKUPS_DIR = void 0;
 exports.parseBackupBuffer = parseBackupBuffer;
 exports.generateFullSystemBackupData = generateFullSystemBackupData;
 exports.performBackupAndPruning = performBackupAndPruning;
 exports.readLocalBackupFile = readLocalBackupFile;
+const backupSnapshot_1 = require("../lib/backupSnapshot");
+var backupSnapshot_2 = require("../lib/backupSnapshot");
+Object.defineProperty(exports, "BACKUPS_DIR", { enumerable: true, get: function () { return backupSnapshot_2.BACKUPS_DIR; } });
+const db_backup_1 = require("../lib/db-backup");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const shared_1 = require("../shared");
-const db_backup_1 = require("../lib/db-backup");
+const db_backup_2 = require("../lib/db-backup");
 const runtimeSecurity_1 = require("../lib/runtimeSecurity");
 const postBackupHandler1 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -74,10 +78,10 @@ const postBackupHandler1 = (req, res) => __awaiter(void 0, void 0, void 0, funct
 exports.postBackupHandler1 = postBackupHandler1;
 const getBackupHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const files = fs_1.default.readdirSync(exports.BACKUPS_DIR)
+        const files = fs_1.default.readdirSync(backupSnapshot_1.BACKUPS_DIR)
             .filter(file => (file.startsWith('auto_hourly_') || file.startsWith('backup-') || file.startsWith('backup_')) && (file.endsWith('.json') || file.endsWith('.zip')))
             .map(file => {
-            const filePath = path_1.default.join(exports.BACKUPS_DIR, file);
+            const filePath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, file);
             const stats = fs_1.default.statSync(filePath);
             return {
                 filename: file,
@@ -89,7 +93,7 @@ const getBackupHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         // Merge cloud backups (excluding Realtime Sync noise)
         let cloudFiles = [];
         try {
-            const cloudBackups = yield (0, db_backup_1.getCloudBackups)();
+            const cloudBackups = yield (0, db_backup_2.getCloudBackups)();
             cloudFiles = cloudBackups
                 .filter((cb) => cb.type !== 'REALTIME_SYNC')
                 .map((cb) => ({
@@ -114,7 +118,7 @@ const getBackupHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functi
 exports.getBackupHandler2 = getBackupHandler2;
 const getBackupHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const cloudBackups = yield (0, db_backup_1.getCloudBackups)();
+        const cloudBackups = yield (0, db_backup_2.getCloudBackups)();
         const filtered = cloudBackups.filter((cb) => cb.type !== 'REALTIME_SYNC');
         res.json(filtered);
     }
@@ -129,7 +133,7 @@ const postBackupHandler4 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         const fullData = yield generateFullSystemBackupData();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const backupName = `backup_manual_cloud_${timestamp}`;
-        const saved = yield (0, db_backup_1.saveToCloudBackup)(backupName, 'MANUAL', fullData);
+        const saved = yield (0, db_backup_2.saveToCloudBackup)(backupName, 'MANUAL', fullData);
         if (!saved) {
             return res.status(500).json({ error: 'Failed to save cloud backup to Cloud Backup' });
         }
@@ -153,7 +157,7 @@ const postBackupHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const backupName = `backup_forced_sync_${timestamp}`;
-        const saved = yield (0, db_backup_1.saveToCloudBackup)(backupName, 'REALTIME_SYNC', {
+        const saved = yield (0, db_backup_2.saveToCloudBackup)(backupName, 'REALTIME_SYNC', {
             data: { course: allCourses }
         });
         if (!saved) {
@@ -182,7 +186,7 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         const result = yield cloudPool.query(`
       SELECT data, created_at, type
       FROM cloud_backups
-      WHERE type IN ('REALTIME_SYNC', 'AUTO_HOURLY', 'MANUAL')
+      WHERE type IN ('FULL_SYSTEM', 'REALTIME_SYNC', 'AUTO_HOURLY', 'MANUAL', 'FULL_SYSTEM')
       ORDER BY created_at DESC
       LIMIT 30;
     `);
@@ -397,7 +401,7 @@ const getBackupHandler7 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                 }
             }
         }
-        const filePath = path_1.default.join(exports.BACKUPS_DIR, filename);
+        const filePath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename);
         if (!fs_1.default.existsSync(filePath)) {
             return res.status(404).json({ error: 'Backup file not found' });
         }
@@ -450,7 +454,7 @@ const getBackupHandler8 = (req, res) => __awaiter(void 0, void 0, void 0, functi
 exports.getBackupHandler8 = getBackupHandler8;
 const getBackupHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const files = fs_1.default.readdirSync(exports.BACKUPS_DIR)
+        const files = fs_1.default.readdirSync(backupSnapshot_1.BACKUPS_DIR)
             .filter(file => (file.startsWith('auto_hourly_') || file.startsWith('backup-') || file.startsWith('backup_')) && (file.endsWith('.json') || file.endsWith('.zip')));
         if (files.length === 0) {
             return res.status(404).json({ error: 'No backups available to download' });
@@ -472,7 +476,7 @@ const getBackupHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         });
         archive.pipe(res);
         for (const file of files) {
-            archive.file(path_1.default.join(exports.BACKUPS_DIR, file), { name: file });
+            archive.file(path_1.default.join(backupSnapshot_1.BACKUPS_DIR, file), { name: file });
         }
         archive.finalize();
     }
@@ -484,7 +488,7 @@ const getBackupHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, functi
 exports.getBackupHandler9 = getBackupHandler9;
 const postBackupHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const result = yield (0, db_backup_1.createManualBundle)();
+        const result = yield (0, db_backup_2.createManualBundle)();
         res.json(result);
     }
     catch (error) {
@@ -526,7 +530,7 @@ const postBackupHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, func
             return res.status(400).json({ error: 'Invalid backup format' });
         }
         const filename = `backup-uploaded-${Date.now()}${ext}`;
-        const destPath = path_1.default.join(exports.BACKUPS_DIR, filename);
+        const destPath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename);
         fs_1.default.copyFileSync(tempPath, destPath);
         fs_1.default.unlinkSync(tempPath);
         let extractedMediaCount = 0;
@@ -617,7 +621,7 @@ const deleteBackupHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, fu
                 yield cloudPool.end();
             }
         }
-        const filePath = path_1.default.join(exports.BACKUPS_DIR, filename);
+        const filePath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename);
         if (fs_1.default.existsSync(filePath)) {
             fs_1.default.unlinkSync(filePath);
             return res.json({ success: true, message: 'Local backup deleted successfully' });
@@ -663,392 +667,18 @@ const postBackupHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, func
             if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
                 return res.status(400).json({ error: 'Invalid filename' });
             }
-            const filePath = path_1.default.join(exports.BACKUPS_DIR, filename);
+            const filePath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename);
             if (!fs_1.default.existsSync(filePath)) {
                 return res.status(404).json({ error: 'Backup file not found' });
             }
             backupData = readLocalBackupFile(filePath, filename);
         }
         const data = (backupData === null || backupData === void 0 ? void 0 : backupData.data) || backupData; // Handle both wrapper structure and plain object
-        const backupCourses = Array.isArray(data.course) ? data.course : [];
-        const backupLessons = Array.isArray(data.lesson) ? data.lesson : [];
-        if (backupCourses.length === 0 || backupLessons.length === 0) {
-            return res.status(400).json({
-                error: 'Invalid backup content',
-                details: 'A full restore requires both course and lesson arrays. Refusing to wipe current data with an incomplete backup.'
-            });
+        if (!Array.isArray(data === null || data === void 0 ? void 0 : data.course) || !Array.isArray(data === null || data === void 0 ? void 0 : data.lesson)) {
+            return res.status(400).json({ error: 'Incomplete backup: course and lesson arrays required' });
         }
-        // Preserve a safety snapshot before any restore attempt so we can roll back manually if needed.
-        try {
-            yield performBackupAndPruning();
-        }
-        catch (snapshotError) {
-            console.warn('⚠️ Failed to create safety snapshot before restore:', snapshotError.message);
-        }
-        // Merge restore: update/create records instead of deleting the current database.
-        // This prevents accidental data loss if the selected backup is incomplete or older than the current state.
-        yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57;
-            const toDate = (value) => (value ? new Date(value) : value === null ? null : undefined);
-            if (data.school && data.school.length > 0) {
-                for (const school of data.school) {
-                    if (!(school === null || school === void 0 ? void 0 : school.id))
-                        continue;
-                    const payload = {
-                        name: school.name,
-                        subdomain: (_a = school.subdomain) !== null && _a !== void 0 ? _a : null,
-                        themeColor: (_b = school.themeColor) !== null && _b !== void 0 ? _b : null,
-                        status: (_c = school.status) !== null && _c !== void 0 ? _c : 'ACTIVE',
-                        createdAt: (_d = toDate(school.createdAt)) !== null && _d !== void 0 ? _d : new Date(),
-                        updatedAt: (_e = toDate(school.updatedAt)) !== null && _e !== void 0 ? _e : new Date()
-                    };
-                    yield tx.school.upsert({
-                        where: { id: school.id },
-                        update: payload,
-                        create: Object.assign({ id: school.id }, payload)
-                    });
-                }
-            }
-            if (data.user && data.user.length > 0) {
-                for (const user of data.user) {
-                    if (!(user === null || user === void 0 ? void 0 : user.id))
-                        continue;
-                    const payload = {
-                        name: user.name,
-                        username: user.username,
-                        email: (_f = user.email) !== null && _f !== void 0 ? _f : null,
-                        password: user.password,
-                        role: (_g = user.role) !== null && _g !== void 0 ? _g : 'STUDENT',
-                        avatar: (_h = user.avatar) !== null && _h !== void 0 ? _h : null,
-                        phone: (_j = user.phone) !== null && _j !== void 0 ? _j : null,
-                        status: (_k = user.status) !== null && _k !== void 0 ? _k : 'ACTIVE',
-                        gender: (_l = user.gender) !== null && _l !== void 0 ? _l : null,
-                        address: (_m = user.address) !== null && _m !== void 0 ? _m : null,
-                        grade: (_o = user.grade) !== null && _o !== void 0 ? _o : null,
-                        specialization: (_p = user.specialization) !== null && _p !== void 0 ? _p : null,
-                        schoolId: (_q = user.schoolId) !== null && _q !== void 0 ? _q : null,
-                        classroomId: (_r = user.classroomId) !== null && _r !== void 0 ? _r : null,
-                        parentId: (_s = user.parentId) !== null && _s !== void 0 ? _s : null,
-                        xp: (_t = user.xp) !== null && _t !== void 0 ? _t : 0,
-                        createdAt: (_u = toDate(user.createdAt)) !== null && _u !== void 0 ? _u : new Date(),
-                        updatedAt: (_v = toDate(user.updatedAt)) !== null && _v !== void 0 ? _v : new Date()
-                    };
-                    const orConditions = [{ username: user.username }];
-                    if (user.email)
-                        orConditions.push({ email: user.email });
-                    const conflictingUser = yield tx.user.findFirst({ where: { OR: orConditions } });
-                    if (conflictingUser && conflictingUser.id !== user.id) {
-                        try {
-                            yield tx.user.delete({ where: { id: conflictingUser.id } });
-                        }
-                        catch (e) {
-                            console.warn("Could not delete conflicting user, skipping restore for this user.");
-                            continue;
-                        }
-                    }
-                    yield tx.user.upsert({
-                        where: { id: user.id },
-                        update: payload,
-                        create: Object.assign({ id: user.id }, payload)
-                    });
-                }
-            }
-            if (data.classroom && data.classroom.length > 0) {
-                for (const classroom of data.classroom) {
-                    if (!(classroom === null || classroom === void 0 ? void 0 : classroom.id))
-                        continue;
-                    const payload = {
-                        name: classroom.name,
-                        grade: classroom.grade,
-                        schoolId: classroom.schoolId,
-                        teacherId: (_w = classroom.teacherId) !== null && _w !== void 0 ? _w : null,
-                        createdAt: (_x = toDate(classroom.createdAt)) !== null && _x !== void 0 ? _x : new Date(),
-                        updatedAt: (_y = toDate(classroom.updatedAt)) !== null && _y !== void 0 ? _y : new Date()
-                    };
-                    yield tx.classroom.upsert({
-                        where: { id: classroom.id },
-                        update: payload,
-                        create: Object.assign({ id: classroom.id }, payload)
-                    });
-                }
-            }
-            if (data.course && data.course.length > 0) {
-                for (const course of data.course) {
-                    if (!(course === null || course === void 0 ? void 0 : course.id))
-                        continue;
-                    const payload = {
-                        title: course.title,
-                        description: (0, exports.normalizeRestoredValue)((_z = course.description) !== null && _z !== void 0 ? _z : null),
-                        coverImage: (0, exports.normalizeRestoredValue)((_0 = course.coverImage) !== null && _0 !== void 0 ? _0 : null),
-                        grade: (_1 = course.grade) !== null && _1 !== void 0 ? _1 : null,
-                        grades: (_2 = course.grades) !== null && _2 !== void 0 ? _2 : null,
-                        subject: (_3 = course.subject) !== null && _3 !== void 0 ? _3 : null,
-                        country: (_4 = course.country) !== null && _4 !== void 0 ? _4 : 'مصر',
-                        isCentral: (_5 = course.isCentral) !== null && _5 !== void 0 ? _5 : false,
-                        schoolId: (_6 = course.schoolId) !== null && _6 !== void 0 ? _6 : null,
-                        createdAt: (_7 = toDate(course.createdAt)) !== null && _7 !== void 0 ? _7 : new Date(),
-                        updatedAt: (_8 = toDate(course.updatedAt)) !== null && _8 !== void 0 ? _8 : new Date()
-                    };
-                    yield tx.course.upsert({
-                        where: { id: course.id },
-                        update: payload,
-                        create: Object.assign({ id: course.id }, payload)
-                    });
-                }
-            }
-            // Pre-fetch valid course IDs to prevent FK constraint failures on orphaned items
-            const validCourseIds = new Set();
-            const existingCourses = yield tx.course.findMany({ select: { id: true } });
-            existingCourses.forEach(c => validCourseIds.add(c.id));
-            if (data.studentEnrollment && data.studentEnrollment.length > 0) {
-                yield tx.studentEnrollment.createMany({
-                    data: data.studentEnrollment.filter((x) => validCourseIds.has(x.courseId)).map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.teacherCourse && data.teacherCourse.length > 0) {
-                yield tx.teacherCourse.createMany({
-                    data: data.teacherCourse.filter((x) => validCourseIds.has(x.courseId)).map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.lesson && data.lesson.length > 0) {
-                for (const lesson of data.lesson) {
-                    if (!(lesson === null || lesson === void 0 ? void 0 : lesson.id))
-                        continue;
-                    if (lesson.courseId && !validCourseIds.has(lesson.courseId)) {
-                        console.warn(`Skipping lesson ${lesson.title} because courseId ${lesson.courseId} is missing.`);
-                        continue;
-                    }
-                    const payload = {
-                        courseId: lesson.courseId,
-                        title: lesson.title,
-                        domain: (_9 = lesson.domain) !== null && _9 !== void 0 ? _9 : null,
-                        content: (0, exports.normalizeRestoredValue)((_10 = lesson.content) !== null && _10 !== void 0 ? _10 : null),
-                        videoUrl: (_11 = lesson.videoUrl) !== null && _11 !== void 0 ? _11 : null,
-                        summary: (0, exports.normalizeRestoredValue)((_12 = lesson.summary) !== null && _12 !== void 0 ? _12 : null),
-                        notes: (0, exports.normalizeRestoredValue)((_13 = lesson.notes) !== null && _13 !== void 0 ? _13 : null),
-                        questions: (0, exports.normalizeRestoredValue)((_14 = lesson.questions) !== null && _14 !== void 0 ? _14 : null),
-                        attachments: (0, exports.normalizeRestoredValue)((_15 = lesson.attachments) !== null && _15 !== void 0 ? _15 : null),
-                        slides: (0, exports.normalizeRestoredValue)((_16 = lesson.slides) !== null && _16 !== void 0 ? _16 : null),
-                        assignments: (0, exports.normalizeRestoredValue)((_17 = lesson.assignments) !== null && _17 !== void 0 ? _17 : null),
-                        standards: (_18 = lesson.standards) !== null && _18 !== void 0 ? _18 : null,
-                        indicators: (_19 = lesson.indicators) !== null && _19 !== void 0 ? _19 : null,
-                        learningOutcomes: (_20 = lesson.learningOutcomes) !== null && _20 !== void 0 ? _20 : null,
-                        isCentral: (_21 = lesson.isCentral) !== null && _21 !== void 0 ? _21 : false,
-                        isVisible: lesson.isVisible !== undefined ? !!lesson.isVisible : true,
-                        publishDate: lesson.publishDate ? new Date(lesson.publishDate) : null,
-                        cutOffDate: lesson.cutOffDate ? new Date(lesson.cutOffDate) : null,
-                        order: (_22 = lesson.order) !== null && _22 !== void 0 ? _22 : 0,
-                        duration: (_23 = lesson.duration) !== null && _23 !== void 0 ? _23 : 0,
-                        createdAt: (_24 = toDate(lesson.createdAt)) !== null && _24 !== void 0 ? _24 : new Date(),
-                        updatedAt: (_25 = toDate(lesson.updatedAt)) !== null && _25 !== void 0 ? _25 : new Date()
-                    };
-                    yield tx.lesson.upsert({
-                        where: { id: lesson.id },
-                        update: payload,
-                        create: Object.assign({ id: lesson.id }, payload)
-                    });
-                }
-            }
-            if (data.lessonProgress && data.lessonProgress.length > 0) {
-                yield tx.lessonProgress.createMany({
-                    data: data.lessonProgress.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.courseProgress && data.courseProgress.length > 0) {
-                yield tx.courseProgress.createMany({
-                    data: data.courseProgress.filter((x) => validCourseIds.has(x.courseId)).map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt), lastAccessedAt: new Date(x.lastAccessedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.exam && data.exam.length > 0) {
-                for (const exam of data.exam) {
-                    if (!(exam === null || exam === void 0 ? void 0 : exam.id))
-                        continue;
-                    if (exam.courseId && !validCourseIds.has(exam.courseId)) {
-                        console.warn(`Skipping exam ${exam.title} because courseId ${exam.courseId} is missing.`);
-                        continue;
-                    }
-                    const payload = {
-                        title: exam.title,
-                        description: (0, exports.normalizeRestoredValue)((_26 = exam.description) !== null && _26 !== void 0 ? _26 : null),
-                        type: (_27 = exam.type) !== null && _27 !== void 0 ? _27 : 'Quiz',
-                        duration: (_28 = exam.duration) !== null && _28 !== void 0 ? _28 : 30,
-                        passingScore: (_29 = exam.passingScore) !== null && _29 !== void 0 ? _29 : 50,
-                        isCentral: (_30 = exam.isCentral) !== null && _30 !== void 0 ? _30 : false,
-                        showAnswers: (_31 = exam.showAnswers) !== null && _31 !== void 0 ? _31 : true,
-                        resultVisibility: (_32 = exam.resultVisibility) !== null && _32 !== void 0 ? _32 : 'SHOW_SCORE',
-                        password: (_33 = exam.password) !== null && _33 !== void 0 ? _33 : null,
-                        startDate: exam.startDate ? new Date(exam.startDate) : null,
-                        endDate: exam.endDate ? new Date(exam.endDate) : null,
-                        attemptsAllowed: (_34 = exam.attemptsAllowed) !== null && _34 !== void 0 ? _34 : 1,
-                        status: (_35 = exam.status) !== null && _35 !== void 0 ? _35 : 'PUBLISHED',
-                        category: (_36 = exam.category) !== null && _36 !== void 0 ? _36 : null,
-                        grade: (_37 = exam.grade) !== null && _37 !== void 0 ? _37 : null,
-                        grades: (_38 = exam.grades) !== null && _38 !== void 0 ? _38 : null,
-                        subjects: (_39 = exam.subjects) !== null && _39 !== void 0 ? _39 : null,
-                        schoolId: (_40 = exam.schoolId) !== null && _40 !== void 0 ? _40 : null,
-                        courseId: (_41 = exam.courseId) !== null && _41 !== void 0 ? _41 : null,
-                        skill: (_42 = exam.skill) !== null && _42 !== void 0 ? _42 : null,
-                        level: (_43 = exam.level) !== null && _43 !== void 0 ? _43 : 'Medium',
-                        createdAt: (_44 = toDate(exam.createdAt)) !== null && _44 !== void 0 ? _44 : new Date(),
-                        updatedAt: (_45 = toDate(exam.updatedAt)) !== null && _45 !== void 0 ? _45 : new Date()
-                    };
-                    yield tx.exam.upsert({
-                        where: { id: exam.id },
-                        update: payload,
-                        create: Object.assign({ id: exam.id }, payload)
-                    });
-                }
-            }
-            if (data.question && data.question.length > 0) {
-                for (const question of data.question) {
-                    if (!(question === null || question === void 0 ? void 0 : question.id))
-                        continue;
-                    const payload = {
-                        examId: question.examId,
-                        text: (0, exports.normalizeRestoredValue)(question.text),
-                        type: (_46 = question.type) !== null && _46 !== void 0 ? _46 : 'MCQ',
-                        options: (0, exports.normalizeRestoredValue)(question.options),
-                        correctAnswer: (0, exports.normalizeRestoredValue)(question.correctAnswer),
-                        points: (_47 = question.points) !== null && _47 !== void 0 ? _47 : 0,
-                        skill: (_48 = question.skill) !== null && _48 !== void 0 ? _48 : null,
-                        standard: (_49 = question.standard) !== null && _49 !== void 0 ? _49 : null,
-                        learningOutcome: (_50 = question.learningOutcome) !== null && _50 !== void 0 ? _50 : null,
-                        level: (_51 = question.level) !== null && _51 !== void 0 ? _51 : 'Medium',
-                        order: (_52 = question.order) !== null && _52 !== void 0 ? _52 : 0,
-                        explanation: (0, exports.normalizeRestoredValue)((_53 = question.explanation) !== null && _53 !== void 0 ? _53 : null),
-                        createdAt: (_54 = toDate(question.createdAt)) !== null && _54 !== void 0 ? _54 : new Date(),
-                        updatedAt: (_55 = toDate(question.updatedAt)) !== null && _55 !== void 0 ? _55 : new Date()
-                    };
-                    yield tx.question.upsert({
-                        where: { id: question.id },
-                        update: payload,
-                        create: Object.assign({ id: question.id }, payload)
-                    });
-                }
-            }
-            if (data.examSubmission && data.examSubmission.length > 0) {
-                yield tx.examSubmission.createMany({
-                    data: data.examSubmission.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.studentAnswer && data.studentAnswer.length > 0) {
-                yield tx.studentAnswer.createMany({
-                    data: data.studentAnswer.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.activityLog && data.activityLog.length > 0) {
-                yield tx.activityLog.createMany({
-                    data: data.activityLog.map((x) => (Object.assign(Object.assign({}, x), { timestamp: new Date(x.timestamp) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.lessonBlock && data.lessonBlock.length > 0) {
-                for (const block of data.lessonBlock) {
-                    if (!(block === null || block === void 0 ? void 0 : block.id))
-                        continue;
-                    const blockPayload = {
-                        lessonId: block.lessonId,
-                        type: block.type,
-                        content: (_56 = block.content) !== null && _56 !== void 0 ? _56 : null,
-                        order: (_57 = block.order) !== null && _57 !== void 0 ? _57 : 0,
-                        createdAt: block.createdAt ? new Date(block.createdAt) : new Date(),
-                        updatedAt: block.updatedAt ? new Date(block.updatedAt) : new Date()
-                    };
-                    yield tx.lessonBlock.upsert({
-                        where: { id: block.id },
-                        update: blockPayload,
-                        create: Object.assign({ id: block.id }, blockPayload)
-                    });
-                }
-            }
-            if (data.dynamicSection && data.dynamicSection.length > 0) {
-                yield tx.dynamicSection.createMany({
-                    data: data.dynamicSection.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.blockAnswer && data.blockAnswer.length > 0) {
-                yield tx.blockAnswer.createMany({
-                    data: data.blockAnswer.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.skillCluster && data.skillCluster.length > 0) {
-                yield tx.skillCluster.createMany({
-                    data: data.skillCluster.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.skillLesson && data.skillLesson.length > 0) {
-                yield tx.skillLesson.createMany({
-                    data: data.skillLesson.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.interactiveActivity && data.interactiveActivity.length > 0) {
-                yield tx.interactiveActivity.createMany({
-                    data: data.interactiveActivity.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt), updatedAt: new Date(x.updatedAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.activityAttempt && data.activityAttempt.length > 0) {
-                yield tx.activityAttempt.createMany({
-                    data: data.activityAttempt.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            if (data.xpHistory && data.xpHistory.length > 0) {
-                yield tx.xPHistory.createMany({
-                    data: data.xpHistory.map((x) => (Object.assign(Object.assign({}, x), { createdAt: new Date(x.createdAt) }))),
-                    skipDuplicates: true
-                });
-            }
-            // 3. Connect implicit M:N relationships
-            if (data.courseToSchool && data.courseToSchool.length > 0) {
-                for (const item of data.courseToSchool) {
-                    const validSchools = (item.schools || [])
-                        .map((s) => (typeof s === "object" && s ? s.id : s))
-                        .filter((id) => Boolean(id && typeof id === "string" && id !== "null" && id !== "undefined" && id.trim() !== ""))
-                        .map((id) => ({ id: id.trim() }));
-                    if (validSchools.length > 0) {
-                        yield tx.course.update({
-                            where: { id: item.id },
-                            data: {
-                                schools: {
-                                    connect: validSchools
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-            if (data.examToSchool && data.examToSchool.length > 0) {
-                for (const item of data.examToSchool) {
-                    const validSchools = (item.schools || [])
-                        .map((s) => (typeof s === "object" && s ? s.id : s))
-                        .filter((id) => Boolean(id && typeof id === "string" && id !== "null" && id !== "undefined" && id.trim() !== ""))
-                        .map((id) => ({ id: id.trim() }));
-                    if (validSchools.length > 0) {
-                        yield tx.exam.update({
-                            where: { id: item.id },
-                            data: {
-                                schools: {
-                                    connect: validSchools
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-        }), {
-            timeout: 300000 // 5 minutes - needed for large datasets with many slides
-        });
+        yield performBackupAndPruning();
+        yield (0, backupSnapshot_1.restoreSnapshot)(prisma_1.default, backupData);
         res.json({ success: true, message: 'Database restored successfully from backup.' });
     }
     catch (error) {
@@ -1068,7 +698,7 @@ const postBackupHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, func
         }
         // Search in backups dir AND root dir for the file
         const searchPaths = [
-            path_1.default.join(exports.BACKUPS_DIR, filename),
+            path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename),
             path_1.default.join(process.cwd(), filename)
         ];
         let filePath = searchPaths.find(p => fs_1.default.existsSync(p));
@@ -1173,7 +803,7 @@ const getBackupHandler15 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         }
         // 2️⃣ Search in ALL Local Backup Files (backups/, root, recovery.json, etc.)
         const searchDirs = [
-            exports.BACKUPS_DIR,
+            backupSnapshot_1.BACKUPS_DIR,
             process.cwd(),
             '/app',
             '/app/uploads/backups'
@@ -1322,7 +952,7 @@ const postBackupHandler16 = (req, res) => __awaiter(void 0, void 0, void 0, func
             }
         }
         else {
-            const searchDirs = [exports.BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
+            const searchDirs = [backupSnapshot_1.BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
             for (const dir of searchDirs) {
                 if (backupData)
                     break;
@@ -1403,7 +1033,7 @@ const postBackupHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, func
             }
         }
         else {
-            const searchDirs = [exports.BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
+            const searchDirs = [backupSnapshot_1.BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
             for (const dir of searchDirs) {
                 if (backupData)
                     break;
@@ -1719,7 +1349,7 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
         }
         else {
             // B. Search in local files
-            const searchDirs = [exports.BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
+            const searchDirs = [backupSnapshot_1.BACKUPS_DIR, process.cwd(), '/app', '/app/uploads/backups'];
             const seenFiles = new Set();
             for (const dir of searchDirs) {
                 if (targetLesson)
@@ -1873,17 +1503,17 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
         let backupPath = null;
         if (useLatest) {
             // Use the largest (most data) backup file in the backups directory
-            const files = fs_1.default.readdirSync(exports.BACKUPS_DIR)
+            const files = fs_1.default.readdirSync(backupSnapshot_1.BACKUPS_DIR)
                 .filter(f => f.endsWith('.json') || f.endsWith('.zip'))
-                .map(f => ({ name: f, size: fs_1.default.statSync(path_1.default.join(exports.BACKUPS_DIR, f)).size }))
+                .map(f => ({ name: f, size: fs_1.default.statSync(path_1.default.join(backupSnapshot_1.BACKUPS_DIR, f)).size }))
                 .sort((a, b) => b.size - a.size);
             if (files.length === 0)
                 return res.status(404).json({ error: 'No backup files found in backups directory' });
-            backupPath = path_1.default.join(exports.BACKUPS_DIR, files[0].name);
+            backupPath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, files[0].name);
             console.log(`📂 [Content Restore] Using largest backup: ${files[0].name} (${(files[0].size / 1024 / 1024).toFixed(1)} MB)`);
         }
         else if (filename) {
-            backupPath = path_1.default.join(exports.BACKUPS_DIR, path_1.default.basename(filename));
+            backupPath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, path_1.default.basename(filename));
             if (!fs_1.default.existsSync(backupPath)) {
                 return res.status(404).json({ error: `Backup file not found: ${filename}` });
             }
@@ -1994,7 +1624,6 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.postBackupHandler20 = postBackupHandler20;
-exports.BACKUPS_DIR = path_1.default.join(process.cwd(), 'uploads', 'backups');
 function parseBackupBuffer(buffer, filename) {
     const lowerName = filename.toLowerCase();
     if (lowerName.endsWith('.zip')) {
@@ -2013,121 +1642,24 @@ function parseBackupBuffer(buffer, filename) {
 }
 function generateFullSystemBackupData() {
     return __awaiter(this, void 0, void 0, function* () {
-        const [schools, users, classrooms, courses, studentEnrollments, teacherCourses, lessons, exams, questions, lessonBlocks, dynamicSections, examsWithSchools, coursesWithSchools, skillClusters, skillLessons, interactiveActivities, lessonProgress, courseProgress, examSubmission, studentAnswer, activityLog, blockAnswer, activityAttempt, xpHistory] = yield Promise.all([
-            prisma_1.default.school.findMany(),
-            prisma_1.default.user.findMany(),
-            prisma_1.default.classroom.findMany(),
-            prisma_1.default.course.findMany({ where: { deletedAt: null } }),
-            prisma_1.default.studentEnrollment.findMany(),
-            prisma_1.default.teacherCourse.findMany(),
-            prisma_1.default.lesson.findMany({ where: { deletedAt: null } }),
-            prisma_1.default.exam.findMany(),
-            prisma_1.default.question.findMany(),
-            prisma_1.default.lessonBlock.findMany(),
-            prisma_1.default.dynamicSection.findMany(),
-            prisma_1.default.exam.findMany({ select: { id: true, schools: { select: { id: true } } } }),
-            prisma_1.default.course.findMany({ where: { deletedAt: null }, select: { id: true, schools: { select: { id: true } } } }),
-            prisma_1.default.skillCluster.findMany(),
-            prisma_1.default.skillLesson.findMany(),
-            prisma_1.default.interactiveActivity.findMany(),
-            prisma_1.default.lessonProgress.findMany(),
-            prisma_1.default.courseProgress.findMany(),
-            prisma_1.default.examSubmission.findMany(),
-            prisma_1.default.studentAnswer.findMany(),
-            prisma_1.default.activityLog.findMany(),
-            prisma_1.default.blockAnswer.findMany(),
-            prisma_1.default.activityAttempt.findMany(),
-            prisma_1.default.xPHistory.findMany()
-        ]);
-        return {
-            version: '1.0',
-            timestamp: new Date().toISOString(),
-            data: {
-                school: schools,
-                user: users,
-                classroom: classrooms,
-                course: courses,
-                studentEnrollment: studentEnrollments,
-                teacherCourse: teacherCourses,
-                lesson: lessons,
-                exam: exams,
-                question: questions,
-                lessonBlock: lessonBlocks,
-                dynamicSection: dynamicSections,
-                examToSchool: examsWithSchools,
-                courseToSchool: coursesWithSchools,
-                skillCluster: skillClusters,
-                skillLesson: skillLessons,
-                interactiveActivity: interactiveActivities,
-                lessonProgress: lessonProgress,
-                courseProgress: courseProgress,
-                examSubmission: examSubmission,
-                studentAnswer: studentAnswer,
-                activityLog: activityLog,
-                blockAnswer: blockAnswer,
-                activityAttempt: activityAttempt,
-                xpHistory: xpHistory
-            }
-        };
+        return (0, backupSnapshot_1.collectFullSnapshot)(prisma_1.default);
     });
 }
 function performBackupAndPruning() {
     return __awaiter(this, void 0, void 0, function* () {
-        const egyptTime = new Date().toLocaleString('ar-EG', { timeZone: 'Africa/Cairo', hour12: false });
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `backup-${timestamp}.json`;
-        const filePath = path_1.default.join(exports.BACKUPS_DIR, filename);
-        const backupData = yield generateFullSystemBackupData();
-        // 1️⃣ Save locally
-        fs_1.default.writeFileSync(filePath, JSON.stringify(backupData, null, 2), 'utf-8');
-        const size = fs_1.default.statSync(filePath).size;
-        console.log(`💾 [Backup] Saved locally: ${filename} | توقيت مصر: ${egyptTime}`);
-        // 2️⃣ Save to Cloud Backup cloud in background (non-blocking)
-        const cloudName = `auto_hourly_backup_egypt_${egyptTime.replace(/[/,:\s]/g, '-')}`;
-        (0, db_backup_1.saveToCloudBackup)(cloudName, 'AUTO_HOURLY', backupData)
-            .then(saved => {
-            if (saved) {
-                console.log(`☁️ [Backup] Saved to Cloud Backup cloud: ${cloudName}`);
-            }
-            else {
-                console.warn(`⚠️ [Backup] Cloud save skipped (Cloud Backup unavailable): ${cloudName}`);
-            }
-        })
-            .catch((err) => {
-            console.error(`❌ [Backup] Cloud save failed: ${err.message}`);
-        });
-        // 3️⃣ Prune local backups — keep only the latest 100
-        // Keep only the latest 100 backups (= ~100 hours at hourly intervals, Egypt time)
-        // Older backups are deleted only when the count exceeds 100
-        try {
-            const files = fs_1.default.readdirSync(exports.BACKUPS_DIR)
-                .filter(file => (file.startsWith('auto_hourly_') || file.startsWith('backup-') || file.startsWith('backup_')) && (file.endsWith('.json') || file.endsWith('.zip')))
-                .map(file => {
-                const fp = path_1.default.join(exports.BACKUPS_DIR, file);
-                const stats = fs_1.default.statSync(fp);
-                return {
-                    filename: file,
-                    filePath: fp,
-                    createdAt: stats.birthtime || stats.mtime
-                };
-            })
-                .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-            if (files.length > 50) {
-                const filesToDelete = files.slice(50);
-                for (const f of filesToDelete) {
-                    fs_1.default.unlinkSync(f.filePath);
-                    console.log(`🗑️ [Backup Scheduler] Deleted old backup (kept latest 50): ${f.filename}`);
-                }
-            }
+        yield (0, backupSnapshot_1.ensureBackupStorage)();
+        const filename = 'backup-full-' + new Date().toISOString().replace(/[:.]/g, '-') + '-' + require('crypto').randomUUID() + '.json';
+        const filePath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename);
+        const saved = yield (0, backupSnapshot_1.writeFullSnapshot)(prisma_1.default, filePath);
+        // The optional JSONB cloud API needs a complete object; local-only backup stays paginated.
+        if (db_backup_1.CLOUD_BACKUP_ENABLED) {
+            const payload = JSON.parse(yield fs_1.default.promises.readFile(filePath, 'utf8'));
+            const cloud = yield (0, db_backup_2.saveToCloudBackup)(filename.slice(0, -5), 'FULL_SYSTEM', payload);
+            if (!cloud)
+                console.warn('[Backup] Local snapshot saved; cloud copy failed.');
         }
-        catch (err) {
-            console.error('❌ [Backup Scheduler] Error pruning old backups:', err.message);
-        }
-        return {
-            filename,
-            size,
-            createdAt: backupData.timestamp
-        };
+        yield (0, backupSnapshot_1.pruneFullSnapshots)();
+        return { filename, size: saved.size, createdAt: saved.timestamp };
     });
 }
 const normalizeRestoredValue = (value) => (0, shared_1.externalizeEmbeddedDataImages)(value);

@@ -1,127 +1,53 @@
 /**
- * IDOR Cross-School Exam Access Integration Tests
- *
- * Verifies that a user from School A cannot read, update, or delete
- * exams belonging to School B — the core IDOR requirement.
- *
- * These tests spin up an in-process Express app + Prisma (DATABASE_URL required)
- * and call the actual route handlers, so they require a live DB.
- *
- * Run with: npx jest tests/quality/security/idor-exam.test.cjs
+ * Read-only live isolation checks. Supply two existing SCHOOL_ADMIN tokens and
+ * two existing non-central, unshared exams from DIFFERENT schools in a test backend.
+ * No dotenv loading, JWT signing, database access, or fixture creation occurs here.
+ * REQUIRE_LIVE_TESTS=1 makes missing fixtures/dependencies FAIL; otherwise Jest skips.
+ * Mutation policy is covered offline in exam-access-policy.test.cjs; production data
+ * must never be used as a disposable update/delete/publish target.
  */
-require('dotenv').config();
+const { api, liveTestsEnabled, requireLiveServer, requireLiveConfig } = require('../helpers/http.cjs');
+const fixtureNames = ['TEST_IDOR_ADMIN_A_TOKEN', 'TEST_IDOR_ADMIN_B_TOKEN', 'TEST_IDOR_EXAM_A_ID', 'TEST_IDOR_EXAM_B_ID'];
 
-const { randomUUID } = require('crypto');
-const jwt = require('jsonwebtoken');
-const { checkServer } = require('../helpers/http.cjs');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'test-secret-replace-in-production';
-
-
-// Helper: mint a JWT for a user
-function mintToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Tests run against real HTTP if BACKEND_URL is set, otherwise against in-process
-// ──────────────────────────────────────────────────────────────────────────────
-const BASE_URL = process.env.BACKEND_URL || 'http://localhost:5000';
-
-async function authorizedRequest(path, token, options = {}) {
-  const { default: fetch } = await import('node-fetch').catch(() => ({ default: global.fetch }));
-  return fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-}
-
-describe('IDOR — Cross-school exam isolation', () => {
-  let isLive = false;
-
+(liveTestsEnabled ? describe : describe.skip)('IDOR live read isolation (requires configured school fixtures)', () => {
+  let fixtures;
+  const get = (path, token) => api().get(path).set('Authorization', `Bearer ${token}`);
   beforeAll(async () => {
-    isLive = await checkServer();
-  });
-
-  // We mint tokens directly — no real DB users needed for header-level auth check
-  const schoolAId = randomUUID();
-  const schoolBId = randomUUID();
-  const fakeExamId = randomUUID(); // Belongs to school B conceptually
-
-  const adminA = mintToken({ id: randomUUID(), role: 'SCHOOL_ADMIN', schoolId: schoolAId });
-  const adminB = mintToken({ id: randomUUID(), role: 'SCHOOL_ADMIN', schoolId: schoolBId });
-
-  test('School A admin cannot GET exam belonging to School B', async () => {
-    if (!isLive) return;
-    // Even if the exam id is guessed, the server must reject due to ownership check
-    const res = await authorizedRequest(`/api/exams/${fakeExamId}`, adminA);
-    // Expect 403 (forbidden) or 404 (not found — acceptable as it hides existence)
-    expect([403, 404]).toContain(res.status);
-  });
-
-  test('School A admin cannot UPDATE exam belonging to School B', async () => {
-    if (!isLive) return;
-    const res = await authorizedRequest(`/api/exams/${fakeExamId}`, adminA, {
-      method: 'PUT',
-      body: { title: 'Injected Title' },
+    requireLiveConfig(fixtureNames);
+    await requireLiveServer();
+    fixtures = [
+      { token: process.env.TEST_IDOR_ADMIN_A_TOKEN, id: process.env.TEST_IDOR_EXAM_A_ID },
+      { token: process.env.TEST_IDOR_ADMIN_B_TOKEN, id: process.env.TEST_IDOR_EXAM_B_ID },
+    ];
+    expect(fixtures[0].id).not.toBe(fixtures[1].id);
+    expect(fixtures[0].token).not.toBe(fixtures[1].token);
+    // Positive controls are mandatory: nonexistent IDs or rejected tokens cannot pass.
+    const own = await Promise.all(fixtures.map(f => get(`/api/exams/${encodeURIComponent(f.id)}`, f.token).expect(200)));
+    own.forEach((res, i) => {
+      expect(res.body.id).toBe(fixtures[i].id);
+      expect(res.body.schoolId).toEqual(expect.any(String));
+      expect(res.body.isCentral).toBe(false);
     });
-    expect([403, 404]).toContain(res.status);
+    expect(own[0].body.schoolId).not.toBe(own[1].body.schoolId);
   });
 
-  test('School A admin cannot DELETE exam belonging to School B', async () => {
-    if (!isLive) return;
-    const res = await authorizedRequest(`/api/exams/${fakeExamId}`, adminA, {
-      method: 'DELETE',
-    });
-    expect([403, 404]).toContain(res.status);
+  test.each([0, 1])('school %i administrator can read their own exam and its questions', async index => {
+    const own = fixtures[index];
+    const res = await get(`/api/exams/${encodeURIComponent(own.id)}`, own.token).expect(200);
+    expect(res.body.id).toBe(own.id);
+    await get(`/api/exams/${encodeURIComponent(own.id)}/questions`, own.token).expect(200);
   });
-
-  test('School A admin cannot PUBLISH exam belonging to School B', async () => {
-    if (!isLive) return;
-    const res = await authorizedRequest(`/api/exams/${fakeExamId}/publish`, adminA, {
-      method: 'POST',
-    });
-    expect([401, 403, 404]).toContain(res.status);
+  test.each([0, 1])('school %i administrator cannot read the other school exam or its questions', async index => {
+    const own = fixtures[index];
+    const other = fixtures[1 - index];
+    for (const suffix of ['', '/questions']) {
+      const res = await get(`/api/exams/${encodeURIComponent(other.id)}${suffix}`, own.token);
+      expect([403, 404]).toContain(res.status);
+    }
   });
-
-  test('Unauthenticated request is rejected', async () => {
-    if (!isLive) return;
-    const { default: fetch } = await import('node-fetch').catch(() => ({ default: global.fetch }));
-    const res = await fetch(`${BASE_URL}/api/exams/${fakeExamId}`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
+  test('anonymous access to an existing fixture exam is rejected', async () => {
+    const res = await api().get(`/api/exams/${encodeURIComponent(fixtures[0].id)}`);
     expect([401, 403]).toContain(res.status);
   });
-
-  test('School B admin CAN access their own exam (sanity check)', async () => {
-    if (!isLive) return;
-    // If user does not exist in DB (mock token), verifyToken returns 403; if exam doesn't exist, 404
-    const res = await authorizedRequest(`/api/exams/${fakeExamId}`, adminB);
-    expect([200, 403, 404]).toContain(res.status);
-  });
-
-});
-
-describe('IDOR — Cross-school question access', () => {
-  let isLive = false;
-
-  beforeAll(async () => {
-    isLive = await checkServer();
-  });
-
-  const schoolAId = randomUUID();
-  const fakeQuestionId = randomUUID();
-  const adminA = mintToken({ id: randomUUID(), role: 'SCHOOL_ADMIN', schoolId: schoolAId });
-
-  test('School A admin cannot access question from another school exam', async () => {
-    if (!isLive) return;
-    const res = await authorizedRequest(`/api/questions/${fakeQuestionId}`, adminA);
-    expect([401, 403, 404]).toContain(res.status);
-  });
+  test.skip('live UPDATE/DELETE/PUBLISH isolation requires a disposable fixture harness; offline policy tests cover mutation authorization', () => {});
 });

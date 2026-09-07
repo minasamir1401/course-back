@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma';
+import { permanentlyDeleteCourse, permanentlyDeleteLesson } from './trashDeleteHelper';
 
 /**
  * Service to automatically clean up soft-deleted courses and lessons that have been in the trash
@@ -12,28 +13,42 @@ export async function cleanupExpiredTrash() {
 
     // Hard delete courses that are IN TRASH (deletedAt is not null) AND older than 15 days
     // 🔒 SAFETY: The `not: null` condition is CRITICAL — it ensures we NEVER touch active courses.
-    const deletedCourses = await prisma.course.deleteMany({
+    const expiredCourses = await prisma.course.findMany({
       where: {
         deletedAt: {
           not: null,
-          lte: fifteenDaysAgo
-        }
-      }
+          lte: fifteenDaysAgo,
+        },
+      },
+      select: { id: true },
     });
+
+    let deletedCoursesCount = 0;
+    for (const c of expiredCourses) {
+      const ok = await permanentlyDeleteCourse(c.id);
+      if (ok) deletedCoursesCount++;
+    }
 
     // Hard delete lessons that are IN TRASH (deletedAt is not null) AND older than 15 days
     // 🔒 SAFETY: The `not: null` condition is CRITICAL — it ensures we NEVER touch active lessons.
-    const deletedLessons = await prisma.lesson.deleteMany({
+    const expiredLessons = await prisma.lesson.findMany({
       where: {
         deletedAt: {
           not: null,
-          lte: fifteenDaysAgo
-        }
-      }
+          lte: fifteenDaysAgo,
+        },
+      },
+      select: { id: true },
     });
 
-    if (deletedCourses.count > 0 || deletedLessons.count > 0) {
-      console.log(`🗑️ [Trash Cleanup] Permanently deleted ${deletedCourses.count} courses and ${deletedLessons.count} lessons from the Nile that were older than 15 days.`);
+    let deletedLessonsCount = 0;
+    for (const l of expiredLessons) {
+      const ok = await permanentlyDeleteLesson(l.id);
+      if (ok) deletedLessonsCount++;
+    }
+
+    if (deletedCoursesCount > 0 || deletedLessonsCount > 0) {
+      console.log(`🗑️ [Trash Cleanup] Permanently deleted ${deletedCoursesCount} courses and ${deletedLessonsCount} lessons from the Nile that were older than 15 days.`);
     }
   } catch (error: any) {
     console.error('❌ [Trash Cleanup] Error cleaning up expired trash:', error.message);

@@ -46,8 +46,13 @@ router.post('/api/auth/register', async (req: any, res: any) => {
       return res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
     }
 
-    if (role !== 'TEACHER' && role !== 'STUDENT') {
-      return res.status(400).json({ error: 'Invalid role. Only TEACHER or STUDENT roles can self-register.' });
+    // A public request cannot prove membership of a school's teaching staff.
+    // Teachers must be created through the existing authenticated admin workflow.
+    if (role === 'TEACHER') {
+      return res.status(403).json({ error: 'حسابات المعلمين تُنشأ بواسطة إدارة المدرسة. يرجى التواصل مع إدارة مدرستك.' });
+    }
+    if (role !== 'STUDENT') {
+      return res.status(400).json({ error: 'Invalid role. Only STUDENT accounts can self-register.' });
     }
 
     // Check if username already exists
@@ -79,6 +84,13 @@ router.post('/api/auth/register', async (req: any, res: any) => {
   }
 });
 
+// Resolve the same current identity used by authenticated writes before offline replay.
+router.get('/api/auth/session', verifyToken, (req: any, res: any) => {
+  res.set('Cache-Control', 'no-store');
+  const { id, role, schoolId } = req.user;
+  res.json({ user: { id, role, schoolId: schoolId ?? null } });
+});
+
 router.post('/api/auth/login', async (req: any, res: any) => {
   try {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -106,13 +118,7 @@ router.post('/api/auth/login', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Invalid username or password.' });
     }
 
-    let validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword && process.env.NODE_ENV !== 'production') {
-      const devMasterPasswords = ['admin123', 'admin', '123456', 'super-admin-password-123', 'seed-user-password-123'];
-      if (devMasterPasswords.includes(password)) {
-        validPassword = true;
-      }
-    }
+    const validPassword = await bcrypt.compare(password, user.password);
 
     if (!validPassword) {
       await recordFailedLogin(ip);

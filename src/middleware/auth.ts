@@ -13,56 +13,6 @@ if (!JWT_SECRET || JWT_SECRET.length < 32 || INSECURE_JWT_SECRETS.has(JWT_SECRET
   throw new Error('JWT_SECRET must be a unique random value of at least 32 characters');
 }
 
-import { cacheGetJSON, cacheSetJSON } from '../lib/redis';
-
-// Bounded local cache for active user status checks (mirrored with Redis for cluster mode)
-const userStatusCache = new Map<string, { isActive: boolean, timestamp: number }>();
-const STATUS_CACHE_TTL = 30 * 1000; // 30 seconds cache TTL
-
-const checkUserActiveStatus = async (userId: string): Promise<boolean> => {
-  if (userId === 'SYSTEM') return true;
-
-  const now = Date.now();
-  const redisCacheKey = `user_status:${userId}`;
-
-  // 1. Check Redis / shared cluster store
-  try {
-    const sharedStatus = await cacheGetJSON<{ isActive: boolean }>(redisCacheKey);
-    if (sharedStatus && typeof sharedStatus.isActive === 'boolean') {
-      return sharedStatus.isActive;
-    }
-  } catch {
-    // Non-fatal, proceed to local memory check
-  }
-
-  // 2. Check local memory cache
-  const cached = userStatusCache.get(userId);
-  if (cached && (now - cached.timestamp < STATUS_CACHE_TTL)) {
-    return cached.isActive;
-  }
-
-  // Bounded size eviction to prevent memory leak
-  if (userStatusCache.size >= 2000) {
-    const firstKey = userStatusCache.keys().next().value;
-    if (firstKey !== undefined) {
-      userStatusCache.delete(firstKey);
-    }
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { status: true }
-  });
-
-  const isActive = !!(user && user.status === 'ACTIVE');
-  userStatusCache.set(userId, { isActive, timestamp: now });
-
-  // Update Redis cache asynchronously with 30s TTL
-  cacheSetJSON(redisCacheKey, { isActive }, 30).catch(() => {});
-
-  return isActive;
-};
-
 export const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
   // An explicit session belongs to the current app/account. A leftover cookie
   // from another role must not silently turn a student request into an admin request.
@@ -85,12 +35,52 @@ export const verifyToken = async (req: Request, res: Response, next: NextFunctio
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
 
-    const isActive = await checkUserActiveStatus(decoded.id);
-    if (!isActive) {
-      return res.status(403).json({ error: 'Access denied. Account is inactive, suspended, or does not exist.' });
+    if (!decoded || typeof decoded.id !== 'string' || !decoded.id) {
+      return res.status(401).json({ error: 'Invalid token payload.' });
     }
 
-    (req as any).user = decoded;
+    // The scheduler signs this short-lived internal identity; it has no User row.
+    let currentUser = decoded;
+    if (!(decoded.id === 'SYSTEM' && decoded.role === 'SUPER_ADMIN')) {
+      // Authorization must reflect school transfers, demotions and account removal
+      // immediately. A cached active flag cannot validate stale JWT permissions.
+      let user;
+      try {
+        user = await prisma.user.findUnique({
+          where: { id: decoded.id },
+          select: { id: true, role: true, schoolId: true, grade: true, status: true, deletedAt: true }
+        });
+      } catch {
+        return res.status(503).json({ error: 'Unable to verify session. Please try again.' });
+      }
+      if (!user || user.status !== 'ACTIVE' || user.deletedAt) {
+        return res.status(403).json({ error: 'Access denied. Account is inactive, suspended, deleted, or does not exist.' });
+      }
+
+      currentUser = {
+        ...decoded,
+        id: user.id,
+        role: user.role,
+        schoolId: user.schoolId,
+        grade: user.grade
+      };
+    }
+
+    // Bind each replay to the identity authenticated for this request. A session
+    // preflight alone cannot protect against a cookie switch before the write.
+    const offlineUserId = req.headers['x-offline-user-id'];
+    const offlineSchoolId = req.headers['x-offline-school-id'];
+    if (offlineUserId !== undefined || offlineSchoolId !== undefined) {
+      if (typeof offlineUserId !== 'string' || typeof offlineSchoolId !== 'string'
+        || offlineUserId !== currentUser.id || offlineSchoolId !== (currentUser.schoolId ?? '')) {
+        return res.status(409).json({
+          code: 'OFFLINE_SESSION_CHANGED',
+          error: 'تغيّرت الجلسة أو المدرسة. يرجى تسجيل الدخول بحساب صاحب التغييرات المحفوظة.'
+        });
+      }
+    }
+
+    (req as any).user = currentUser;
     next();
   } catch (error: any) {
     if (error.name === 'TokenExpiredError') {

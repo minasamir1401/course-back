@@ -25,55 +25,18 @@ const INSECURE_JWT_SECRETS = new Set([
 if (!JWT_SECRET || JWT_SECRET.length < 32 || INSECURE_JWT_SECRETS.has(JWT_SECRET)) {
     throw new Error('JWT_SECRET must be a unique random value of at least 32 characters');
 }
-const redis_1 = require("../lib/redis");
-// Bounded local cache for active user status checks (mirrored with Redis for cluster mode)
-const userStatusCache = new Map();
-const STATUS_CACHE_TTL = 30 * 1000; // 30 seconds cache TTL
-const checkUserActiveStatus = (userId) => __awaiter(void 0, void 0, void 0, function* () {
-    if (userId === 'SYSTEM')
-        return true;
-    const now = Date.now();
-    const redisCacheKey = `user_status:${userId}`;
-    // 1. Check Redis / shared cluster store
-    try {
-        const sharedStatus = yield (0, redis_1.cacheGetJSON)(redisCacheKey);
-        if (sharedStatus && typeof sharedStatus.isActive === 'boolean') {
-            return sharedStatus.isActive;
-        }
-    }
-    catch (_a) {
-        // Non-fatal, proceed to local memory check
-    }
-    // 2. Check local memory cache
-    const cached = userStatusCache.get(userId);
-    if (cached && (now - cached.timestamp < STATUS_CACHE_TTL)) {
-        return cached.isActive;
-    }
-    // Bounded size eviction to prevent memory leak
-    if (userStatusCache.size >= 2000) {
-        const firstKey = userStatusCache.keys().next().value;
-        if (firstKey !== undefined) {
-            userStatusCache.delete(firstKey);
-        }
-    }
-    const user = yield prisma_1.default.user.findUnique({
-        where: { id: userId },
-        select: { status: true }
-    });
-    const isActive = !!(user && user.status === 'ACTIVE');
-    userStatusCache.set(userId, { isActive, timestamp: now });
-    // Update Redis cache asynchronously with 30s TTL
-    (0, redis_1.cacheSetJSON)(redisCacheKey, { isActive }, 30).catch(() => { });
-    return isActive;
-});
 const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b;
-    // Priority 1: httpOnly cookie (most secure — not accessible to JavaScript)
-    let token = (_a = req.cookies) === null || _a === void 0 ? void 0 : _a.auth_token;
-    // Priority 2: Authorization header (backward-compatible — legacy clients / mobile)
-    if (!token) {
-        token = (_b = req.headers.authorization) === null || _b === void 0 ? void 0 : _b.split(' ')[1];
+    // An explicit session belongs to the current app/account. A leftover cookie
+    // from another role must not silently turn a student request into an admin request.
+    const authorization = req.headers.authorization;
+    if (authorization && !/^Bearer\s+\S+$/i.test(authorization)) {
+        return res.status(401).json({ error: 'Invalid Authorization header.' });
     }
+    const bearerToken = authorization === null || authorization === void 0 ? void 0 : authorization.replace(/^Bearer\s+/i, '');
+    // Web login stores this marker, not a JWT. Only the actual httpOnly cookie
+    // authenticates it; all other explicit tokens retain priority over cookies.
+    let token = bearerToken && bearerToken !== 'cookie_auth' ? bearerToken : (_a = req.cookies) === null || _a === void 0 ? void 0 : _a.auth_token;
     // Priority 3: Query parameter (needed for direct downloads like backups via window.open)
     if (!token && req.query.token) {
         token = req.query.token;
@@ -82,11 +45,43 @@ const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         return res.status(401).json({ error: 'Access denied. No token provided.' });
     try {
         const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
-        const isActive = yield checkUserActiveStatus(decoded.id);
-        if (!isActive) {
-            return res.status(403).json({ error: 'Access denied. Account is inactive, suspended, or does not exist.' });
+        if (!decoded || typeof decoded.id !== 'string' || !decoded.id) {
+            return res.status(401).json({ error: 'Invalid token payload.' });
         }
-        req.user = decoded;
+        // The scheduler signs this short-lived internal identity; it has no User row.
+        let currentUser = decoded;
+        if (!(decoded.id === 'SYSTEM' && decoded.role === 'SUPER_ADMIN')) {
+            // Authorization must reflect school transfers, demotions and account removal
+            // immediately. A cached active flag cannot validate stale JWT permissions.
+            let user;
+            try {
+                user = yield prisma_1.default.user.findUnique({
+                    where: { id: decoded.id },
+                    select: { id: true, role: true, schoolId: true, grade: true, status: true, deletedAt: true }
+                });
+            }
+            catch (_c) {
+                return res.status(503).json({ error: 'Unable to verify session. Please try again.' });
+            }
+            if (!user || user.status !== 'ACTIVE' || user.deletedAt) {
+                return res.status(403).json({ error: 'Access denied. Account is inactive, suspended, deleted, or does not exist.' });
+            }
+            currentUser = Object.assign(Object.assign({}, decoded), { id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade });
+        }
+        // Bind each replay to the identity authenticated for this request. A session
+        // preflight alone cannot protect against a cookie switch before the write.
+        const offlineUserId = req.headers['x-offline-user-id'];
+        const offlineSchoolId = req.headers['x-offline-school-id'];
+        if (offlineUserId !== undefined || offlineSchoolId !== undefined) {
+            if (typeof offlineUserId !== 'string' || typeof offlineSchoolId !== 'string'
+                || offlineUserId !== currentUser.id || offlineSchoolId !== ((_b = currentUser.schoolId) !== null && _b !== void 0 ? _b : '')) {
+                return res.status(409).json({
+                    code: 'OFFLINE_SESSION_CHANGED',
+                    error: 'تغيّرت الجلسة أو المدرسة. يرجى تسجيل الدخول بحساب صاحب التغييرات المحفوظة.'
+                });
+            }
+        }
+        req.user = currentUser;
         next();
     }
     catch (error) {

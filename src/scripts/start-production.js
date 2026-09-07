@@ -53,6 +53,17 @@ async function main() {
     console.warn('[startup] Non-fatal index maintenance notice:', idxError.message || idxError);
   }
 
+  // Automatically run safe deduplication and empty question cleanup
+  try {
+    const cleanDuplicatesScript = path.join(rootDir, 'dist', 'scripts', 'clean-duplicates-and-empty.js');
+    if (fs.existsSync(cleanDuplicatesScript)) {
+      console.log('[startup] Running safe question deduplication and empty question cleanup...');
+      await spawnCommand('node', [cleanDuplicatesScript]);
+    }
+  } catch (cleanError) {
+    console.warn('[startup] Non-fatal deduplication notice:', cleanError.message || cleanError);
+  }
+
   await spawnCommand('pm2-runtime', ['start', 'dist/index.js', '-i', 'max', '--max-memory-restart', '1024M']);
 }
 

@@ -1,3 +1,4 @@
+import { archiveCloudBatch, ArchiveEntry } from './cloudBackupArchive';
 // @ts-ignore
 import { Pool } from 'pg';
 import prisma from './prisma';
@@ -77,107 +78,26 @@ async function ensureTableExists() {
   }
 }
 
-let isArchivingInProgress = false;
+async function compressBackupEntries(entries: ArchiveEntry[]): Promise<Buffer> {
+  const archive = createArchive('zip', { zlib: { level: 6 } });
+  const buffers: Buffer[] = [];
+  const completed = new Promise<Buffer>((resolve, reject) => {
+    archive.on('data', (chunk: Buffer) => buffers.push(chunk));
+    archive.on('error', reject);
+    archive.on('warning', reject);
+    archive.on('end', () => resolve(Buffer.concat(buffers)));
+  });
+  for (const entry of entries) archive.append(JSON.stringify(entry.data), { name: entry.id + '.json' });
+  try {
+    await Promise.all([archive.finalize(), completed]);
+    return await completed;
+  } catch (error) { archive.abort(); throw error; }
+}
 
 async function performCloudBackupCleanup() {
-  if (!BACKUP_DB_URL) return;
-  if (isArchivingInProgress) return;
-  isArchivingInProgress = true;
-  try {
-    console.log('🧹 [Backup DB] Checking if we need to archive backups...');
-    
-    // Fetch all backups that are not ARCHIVE and not REALTIME_SYNC, ordered by oldest first
-    const result = await pool.query(`SELECT id, name, created_at FROM cloud_backups WHERE type != 'ARCHIVE' AND type != 'REALTIME_SYNC' ORDER BY created_at ASC`);
-    const rows = result.rows;
-
-    if (rows.length >= 50) {
-      console.log(`📦 [Backup DB] Found ${rows.length} unarchived backups. Archiving the oldest 50...`);
-      
-      const chunk = rows.slice(0, 50);
-      const chunkIds = chunk.map((r: any) => r.id);
-      
-      // Get date range
-      const startDate = new Date(chunk[0].created_at);
-      const endDate = new Date(chunk[chunk.length - 1].created_at);
-      
-      const formatNum = (num: number) => num.toString().padStart(2, '0');
-      const formatDate = (d: Date) => d.toLocaleString('en-CA', { timeZone: 'Africa/Cairo', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/,/, '');
-      
-      const archiveName = `مجمع اخر 50 ساعة من ${formatDate(startDate)} إلى ${formatDate(endDate)}`;
-      
-      // Create zip asynchronously without blocking the event loop
-      const buffers: Buffer[] = [];
-      const archive = createArchive('zip', {
-        zlib: { level: 9 } // maximum compression
-      });
-
-      archive.on('data', (data: any) => {
-        buffers.push(data);
-      });
-
-      archive.on('error', (err: any) => {
-        console.error('❌ [Backup DB] Archiver error:', err);
-        isArchivingInProgress = false;
-      });
-
-      archive.on('end', async () => {
-        try {
-          const zipBuffer = Buffer.concat(buffers);
-          const base64Data = zipBuffer.toString('base64');
-          
-          // Save archive
-          const insertQuery = `
-            INSERT INTO cloud_backups (name, type, data)
-            VALUES ($1, $2, $3)
-            RETURNING id;
-          `;
-          const archiveJson = {
-            isArchive: true,
-            compression: 'zip',
-            fileBase64: base64Data,
-            count: 50
-          };
-          
-          await pool.query(insertQuery, [archiveName, 'ARCHIVE', JSON.stringify(archiveJson)]);
-          console.log(`✅ [Backup DB] Successfully created archive: ${archiveName}`);
-          
-          // Delete the 50 backups
-          const placeholders = chunkIds.map((_: any, idx: number) => '$' + (idx + 1)).join(',');
-          await pool.query(`DELETE FROM cloud_backups WHERE id IN (${placeholders})`, chunkIds);
-          console.log(`🗑️ [Backup DB] Deleted the 50 archived individual backups.`);
-          
-          // Catch up if there are still more than 50 remaining, with a delay
-          if (rows.length >= 100) {
-             setTimeout(() => performCloudBackupCleanup(), 5000);
-          } else {
-             isArchivingInProgress = false;
-          }
-        } catch (e) {
-          console.error('❌ [Backup DB] Error saving archive:', e);
-          isArchivingInProgress = false;
-        }
-      });
-
-      // Append files asynchronously
-      for (const r of chunk) {
-            try {
-              const dataRes = await pool.query(`SELECT data FROM cloud_backups WHERE id = $1`, [r.id]);
-              if (dataRes.rows.length > 0 && dataRes.rows[0].data) {
-                archive.append(JSON.stringify(dataRes.rows[0].data), { name: r.name + '.json' });
-              }
-            } catch (err: any) {
-              console.error(`❌ [Backup DB] Failed to fetch/append data for ${r.name}:`, err.message);
-            }
-          }
-          archive.finalize();
-    } else {
-      console.log(`✅ [Backup DB] Only ${rows.length} unarchived backups found. Waiting for 50.`);
-      isArchivingInProgress = false;
-    }
-  } catch (err) {
-    console.error('❌ [Backup DB] Error during cleanup/archiving:', err);
-    isArchivingInProgress = false;
-  }
+  if (!CLOUD_BACKUP_ENABLED) return;
+  try { await archiveCloudBatch(pool, compressBackupEntries); }
+  catch (error) { console.error('[Backup DB] Archive aborted; original records retained:', error); }
 }
 
 // Ensure table exists on startup, then cleanup
@@ -428,82 +348,9 @@ export async function syncMissingCloudCourses() {
 }
 
 export async function createManualBundle() {
+  if (!CLOUD_BACKUP_ENABLED) throw new Error('Cloud backup is disabled');
   await ensureTableExists();
-  
-  // Fetch ALL unarchived non-sync backups (no limit)
-  const result = await pool.query(`SELECT id, name, created_at FROM cloud_backups WHERE type != 'ARCHIVE' AND type != 'REALTIME_SYNC' ORDER BY created_at ASC`);
-  const rows = result.rows;
-
-  if (rows.length === 0) {
-    throw new Error("لا يوجد نسخ فردية لجمعها");
-  }
-
-  const startDate = new Date(rows[0].created_at);
-  const endDate = new Date(rows[rows.length - 1].created_at);
-  
-  const formatNum = (num: number) => num.toString().padStart(2, '0');
-  const formatDate = (d: Date) => d.toLocaleString('en-CA', { timeZone: 'Africa/Cairo', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/,/, '');
-  
-  const archiveName = `مجمع يدوي من ${formatDate(startDate)} إلى ${formatDate(endDate)}`;
-  
-  return new Promise((resolve, reject) => {
-    const buffers: Buffer[] = [];
-    const archive = createArchive('zip', {
-      zlib: { level: 9 }
-    });
-
-    archive.on('data', (data: any) => {
-      buffers.push(data);
-    });
-
-    archive.on('error', (err: any) => {
-      reject(err);
-    });
-
-    archive.on('end', async () => {
-      try {
-        const zipBuffer = Buffer.concat(buffers);
-        const base64Data = zipBuffer.toString('base64');
-        
-        const insertQuery = `
-          INSERT INTO cloud_backups (name, type, data)
-          VALUES ($1, $2, $3)
-          RETURNING id;
-        `;
-        const archiveJson = {
-          isArchive: true,
-          compression: 'zip',
-          fileBase64: base64Data,
-          count: rows.length
-        };
-        
-        await pool.query(insertQuery, [archiveName, 'ARCHIVE', archiveJson]);
-        resolve({ success: true, archiveName });
-      } catch (err) {
-        reject(err);
-      }
-    });
-
-    let idx = 0;
-    async function processNext() {
-      if (idx < rows.length) {
-        const r = rows[idx];
-        try {
-          const dataRes = await pool.query(`SELECT data FROM cloud_backups WHERE id = $1`, [r.id]);
-          if (dataRes.rows.length > 0 && dataRes.rows[0].data) {
-            const dataObj = dataRes.rows[0].data;
-            const stringified = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj);
-            archive.append(stringified, { name: r.name.endsWith('.json') ? r.name : `${r.name}.json` });
-          }
-        } catch (err: any) {
-          console.error(`❌ [Backup DB] Failed to fetch/append data for ${r.name}:`, err.message);
-        }
-        idx++;
-        setImmediate(processNext);
-      } else {
-        archive.finalize();
-      }
-    }
-    processNext();
-  });
+  const result = await archiveCloudBatch(pool, compressBackupEntries, { minimum: 1, all: true });
+  if (!result) throw new Error('No unarchived backups available, or another archive is running');
+  return result;
 }

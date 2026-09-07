@@ -1050,3 +1050,20 @@ export const acquireLock = (key: string): boolean => {
 export const releaseLock = (key: string): void => {
   locks.delete(key);
 };
+
+export const robustNormalizeText = (t: string | null | undefined): string => {
+  if (!t) return '';
+  return String(t)
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\\\(|\\\)|\\\[|\\\]/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .trim();
+};
+

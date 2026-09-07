@@ -42,6 +42,13 @@ import {
   getCloudCoursesIfCached,
   prefetchCloudCoursesInBackground,
 } from "../lib/db-backup";
+import {
+  permanentlyDeleteQuestion,
+  permanentlyDeleteLesson,
+  permanentlyDeleteExam,
+  permanentlyDeleteCourse,
+  permanentlyDeleteUser,
+} from "../services/trashDeleteHelper";
 
 export const getCourseHandler1 = async (req: any, res: any) => {
     const result = await previewDeduplication();
@@ -704,8 +711,7 @@ export const putCourseHandler12 = async (req: any, res: any) => {
                   ? { set: [] }
                   : req.user.role === "SUPER_ADMIN" && !isCentral && (schoolIds !== undefined || schoolId !== undefined)
                     ? {
-                        set: [],
-                        connect: sanitizedSchoolIds.map((sid: string) => ({ id: sid })),
+                        set: sanitizedSchoolIds.map((sid: string) => ({ id: sid })),
                       }
                     : undefined,
             },
@@ -1467,69 +1473,53 @@ export const deleteCourseHandler25 = async (req: any, res: any) => {
       let deletedCount = 0;
 
       if (!type || type === "all" || type === "question") {
-        try {
-          const result = await prisma.question.deleteMany({
-            where: { deletedAt: { not: null } },
-          });
-          deletedCount += result.count;
-        } catch (e) {
-          console.error("Error emptying questions", e);
+        const questions = await prisma.question.findMany({
+          where: { deletedAt: { not: null } },
+          select: { id: true },
+        });
+        for (const q of questions) {
+          const ok = await permanentlyDeleteQuestion(q.id);
+          if (ok) deletedCount++;
         }
       }
       if (!type || type === "all" || type === "lesson") {
-        try {
-          const result = await prisma.lesson.deleteMany({
-            where: { deletedAt: { not: null } },
-          });
-          deletedCount += result.count;
-        } catch (e) {
-          console.error("Error emptying lessons", e);
+        const lessons = await prisma.lesson.findMany({
+          where: { deletedAt: { not: null } },
+          select: { id: true },
+        });
+        for (const l of lessons) {
+          const ok = await permanentlyDeleteLesson(l.id);
+          if (ok) deletedCount++;
         }
       }
       if (!type || type === "all" || type === "exam") {
-        try {
-          const result = await prisma.exam.deleteMany({
-            where: { deletedAt: { not: null } },
-          });
-          deletedCount += result.count;
-        } catch (e) {
-          console.error("Error emptying exams", e);
+        const exams = await prisma.exam.findMany({
+          where: { deletedAt: { not: null } },
+          select: { id: true },
+        });
+        for (const e of exams) {
+          const ok = await permanentlyDeleteExam(e.id);
+          if (ok) deletedCount++;
         }
       }
       if (!type || type === "all" || type === "course") {
-        try {
-          const result = await prisma.course.deleteMany({
-            where: { deletedAt: { not: null } },
-          });
-          deletedCount += result.count;
-        } catch (e) {
-          console.error("Error emptying courses", e);
+        const courses = await prisma.course.findMany({
+          where: { deletedAt: { not: null } },
+          select: { id: true },
+        });
+        for (const c of courses) {
+          const ok = await permanentlyDeleteCourse(c.id);
+          if (ok) deletedCount++;
         }
       }
       if (!type || type === "all" || type === "user") {
-        try {
-          // Disconnect relations that do not have onDelete: Cascade
-          const deletedUsers = await prisma.user.findMany({
-            where: { deletedAt: { not: null } },
-            select: { id: true },
-          });
-          if (deletedUsers.length > 0) {
-            const ids = deletedUsers.map((u: any) => u.id);
-            await prisma.classroom.updateMany({
-              where: { teacherId: { in: ids } },
-              data: { teacherId: null },
-            });
-            await prisma.user.updateMany({
-              where: { parentId: { in: ids } },
-              data: { parentId: null },
-            });
-            const result = await prisma.user.deleteMany({
-              where: { id: { in: ids } },
-            });
-            deletedCount += result.count;
-          }
-        } catch (e) {
-          console.error("Error emptying users", e);
+        const users = await prisma.user.findMany({
+          where: { deletedAt: { not: null } },
+          select: { id: true },
+        });
+        for (const u of users) {
+          const ok = await permanentlyDeleteUser(u.id);
+          if (ok) deletedCount++;
         }
       }
 
@@ -1542,6 +1532,57 @@ export const deleteCourseHandler25 = async (req: any, res: any) => {
       res.status(500).json({ error: "Error emptying trash" });
     }
   };
+
+export const postTrashBulkDeleteHandler = async (req: any, res: any) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: "Invalid items array" });
+    }
+
+    let deletedCount = 0;
+    for (const item of items) {
+      let ok = false;
+      if (item.type === "course") ok = await permanentlyDeleteCourse(item.id);
+      else if (item.type === "lesson") ok = await permanentlyDeleteLesson(item.id);
+      else if (item.type === "exam") ok = await permanentlyDeleteExam(item.id);
+      else if (item.type === "question") ok = await permanentlyDeleteQuestion(item.id);
+      else if (item.type === "user") ok = await permanentlyDeleteUser(item.id);
+
+      if (ok) deletedCount++;
+    }
+
+    res.json({
+      success: true,
+      message: `Permanently deleted ${deletedCount} items.`,
+    });
+  } catch (error) {
+    console.error("Bulk trash delete error:", error);
+    res.status(500).json({ error: "Error during bulk trash delete" });
+  }
+};
+
+export const deleteTrashItemHandler = async (req: any, res: any) => {
+  try {
+    const { type, id } = req.params;
+    let ok = false;
+    if (type === "course") ok = await permanentlyDeleteCourse(id);
+    else if (type === "lesson") ok = await permanentlyDeleteLesson(id);
+    else if (type === "exam") ok = await permanentlyDeleteExam(id);
+    else if (type === "question") ok = await permanentlyDeleteQuestion(id);
+    else if (type === "user") ok = await permanentlyDeleteUser(id);
+
+    if (ok) {
+      res.json({ success: true, message: "Item permanently deleted." });
+    } else {
+      res.status(400).json({ error: "Failed to permanently delete item." });
+    }
+  } catch (error) {
+    console.error("Single trash delete error:", error);
+    res.status(500).json({ error: "Error deleting trash item" });
+  }
+};
+
 
 
 export const postCourseHandler26 = async (req: any, res: any) => {

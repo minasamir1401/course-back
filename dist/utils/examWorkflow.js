@@ -8,9 +8,7 @@ exports.filterQuestionsForSubExam = filterQuestionsForSubExam;
 exports.resolveExamAccessPassword = resolveExamAccessPassword;
 function mergeStudentProfile(tokenUser, dbUser) {
     var _a, _b;
-    if (!dbUser)
-        return tokenUser;
-    return Object.assign(Object.assign({}, tokenUser), { grade: (_a = dbUser.grade) !== null && _a !== void 0 ? _a : tokenUser.grade, schoolId: (_b = dbUser.schoolId) !== null && _b !== void 0 ? _b : tokenUser.schoolId });
+    return Object.assign(Object.assign({}, tokenUser), { grade: (_a = dbUser === null || dbUser === void 0 ? void 0 : dbUser.grade) !== null && _a !== void 0 ? _a : null, schoolId: (_b = dbUser === null || dbUser === void 0 ? void 0 : dbUser.schoolId) !== null && _b !== void 0 ? _b : null });
 }
 function countQuestions(item) {
     var _a;

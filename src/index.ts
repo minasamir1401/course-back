@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { blockPublicBackups } from './lib/backupSnapshot';
 // Backend API for LMS - Modularized entrypoint
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
@@ -139,7 +140,7 @@ app.use(cors({
     return callback(new Error('CORS origin is not allowed'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Offline-User-Id', 'X-Offline-School-Id'],
   credentials: true
 }));
 
@@ -148,6 +149,8 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(cookieParser());
 
 // Serve Uploaded Files with Cache-Control
+app.use('/uploads', blockPublicBackups);
+
 app.use('/uploads', (req, res, next) => {
   const fileExt = path.extname(req.path).toLowerCase();
   if (['.png', '.jpg', '.jpeg'].includes(fileExt) && req.accepts('image/webp')) {

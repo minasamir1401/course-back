@@ -56,12 +56,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.postCourseHandler32 = exports.getCourseHandler31 = exports.getCourseHandler30 = exports.getCourseHandler29 = exports.getCourseHandler28 = exports.postCourseHandler27 = exports.postCourseHandler26 = exports.deleteCourseHandler25 = exports.postCourseHandler24 = exports.getCourseHandler23 = exports.deleteCourseHandler22 = exports.deleteCourseHandler21 = exports.patchCourseHandler20 = exports.patchCourseHandler19 = exports.patchCourseHandler18 = exports.patchCourseHandler17 = exports.getCourseHandler16 = exports.postCourseHandler15 = exports.postCourseHandler14 = exports.postCourseHandler13 = exports.putCourseHandler12 = exports.postCourseHandler11 = exports.postCourseHandler10 = exports.putCourseHandler9 = exports.deleteCourseHandler8 = exports.getCourseHandler7 = exports.postCourseHandler6 = exports.deleteCourseHandler5 = exports.getCourseHandler4 = exports.postCourseHandler3 = exports.postCourseHandler2 = exports.getCourseHandler1 = void 0;
+exports.postCourseHandler32 = exports.getCourseHandler31 = exports.getCourseHandler30 = exports.getCourseHandler29 = exports.getCourseHandler28 = exports.postCourseHandler27 = exports.postCourseHandler26 = exports.deleteTrashItemHandler = exports.postTrashBulkDeleteHandler = exports.deleteCourseHandler25 = exports.postCourseHandler24 = exports.getCourseHandler23 = exports.deleteCourseHandler22 = exports.deleteCourseHandler21 = exports.patchCourseHandler20 = exports.patchCourseHandler19 = exports.patchCourseHandler18 = exports.patchCourseHandler17 = exports.getCourseHandler16 = exports.postCourseHandler15 = exports.postCourseHandler14 = exports.postCourseHandler13 = exports.putCourseHandler12 = exports.postCourseHandler11 = exports.postCourseHandler10 = exports.putCourseHandler9 = exports.deleteCourseHandler8 = exports.getCourseHandler7 = exports.postCourseHandler6 = exports.deleteCourseHandler5 = exports.getCourseHandler4 = exports.postCourseHandler3 = exports.postCourseHandler2 = exports.getCourseHandler1 = void 0;
 exports.previewDeduplication = previewDeduplication;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const shared_1 = require("../shared");
 const db_backup_1 = require("../lib/db-backup");
+const trashDeleteHelper_1 = require("../services/trashDeleteHelper");
 const getCourseHandler1 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const result = yield previewDeduplication();
     if (result.success) {
@@ -623,8 +624,7 @@ const putCourseHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                         ? { set: [] }
                         : req.user.role === "SUPER_ADMIN" && !isCentral && (schoolIds !== undefined || schoolId !== undefined)
                             ? {
-                                set: [],
-                                connect: sanitizedSchoolIds.map((sid) => ({ id: sid })),
+                                set: sanitizedSchoolIds.map((sid) => ({ id: sid })),
                             }
                             : undefined,
                 },
@@ -1307,74 +1307,58 @@ const deleteCourseHandler25 = (req, res) => __awaiter(void 0, void 0, void 0, fu
         const { type } = req.query; // optional: to empty specific type, else empty all
         let deletedCount = 0;
         if (!type || type === "all" || type === "question") {
-            try {
-                const result = yield prisma_1.default.question.deleteMany({
-                    where: { deletedAt: { not: null } },
-                });
-                deletedCount += result.count;
-            }
-            catch (e) {
-                console.error("Error emptying questions", e);
+            const questions = yield prisma_1.default.question.findMany({
+                where: { deletedAt: { not: null } },
+                select: { id: true },
+            });
+            for (const q of questions) {
+                const ok = yield (0, trashDeleteHelper_1.permanentlyDeleteQuestion)(q.id);
+                if (ok)
+                    deletedCount++;
             }
         }
         if (!type || type === "all" || type === "lesson") {
-            try {
-                const result = yield prisma_1.default.lesson.deleteMany({
-                    where: { deletedAt: { not: null } },
-                });
-                deletedCount += result.count;
-            }
-            catch (e) {
-                console.error("Error emptying lessons", e);
+            const lessons = yield prisma_1.default.lesson.findMany({
+                where: { deletedAt: { not: null } },
+                select: { id: true },
+            });
+            for (const l of lessons) {
+                const ok = yield (0, trashDeleteHelper_1.permanentlyDeleteLesson)(l.id);
+                if (ok)
+                    deletedCount++;
             }
         }
         if (!type || type === "all" || type === "exam") {
-            try {
-                const result = yield prisma_1.default.exam.deleteMany({
-                    where: { deletedAt: { not: null } },
-                });
-                deletedCount += result.count;
-            }
-            catch (e) {
-                console.error("Error emptying exams", e);
+            const exams = yield prisma_1.default.exam.findMany({
+                where: { deletedAt: { not: null } },
+                select: { id: true },
+            });
+            for (const e of exams) {
+                const ok = yield (0, trashDeleteHelper_1.permanentlyDeleteExam)(e.id);
+                if (ok)
+                    deletedCount++;
             }
         }
         if (!type || type === "all" || type === "course") {
-            try {
-                const result = yield prisma_1.default.course.deleteMany({
-                    where: { deletedAt: { not: null } },
-                });
-                deletedCount += result.count;
-            }
-            catch (e) {
-                console.error("Error emptying courses", e);
+            const courses = yield prisma_1.default.course.findMany({
+                where: { deletedAt: { not: null } },
+                select: { id: true },
+            });
+            for (const c of courses) {
+                const ok = yield (0, trashDeleteHelper_1.permanentlyDeleteCourse)(c.id);
+                if (ok)
+                    deletedCount++;
             }
         }
         if (!type || type === "all" || type === "user") {
-            try {
-                // Disconnect relations that do not have onDelete: Cascade
-                const deletedUsers = yield prisma_1.default.user.findMany({
-                    where: { deletedAt: { not: null } },
-                    select: { id: true },
-                });
-                if (deletedUsers.length > 0) {
-                    const ids = deletedUsers.map((u) => u.id);
-                    yield prisma_1.default.classroom.updateMany({
-                        where: { teacherId: { in: ids } },
-                        data: { teacherId: null },
-                    });
-                    yield prisma_1.default.user.updateMany({
-                        where: { parentId: { in: ids } },
-                        data: { parentId: null },
-                    });
-                    const result = yield prisma_1.default.user.deleteMany({
-                        where: { id: { in: ids } },
-                    });
-                    deletedCount += result.count;
-                }
-            }
-            catch (e) {
-                console.error("Error emptying users", e);
+            const users = yield prisma_1.default.user.findMany({
+                where: { deletedAt: { not: null } },
+                select: { id: true },
+            });
+            for (const u of users) {
+                const ok = yield (0, trashDeleteHelper_1.permanentlyDeleteUser)(u.id);
+                if (ok)
+                    deletedCount++;
             }
         }
         res.json({
@@ -1388,6 +1372,66 @@ const deleteCourseHandler25 = (req, res) => __awaiter(void 0, void 0, void 0, fu
     }
 });
 exports.deleteCourseHandler25 = deleteCourseHandler25;
+const postTrashBulkDeleteHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { items } = req.body;
+        if (!Array.isArray(items)) {
+            return res.status(400).json({ error: "Invalid items array" });
+        }
+        let deletedCount = 0;
+        for (const item of items) {
+            let ok = false;
+            if (item.type === "course")
+                ok = yield (0, trashDeleteHelper_1.permanentlyDeleteCourse)(item.id);
+            else if (item.type === "lesson")
+                ok = yield (0, trashDeleteHelper_1.permanentlyDeleteLesson)(item.id);
+            else if (item.type === "exam")
+                ok = yield (0, trashDeleteHelper_1.permanentlyDeleteExam)(item.id);
+            else if (item.type === "question")
+                ok = yield (0, trashDeleteHelper_1.permanentlyDeleteQuestion)(item.id);
+            else if (item.type === "user")
+                ok = yield (0, trashDeleteHelper_1.permanentlyDeleteUser)(item.id);
+            if (ok)
+                deletedCount++;
+        }
+        res.json({
+            success: true,
+            message: `Permanently deleted ${deletedCount} items.`,
+        });
+    }
+    catch (error) {
+        console.error("Bulk trash delete error:", error);
+        res.status(500).json({ error: "Error during bulk trash delete" });
+    }
+});
+exports.postTrashBulkDeleteHandler = postTrashBulkDeleteHandler;
+const deleteTrashItemHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { type, id } = req.params;
+        let ok = false;
+        if (type === "course")
+            ok = yield (0, trashDeleteHelper_1.permanentlyDeleteCourse)(id);
+        else if (type === "lesson")
+            ok = yield (0, trashDeleteHelper_1.permanentlyDeleteLesson)(id);
+        else if (type === "exam")
+            ok = yield (0, trashDeleteHelper_1.permanentlyDeleteExam)(id);
+        else if (type === "question")
+            ok = yield (0, trashDeleteHelper_1.permanentlyDeleteQuestion)(id);
+        else if (type === "user")
+            ok = yield (0, trashDeleteHelper_1.permanentlyDeleteUser)(id);
+        if (ok) {
+            res.json({ success: true, message: "Item permanently deleted." });
+        }
+        else {
+            res.status(400).json({ error: "Failed to permanently delete item." });
+        }
+    }
+    catch (error) {
+        console.error("Single trash delete error:", error);
+        res.status(500).json({ error: "Error deleting trash item" });
+    }
+});
+exports.deleteTrashItemHandler = deleteTrashItemHandler;
 const postCourseHandler26 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;

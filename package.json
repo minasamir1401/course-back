@@ -24,7 +24,7 @@
     "migrate:webp": "npx tsx src/scripts/migrate-urls-to-webp.ts",
     "cleanup:report": "npx tsx src/scripts/cleanup-report.ts",
     "cleanup:delete": "node dist/scripts/cleanup-delete.js",
-    "cleanup:duplicates": "npx tsx cleanup_duplicates_dokploy.ts",
+    "cleanup:duplicates": "npx tsx src/scripts/clean-duplicates-and-empty.ts",
     "clean:indexes": "npx tsx src/scripts/clean-invalid-indexes.ts",
     "test:system": "node ../project-support/scripts/system-regression-tests.js",
     "audit:data": "node ../project-support/scripts/data-integrity-audit.js"

@@ -46,6 +46,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseBackupBuffer = exports.performBackupAndPruning = exports.BACKUPS_DIR = void 0;
+const multer_1 = __importDefault(require("multer"));
+const backupSnapshot_1 = require("../lib/backupSnapshot");
+const crypto_1 = require("crypto");
 const backupsController = __importStar(require("../controllers/backups.controller"));
 var backups_controller_1 = require("../controllers/backups.controller");
 Object.defineProperty(exports, "BACKUPS_DIR", { enumerable: true, get: function () { return backups_controller_1.BACKUPS_DIR; } });
@@ -56,7 +59,6 @@ const express_1 = require("express");
 const fs_1 = __importDefault(require("fs"));
 const archiver = require('archiver');
 const auth_1 = require("../middleware/auth");
-const shared_1 = require("../shared");
 const router = (0, express_1.Router)();
 function createZipArchive(options = { zlib: { level: 9 } }) {
     if (archiver.ZipArchive) {
@@ -85,8 +87,18 @@ function writeJsonZip(filePath, entryName, payload) {
     });
 }
 // --- Extracted from lines 1685-1797 ---
-if (!fs_1.default.existsSync(backups_controller_2.BACKUPS_DIR))
-    fs_1.default.mkdirSync(backups_controller_2.BACKUPS_DIR, { recursive: true });
+let storageReady;
+router.use('/api/admin/backup', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    (storageReady || (storageReady = (0, backupSnapshot_1.ensureBackupStorage)())).then(() => next(), next);
+});
+const backupUpload = (0, multer_1.default)({
+    storage: multer_1.default.diskStorage({
+        destination: (_req, _file, done) => done(null, backups_controller_2.BACKUPS_DIR),
+        filename: (_req, _file, done) => done(null, 'upload-' + (0, crypto_1.randomUUID)() + '.tmp')
+    }),
+    limits: { fileSize: 100 * 1024 * 1024, files: 1 }
+});
 // Helper function to fetch all database records cleanly as a backup payload
 // Helper function to perform data backup — saves locally AND to Cloud Backup cloud
 // --- Extracted from lines 1984-2304 ---
@@ -117,7 +129,7 @@ router.get('/api/admin/backup/download-all', auth_1.verifyToken, (0, auth_1.chec
 // 3.6 Manual Bundle All Backups to DB
 router.post('/api/admin/backup/bundle-manual', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), backupsController.postBackupHandler10);
 // 4. Upload Backup
-router.post('/api/admin/backup/upload', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), shared_1.multerUpload.single('file'), backupsController.postBackupHandler11);
+router.post('/api/admin/backup/upload', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), backupUpload.single('file'), backupsController.postBackupHandler11);
 // Delete Backup
 router.delete('/api/admin/backup/:filename', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), backupsController.deleteBackupHandler12);
 // 5. Restore Backup (local file OR cloud backup)
