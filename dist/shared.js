@@ -23,8 +23,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.releaseLock = exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = exports.isLoginRateLimited = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = void 0;
-exports.getQuestionCoreSignature = exports.robustNormalizeText = void 0;
+exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = exports.isLoginRateLimited = exports.invalidateCache = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = void 0;
+exports.getQuestionCoreSignature = exports.robustNormalizeText = exports.releaseLock = void 0;
 exports.getYoutubeDuration = getYoutubeDuration;
 exports.getVimeoDuration = getVimeoDuration;
 exports.getVideoDuration = getVideoDuration;
@@ -121,15 +121,12 @@ exports.loginAttempts.set = function (key, value) {
     }
     return originalLoginAttemptsSet(key, value);
 };
-// ⚠️ CLUSTER-MODE LIMITATION:
-// loginAttempts, statsCache (below), and userStatusCache (auth.ts) are in-process Maps.
-// In PM2 cluster mode (pm2 -i max), each worker holds a SEPARATE copy of these Maps.
-// This means:
-//   - Rate limiting (loginAttempts) is per-worker, not per-IP — effective limit = MAX_ATTEMPTS × workers
-//   - Stats cache (statsCache) may serve stale data across workers independently
-//   - User status cache (auth.ts) may be inconsistent between workers
-// TODO: Replace with a shared store (Redis/Valkey) to fix cross-worker state.
-// See: https://redis.io/docs/latest/develop/clients/nodejs/
+// ✅ CLUSTER-MODE SYNCHRONIZATION:
+// In PM2 cluster mode (pm2 -i max), Redis acts as the authoritative shared store
+// for rate limiting (loginAttempts) and stats cache (statsCache).
+// When Redis is active, atomic increments and cache invalidations synchronize across workers.
+// User account status is checked dynamically against PostgreSQL for immediate revocation.
+// Local in-memory Maps serve as a safe offline fallback when Redis is unavailable.
 // Cleanup old login attempts every hour to prevent memory leaks
 setInterval(() => {
     const now = Date.now();
@@ -966,6 +963,13 @@ function normalizeLegacyCourses() {
 }
 // Stats Cache to improve performance (mirrored with Redis for cluster mode)
 exports.statsCache = new Map();
+const originalStatsCacheDelete = exports.statsCache.delete.bind(exports.statsCache);
+exports.statsCache.delete = function (key) {
+    if ((0, redis_1.isRedisActive)()) {
+        (0, redis_1.cacheDelete)(`stats:${key}`).catch(() => { });
+    }
+    return originalStatsCacheDelete(key);
+};
 exports.CACHE_TTL = 300 * 1000; // 5 minutes cache
 const setCache = (key, data) => {
     if (exports.statsCache.size >= 1000) {
@@ -1009,29 +1013,43 @@ const getCacheAsync = (key) => __awaiter(void 0, void 0, void 0, function* () {
 });
 exports.getCacheAsync = getCacheAsync;
 /**
+ * Invalidate cached stats entry from local memory and Redis cluster
+ */
+const invalidateCache = (key) => __awaiter(void 0, void 0, void 0, function* () {
+    exports.statsCache.delete(key);
+    if ((0, redis_1.isRedisActive)()) {
+        yield (0, redis_1.cacheDelete)(`stats:${key}`).catch(() => { });
+    }
+});
+exports.invalidateCache = invalidateCache;
+/**
  * Cluster-aware Rate Limiting for Login
+ * Uses Redis as the single source of truth when active to prevent cross-worker bypass in PM2.
  */
 const isLoginRateLimited = (ip) => __awaiter(void 0, void 0, void 0, function* () {
     const redisKey = `ratelimit:login:${ip}`;
     const now = Date.now();
-    // 1. Check local memory
+    // 1. Check Redis first as authoritative shared store across cluster workers
+    if ((0, redis_1.isRedisActive)()) {
+        try {
+            const redisStatus = yield (0, redis_1.cacheGetJSON)(redisKey);
+            if (redisStatus) {
+                if (redisStatus.count >= exports.LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
+                    const remainingMs = exports.LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
+                    return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
+                }
+                return { isLimited: false, remainingMinutes: 0 };
+            }
+        }
+        catch (_a) {
+            // Fallback to local memory on Redis error
+        }
+    }
+    // 2. Fallback to local memory
     const localAttempt = exports.loginAttempts.get(ip);
     if (localAttempt && localAttempt.count >= exports.LOGIN_MAX_ATTEMPTS && (now - localAttempt.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
         const remainingMs = exports.LOGIN_WINDOW_MS - (now - localAttempt.firstAttemptAt);
         return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
-    }
-    // 2. Check Redis if active
-    if ((0, redis_1.isRedisActive)()) {
-        try {
-            const redisStatus = yield (0, redis_1.cacheGetJSON)(redisKey);
-            if (redisStatus && redisStatus.count >= exports.LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
-                const remainingMs = exports.LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
-                return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
-            }
-        }
-        catch (_a) {
-            // Non-fatal
-        }
     }
     return { isLimited: false, remainingMinutes: 0 };
 });
@@ -1039,7 +1057,26 @@ exports.isLoginRateLimited = isLoginRateLimited;
 const recordFailedLogin = (ip) => __awaiter(void 0, void 0, void 0, function* () {
     const now = Date.now();
     const redisKey = `ratelimit:login:${ip}`;
-    // 1. Update local memory
+    // 1. If Redis is active, atomically synchronize across PM2 workers
+    if ((0, redis_1.isRedisActive)()) {
+        try {
+            const redisStatus = yield (0, redis_1.cacheGetJSON)(redisKey);
+            let newCount = 1;
+            let firstAttemptAt = now;
+            if (redisStatus && now - redisStatus.firstAttemptAt <= exports.LOGIN_WINDOW_MS) {
+                newCount = redisStatus.count + 1;
+                firstAttemptAt = redisStatus.firstAttemptAt;
+            }
+            const windowSecs = Math.floor(exports.LOGIN_WINDOW_MS / 1000);
+            yield (0, redis_1.cacheSetJSON)(redisKey, { count: newCount, firstAttemptAt }, windowSecs);
+            exports.loginAttempts.set(ip, { count: newCount, firstAttemptAt });
+            return;
+        }
+        catch (_a) {
+            // Fallback to local memory on Redis error
+        }
+    }
+    // 2. Fallback to local memory
     const localAttempt = exports.loginAttempts.get(ip);
     let newCount = 1;
     let firstAttemptAt = now;
@@ -1048,11 +1085,6 @@ const recordFailedLogin = (ip) => __awaiter(void 0, void 0, void 0, function* ()
         firstAttemptAt = localAttempt.firstAttemptAt;
     }
     exports.loginAttempts.set(ip, { count: newCount, firstAttemptAt });
-    // 2. Update Redis
-    if ((0, redis_1.isRedisActive)()) {
-        const windowSecs = Math.floor(exports.LOGIN_WINDOW_MS / 1000);
-        yield (0, redis_1.cacheSetJSON)(redisKey, { count: newCount, firstAttemptAt }, windowSecs).catch(() => { });
-    }
 });
 exports.recordFailedLogin = recordFailedLogin;
 const clearLoginAttempts = (ip) => __awaiter(void 0, void 0, void 0, function* () {

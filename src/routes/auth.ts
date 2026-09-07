@@ -91,6 +91,45 @@ router.get('/api/auth/session', verifyToken, (req: any, res: any) => {
   res.json({ user: { id, role, schoolId: schoolId ?? null } });
 });
 
+// Full session profile verification via httpOnly cookie / token
+router.get('/api/auth/me', verifyToken, async (req: any, res: any) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        email: true,
+        role: true,
+        schoolId: true,
+        avatar: true,
+        grade: true,
+        specialization: true,
+        status: true,
+        school: {
+          select: { id: true, name: true, subdomain: true }
+        }
+      }
+    });
+
+    if (!user || user.status !== 'ACTIVE') {
+      return res.status(401).json({ error: 'Session expired or user inactive.' });
+    }
+
+    res.json({
+      authenticated: true,
+      user: {
+        ...user,
+        schoolName: user.school?.name || null
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to verify session.', details: error.message });
+  }
+});
+
 router.post('/api/auth/login', async (req: any, res: any) => {
   try {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';

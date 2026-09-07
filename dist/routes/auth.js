@@ -80,6 +80,41 @@ router.get('/api/auth/session', auth_1.verifyToken, (req, res) => {
     const { id, role, schoolId } = req.user;
     res.json({ user: { id, role, schoolId: schoolId !== null && schoolId !== void 0 ? schoolId : null } });
 });
+// Full session profile verification via httpOnly cookie / token
+router.get('/api/auth/me', auth_1.verifyToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    try {
+        res.set('Cache-Control', 'no-store');
+        const user = yield prisma_1.default.user.findUnique({
+            where: { id: req.user.id },
+            select: {
+                id: true,
+                name: true,
+                username: true,
+                email: true,
+                role: true,
+                schoolId: true,
+                avatar: true,
+                grade: true,
+                specialization: true,
+                status: true,
+                school: {
+                    select: { id: true, name: true, subdomain: true }
+                }
+            }
+        });
+        if (!user || user.status !== 'ACTIVE') {
+            return res.status(401).json({ error: 'Session expired or user inactive.' });
+        }
+        res.json({
+            authenticated: true,
+            user: Object.assign(Object.assign({}, user), { schoolName: ((_a = user.school) === null || _a === void 0 ? void 0 : _a.name) || null })
+        });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Failed to verify session.', details: error.message });
+    }
+}));
 router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const ip = req.ip || req.socket.remoteAddress || 'unknown';

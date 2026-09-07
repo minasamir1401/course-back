@@ -9,7 +9,7 @@ import {
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields, 
   isAnswerCorrect, sanitizeDeep, sanitizeUser, sanitizeExam, multerUpload,
   diagnosticLogs, pushDiagnosticLog, ALL_ROLES, SCHOOL_MANAGED_ROLES,
-  statsCache, CACHE_TTL, setCache, getCache, getStudentGradeAndStage, examMatchesStudent,
+  statsCache, CACHE_TTL, setCache, getCache, getCacheAsync, invalidateCache, getStudentGradeAndStage, examMatchesStudent,
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
   normalizeLegacyCourses
@@ -31,8 +31,8 @@ router.get('/api/reports/school', verifyToken, checkRole(['SCHOOL_ADMIN', 'SUPER
 
   try {
     const cacheKey = `school_reports_${targetSchoolId}`;
-    const cached = getCache(cacheKey);
-    if (cached) return res.json(cached);
+    const cached = await getCacheAsync(cacheKey);
+    if (cached) return res.json(cached.data !== undefined ? cached.data : cached);
 
     // ✅ PERF FIX: Use parallel count + aggregate instead of loading ALL submissions into RAM
     const [studentsCount, teachersCount, submissionStats] = await Promise.all([
@@ -62,8 +62,8 @@ router.get('/api/student/dashboard-stats', verifyToken, checkRole(['STUDENT']), 
   try {
     const studentId = req.user.id;
     const cacheKey = `student_dashboard_${studentId}`;
-    const cached = getCache(cacheKey);
-    if (cached) return res.json(cached);
+    const cached = await getCacheAsync(cacheKey);
+    if (cached) return res.json(cached.data !== undefined ? cached.data : cached);
 
     const student = await prisma.user.findUnique({
       where: { id: studentId },

@@ -22,9 +22,9 @@ router.get('/api/reports/school', auth_1.verifyToken, (0, auth_1.checkRole)(['SC
     const targetSchoolId = req.user.role === 'SUPER_ADMIN' ? req.query.schoolId : req.user.schoolId;
     try {
         const cacheKey = `school_reports_${targetSchoolId}`;
-        const cached = (0, shared_1.getCache)(cacheKey);
+        const cached = yield (0, shared_1.getCacheAsync)(cacheKey);
         if (cached)
-            return res.json(cached);
+            return res.json(cached.data !== undefined ? cached.data : cached);
         // ✅ PERF FIX: Use parallel count + aggregate instead of loading ALL submissions into RAM
         const [studentsCount, teachersCount, submissionStats] = yield Promise.all([
             prisma_1.default.user.count({ where: { schoolId: targetSchoolId, role: 'STUDENT' } }),
@@ -52,9 +52,9 @@ router.get('/api/student/dashboard-stats', auth_1.verifyToken, (0, auth_1.checkR
     try {
         const studentId = req.user.id;
         const cacheKey = `student_dashboard_${studentId}`;
-        const cached = (0, shared_1.getCache)(cacheKey);
+        const cached = yield (0, shared_1.getCacheAsync)(cacheKey);
         if (cached)
-            return res.json(cached);
+            return res.json(cached.data !== undefined ? cached.data : cached);
         const student = yield prisma_1.default.user.findUnique({
             where: { id: studentId },
             include: {

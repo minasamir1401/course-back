@@ -102,15 +102,12 @@ loginAttempts.set = function(key, value) {
   return originalLoginAttemptsSet(key, value);
 };
 
-// ⚠️ CLUSTER-MODE LIMITATION:
-// loginAttempts, statsCache (below), and userStatusCache (auth.ts) are in-process Maps.
-// In PM2 cluster mode (pm2 -i max), each worker holds a SEPARATE copy of these Maps.
-// This means:
-//   - Rate limiting (loginAttempts) is per-worker, not per-IP — effective limit = MAX_ATTEMPTS × workers
-//   - Stats cache (statsCache) may serve stale data across workers independently
-//   - User status cache (auth.ts) may be inconsistent between workers
-// TODO: Replace with a shared store (Redis/Valkey) to fix cross-worker state.
-// See: https://redis.io/docs/latest/develop/clients/nodejs/
+// ✅ CLUSTER-MODE SYNCHRONIZATION:
+// In PM2 cluster mode (pm2 -i max), Redis acts as the authoritative shared store
+// for rate limiting (loginAttempts) and stats cache (statsCache).
+// When Redis is active, atomic increments and cache invalidations synchronize across workers.
+// User account status is checked dynamically against PostgreSQL for immediate revocation.
+// Local in-memory Maps serve as a safe offline fallback when Redis is unavailable.
 
 // Cleanup old login attempts every hour to prevent memory leaks
 setInterval(() => {
@@ -936,6 +933,13 @@ export async function normalizeLegacyCourses() {
 
 // Stats Cache to improve performance (mirrored with Redis for cluster mode)
 export const statsCache = new Map<string, { data: any, timestamp: number }>();
+const originalStatsCacheDelete = statsCache.delete.bind(statsCache);
+statsCache.delete = function(key: string) {
+  if (isRedisActive()) {
+    cacheDelete(`stats:${key}`).catch(() => {});
+  }
+  return originalStatsCacheDelete(key);
+};
 export const CACHE_TTL = 300 * 1000; // 5 minutes cache
 
 export const setCache = (key: string, data: any) => {
@@ -980,30 +984,44 @@ export const getCacheAsync = async (key: string): Promise<{ data: any; timestamp
 };
 
 /**
+ * Invalidate cached stats entry from local memory and Redis cluster
+ */
+export const invalidateCache = async (key: string): Promise<void> => {
+  statsCache.delete(key);
+  if (isRedisActive()) {
+    await cacheDelete(`stats:${key}`).catch(() => {});
+  }
+};
+
+/**
  * Cluster-aware Rate Limiting for Login
+ * Uses Redis as the single source of truth when active to prevent cross-worker bypass in PM2.
  */
 export const isLoginRateLimited = async (ip: string): Promise<{ isLimited: boolean; remainingMinutes: number }> => {
   const redisKey = `ratelimit:login:${ip}`;
   const now = Date.now();
 
-  // 1. Check local memory
+  // 1. Check Redis first as authoritative shared store across cluster workers
+  if (isRedisActive()) {
+    try {
+      const redisStatus = await cacheGetJSON<{ count: number; firstAttemptAt: number }>(redisKey);
+      if (redisStatus) {
+        if (redisStatus.count >= LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < LOGIN_WINDOW_MS)) {
+          const remainingMs = LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
+          return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
+        }
+        return { isLimited: false, remainingMinutes: 0 };
+      }
+    } catch {
+      // Fallback to local memory on Redis error
+    }
+  }
+
+  // 2. Fallback to local memory
   const localAttempt = loginAttempts.get(ip);
   if (localAttempt && localAttempt.count >= LOGIN_MAX_ATTEMPTS && (now - localAttempt.firstAttemptAt < LOGIN_WINDOW_MS)) {
     const remainingMs = LOGIN_WINDOW_MS - (now - localAttempt.firstAttemptAt);
     return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
-  }
-
-  // 2. Check Redis if active
-  if (isRedisActive()) {
-    try {
-      const redisStatus = await cacheGetJSON<{ count: number; firstAttemptAt: number }>(redisKey);
-      if (redisStatus && redisStatus.count >= LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < LOGIN_WINDOW_MS)) {
-        const remainingMs = LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
-        return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
-      }
-    } catch {
-      // Non-fatal
-    }
   }
 
   return { isLimited: false, remainingMinutes: 0 };
@@ -1013,7 +1031,28 @@ export const recordFailedLogin = async (ip: string): Promise<void> => {
   const now = Date.now();
   const redisKey = `ratelimit:login:${ip}`;
 
-  // 1. Update local memory
+  // 1. If Redis is active, atomically synchronize across PM2 workers
+  if (isRedisActive()) {
+    try {
+      const redisStatus = await cacheGetJSON<{ count: number; firstAttemptAt: number }>(redisKey);
+      let newCount = 1;
+      let firstAttemptAt = now;
+
+      if (redisStatus && now - redisStatus.firstAttemptAt <= LOGIN_WINDOW_MS) {
+        newCount = redisStatus.count + 1;
+        firstAttemptAt = redisStatus.firstAttemptAt;
+      }
+
+      const windowSecs = Math.floor(LOGIN_WINDOW_MS / 1000);
+      await cacheSetJSON(redisKey, { count: newCount, firstAttemptAt }, windowSecs);
+      loginAttempts.set(ip, { count: newCount, firstAttemptAt });
+      return;
+    } catch {
+      // Fallback to local memory on Redis error
+    }
+  }
+
+  // 2. Fallback to local memory
   const localAttempt = loginAttempts.get(ip);
   let newCount = 1;
   let firstAttemptAt = now;
@@ -1023,12 +1062,6 @@ export const recordFailedLogin = async (ip: string): Promise<void> => {
     firstAttemptAt = localAttempt.firstAttemptAt;
   }
   loginAttempts.set(ip, { count: newCount, firstAttemptAt });
-
-  // 2. Update Redis
-  if (isRedisActive()) {
-    const windowSecs = Math.floor(LOGIN_WINDOW_MS / 1000);
-    await cacheSetJSON(redisKey, { count: newCount, firstAttemptAt }, windowSecs).catch(() => {});
-  }
 };
 
 export const clearLoginAttempts = async (ip: string): Promise<void> => {

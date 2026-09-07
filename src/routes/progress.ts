@@ -9,7 +9,7 @@ import {
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields, 
   isAnswerCorrect, sanitizeDeep, sanitizeUser, sanitizeExam, multerUpload,
   diagnosticLogs, pushDiagnosticLog, ALL_ROLES, SCHOOL_MANAGED_ROLES,
-  statsCache, CACHE_TTL, setCache, getCache, getStudentGradeAndStage, examMatchesStudent,
+  statsCache, CACHE_TTL, setCache, getCache, getCacheAsync, invalidateCache, getStudentGradeAndStage, examMatchesStudent,
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
   normalizeLegacyCourses
@@ -30,9 +30,9 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
   try {
     const userId = req.user.id;
 
-    // 1. Check cache
+    // 1. Check cache (Redis first, fallback to local memory)
     const cacheKey = `student_stats_${userId}`;
-    const cached = getCache(cacheKey);
+    const cached = await getCacheAsync(cacheKey);
     const now = Date.now();
     if (cached && (now - cached.timestamp < CACHE_TTL)) {
       return res.json(cached.data);
@@ -359,8 +359,8 @@ router.post('/api/progress/lesson/:lessonId', verifyToken, checkRole(['STUDENT',
       create: { userId, courseId: lesson.courseId, progressPercent }
     });
 
-    // Invalidate student stats cache
-    statsCache.delete(`student_stats_${userId}`);
+    // Invalidate student stats cache across cluster
+    await invalidateCache(`student_stats_${userId}`);
 
     res.json({ success: true, progress: existingProgress, totalCourseProgress: progressPercent });
   } catch (error) {
@@ -590,8 +590,8 @@ router.post('/api/progress/lesson/:lessonId/submit-answer', verifyToken, checkRo
       _sum: { xp: true }
     });
 
-    // Invalidate student stats cache
-    statsCache.delete(`student_stats_${userId}`);
+    // Invalidate student stats cache across cluster
+    await invalidateCache(`student_stats_${userId}`);
 
     res.json({
       isCorrect,

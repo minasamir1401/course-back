@@ -22,9 +22,9 @@ router.get('/api/student/stats', auth_1.verifyToken, (0, auth_1.checkRole)(['STU
     var _a, _b, _c;
     try {
         const userId = req.user.id;
-        // 1. Check cache
+        // 1. Check cache (Redis first, fallback to local memory)
         const cacheKey = `student_stats_${userId}`;
-        const cached = (0, shared_1.getCache)(cacheKey);
+        const cached = yield (0, shared_1.getCacheAsync)(cacheKey);
         const now = Date.now();
         if (cached && (now - cached.timestamp < shared_1.CACHE_TTL)) {
             return res.json(cached.data);
@@ -320,8 +320,8 @@ router.post('/api/progress/lesson/:lessonId', auth_1.verifyToken, (0, auth_1.che
             update: { progressPercent, lastAccessedAt: new Date() },
             create: { userId, courseId: lesson.courseId, progressPercent }
         });
-        // Invalidate student stats cache
-        shared_1.statsCache.delete(`student_stats_${userId}`);
+        // Invalidate student stats cache across cluster
+        yield (0, shared_1.invalidateCache)(`student_stats_${userId}`);
         res.json({ success: true, progress: existingProgress, totalCourseProgress: progressPercent });
     }
     catch (error) {
@@ -537,8 +537,8 @@ router.post('/api/progress/lesson/:lessonId/submit-answer', auth_1.verifyToken, 
             where: { userId, sourceId: lessonId },
             _sum: { xp: true }
         });
-        // Invalidate student stats cache
-        shared_1.statsCache.delete(`student_stats_${userId}`);
+        // Invalidate student stats cache across cluster
+        yield (0, shared_1.invalidateCache)(`student_stats_${userId}`);
         res.json({
             isCorrect,
             earnedXP,

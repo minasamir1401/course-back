@@ -42,7 +42,8 @@ const fixtureNames = ['TEST_IDOR_ADMIN_A_TOKEN', 'TEST_IDOR_ADMIN_B_TOKEN', 'TES
     const other = fixtures[1 - index];
     for (const suffix of ['', '/questions']) {
       const res = await get(`/api/exams/${encodeURIComponent(other.id)}${suffix}`, own.token);
-      expect([403, 404]).toContain(res.status);
+      // Strict assertion: The resource is confirmed to exist, so cross-school access MUST yield 403 Forbidden.
+      expect(res.status).toBe(403);
     }
   });
   test('anonymous access to an existing fixture exam is rejected', async () => {
@@ -51,3 +52,59 @@ const fixtureNames = ['TEST_IDOR_ADMIN_A_TOKEN', 'TEST_IDOR_ADMIN_B_TOKEN', 'TES
   });
   test.skip('live UPDATE/DELETE/PUBLISH isolation requires a disposable fixture harness; offline policy tests cover mutation authorization', () => {});
 });
+
+// Offline IDOR & Multi-tenant isolation verification (runs in CI without live server)
+describe('IDOR defense policy and route guards (offline verification)', () => {
+  const { canManageExamRecord } = require('../../../src/utils/examAccessPolicy');
+
+  test('cross-school exam access is strictly blocked at the policy layer', () => {
+    const schoolAAdmin = { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' };
+    const schoolBExam = { id: 'exam-b', isCentral: false, schoolId: 'school-b', schools: [{ id: 'school-b' }] };
+
+    const allowed = canManageExamRecord(schoolAAdmin, schoolBExam, false);
+    expect(allowed).toBe(false);
+  });
+
+  test('cross-school content movement requires dual ownership verification', () => {
+    const schoolAAdmin = { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' };
+    const sourceExam = { id: 'exam-a', isCentral: false, schoolId: 'school-a', schools: [{ id: 'school-a' }] };
+    const targetExam = { id: 'exam-b', isCentral: false, schoolId: 'school-b', schools: [{ id: 'school-b' }] };
+
+    const canAccessSource = canManageExamRecord(schoolAAdmin, sourceExam, false);
+    const canAccessTarget = canManageExamRecord(schoolAAdmin, targetExam, false);
+
+    expect(canAccessSource).toBe(true);
+    expect(canAccessTarget).toBe(false);
+    // Moving content between them must be denied because target access fails
+    expect(canAccessSource && canAccessTarget).toBe(false);
+  });
+
+  test('non-super-admin cannot hijack or mutate central exams (IDOR prevention on central bank)', () => {
+    const schoolAdmin = { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' };
+    const centralExam = { id: 'central-exam-1', isCentral: true, schoolId: null, schools: [] };
+
+    expect(canManageExamRecord(schoolAdmin, centralExam, false)).toBe(false);
+  });
+
+  test('teacher without course assignment cannot access or mutate foreign exam', () => {
+    const teacherA = { id: 'teacher-a', role: 'TEACHER', schoolId: 'school-a' };
+    const foreignExam = { id: 'exam-b', isCentral: false, schoolId: 'school-b', creatorId: 'teacher-b', schools: [{ id: 'school-b' }] };
+
+    // Teacher attempting to modify another school's exam without course assignment
+    expect(canManageExamRecord(teacherA, foreignExam, false)).toBe(false);
+
+    // If teacher is the creator, they can manage it
+    const ownExam = { ...foreignExam, creatorId: 'teacher-a' };
+    expect(canManageExamRecord(teacherA, ownExam, false)).toBe(true);
+  });
+
+  test('super administrator retains global administrative access across all schools', () => {
+    const superAdmin = { id: 'super-admin-root', role: 'SUPER_ADMIN', schoolId: null };
+    const schoolExam = { id: 'exam-b', isCentral: false, schoolId: 'school-b', schools: [{ id: 'school-b' }] };
+    const centralExam = { id: 'central-exam-1', isCentral: true, schoolId: null, schools: [] };
+
+    expect(canManageExamRecord(superAdmin, schoolExam, false)).toBe(true);
+    expect(canManageExamRecord(superAdmin, centralExam, false)).toBe(true);
+  });
+});
+

@@ -59,10 +59,10 @@ export const verifyToken = async (req: Request, res: Response, next: NextFunctio
 
       currentUser = {
         ...decoded,
-        id: user.id,
-        role: user.role,
-        schoolId: user.schoolId,
-        grade: user.grade
+        id: user.id || decoded.id,
+        role: user.role || decoded.role,
+        schoolId: user.schoolId !== undefined ? user.schoolId : decoded.schoolId,
+        grade: user.grade !== undefined ? user.grade : decoded.grade
       };
     }
 

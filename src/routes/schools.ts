@@ -806,6 +806,15 @@ router.post('/api/admin/impersonate/:id', verifyToken, checkRole(['SUPER_ADMIN']
       { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') as any } // Match standard expiry
     );
 
+    // Set httpOnly cookie for impersonated session
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 8 * 60 * 60 * 1000,
+      path: '/'
+    });
+
     res.json({
       message: `Impersonating ${user.name}`,
       token,
@@ -821,6 +830,49 @@ router.post('/api/admin/impersonate/:id', verifyToken, checkRole(['SUPER_ADMIN']
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Impersonation failed', details: error.message });
+  }
+});
+
+// Stop Impersonation & Restore Admin Session
+router.post('/api/admin/stop-impersonate', verifyToken, async (req: any, res: any) => {
+  try {
+    if (!req.user?.isImpersonated || !req.user?.adminId) {
+      return res.status(400).json({ error: 'No active impersonation session found.' });
+    }
+
+    const admin = await prisma.user.findUnique({
+      where: { id: req.user.adminId }
+    });
+
+    if (!admin || admin.status !== 'ACTIVE' || admin.deletedAt) {
+      return res.status(403).json({ error: 'Original admin account not available or inactive.' });
+    }
+
+    const adminToken = jwt.sign(
+      { id: admin.id, role: admin.role, schoolId: admin.schoolId, grade: admin.grade },
+      JWT_SECRET,
+      { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') as any }
+    );
+
+    res.cookie('auth_token', adminToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 8 * 60 * 60 * 1000,
+      path: '/'
+    });
+
+    res.json({
+      message: 'Impersonation ended. Restored admin session.',
+      user: {
+        id: admin.id,
+        name: admin.name,
+        role: admin.role,
+        schoolId: admin.schoolId
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to restore admin session', details: error.message });
   }
 });
 

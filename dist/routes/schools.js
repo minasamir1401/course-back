@@ -747,6 +747,14 @@ router.post('/api/admin/impersonate/:id', auth_1.verifyToken, (0, auth_1.checkRo
             adminId: req.user.id // Store who impersonated
         }, shared_1.JWT_SECRET, { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') } // Match standard expiry
         );
+        // Set httpOnly cookie for impersonated session
+        res.cookie('auth_token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            maxAge: 8 * 60 * 60 * 1000,
+            path: '/'
+        });
         res.json({
             message: `Impersonating ${user.name}`,
             token,
@@ -763,6 +771,41 @@ router.post('/api/admin/impersonate/:id', auth_1.verifyToken, (0, auth_1.checkRo
     }
     catch (error) {
         res.status(500).json({ error: 'Impersonation failed', details: error.message });
+    }
+}));
+// Stop Impersonation & Restore Admin Session
+router.post('/api/admin/stop-impersonate', auth_1.verifyToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
+    try {
+        if (!((_a = req.user) === null || _a === void 0 ? void 0 : _a.isImpersonated) || !((_b = req.user) === null || _b === void 0 ? void 0 : _b.adminId)) {
+            return res.status(400).json({ error: 'No active impersonation session found.' });
+        }
+        const admin = yield prisma_1.default.user.findUnique({
+            where: { id: req.user.adminId }
+        });
+        if (!admin || admin.status !== 'ACTIVE' || admin.deletedAt) {
+            return res.status(403).json({ error: 'Original admin account not available or inactive.' });
+        }
+        const adminToken = jsonwebtoken_1.default.sign({ id: admin.id, role: admin.role, schoolId: admin.schoolId, grade: admin.grade }, shared_1.JWT_SECRET, { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') });
+        res.cookie('auth_token', adminToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            maxAge: 8 * 60 * 60 * 1000,
+            path: '/'
+        });
+        res.json({
+            message: 'Impersonation ended. Restored admin session.',
+            user: {
+                id: admin.id,
+                name: admin.name,
+                role: admin.role,
+                schoolId: admin.schoolId
+            }
+        });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Failed to restore admin session', details: error.message });
     }
 }));
 // Get Detailed School Stats

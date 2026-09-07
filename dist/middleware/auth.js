@@ -66,7 +66,7 @@ const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
             if (!user || user.status !== 'ACTIVE' || user.deletedAt) {
                 return res.status(403).json({ error: 'Access denied. Account is inactive, suspended, deleted, or does not exist.' });
             }
-            currentUser = Object.assign(Object.assign({}, decoded), { id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade });
+            currentUser = Object.assign(Object.assign({}, decoded), { id: user.id || decoded.id, role: user.role || decoded.role, schoolId: user.schoolId !== undefined ? user.schoolId : decoded.schoolId, grade: user.grade !== undefined ? user.grade : decoded.grade });
         }
         // Bind each replay to the identity authenticated for this request. A session
         // preflight alone cannot protect against a cookie switch before the write.
