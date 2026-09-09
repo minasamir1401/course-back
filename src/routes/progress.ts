@@ -381,9 +381,10 @@ router.get('/api/student/xp-summary', verifyToken, checkRole(['STUDENT', 'SCHOOL
       select: { id: true, name: true, xp: true }
     });
 
-    const histories = await prisma.xPHistory.findMany({
-      where: { userId }
+    const groupedHistory = await prisma.xPHistory.groupBy({
+      by: ['sourceType', 'sourceId'], where: { userId }, _sum: { xp: true }
     });
+    const histories = groupedHistory.map(row => ({ ...row, xp: row._sum.xp || 0 }));
 
     const lessonIds = Array.from(new Set(histories.filter(h => h.sourceType.startsWith('LESSON_')).map(h => h.sourceId)));
     const lessons = await prisma.lesson.findMany({

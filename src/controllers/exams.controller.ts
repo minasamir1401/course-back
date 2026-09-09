@@ -1,3 +1,6 @@
+import { persistQuestionUpdates } from '../utils/examQuestionWrites';
+import { randomUUID } from 'node:crypto';
+import { changedQuestionFields, changedQuestionOrders, calculateSubmissionStats } from '../utils/examPerformance';
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -20,7 +23,7 @@ import {
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields,
   isAnswerCorrect, sanitizeDeep, sanitizeUser, sanitizeExam, multerUpload,
   diagnosticLogs, pushDiagnosticLog, ALL_ROLES, SCHOOL_MANAGED_ROLES,
-  statsCache, CACHE_TTL, setCache, getStudentGradeAndStage, examMatchesStudent,
+  statsCache, CACHE_TTL, setCache, invalidateCache, getStudentGradeAndStage, examMatchesStudent,
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
   normalizeLegacyCourses, acquireLock, releaseLock, extractAndSaveBase64Images,
@@ -574,6 +577,17 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Access denied: You do not have permission to edit this exam.' });
     }
 
+    const questionScopeId = typeof req.body.questionScopeId === 'string' ? req.body.questionScopeId : null;
+    if (questionScopeId) {
+      const scope = await prisma.subExam.findFirst({ where: { id: questionScopeId, module: { examId: id } }, select: { id: true } });
+      if (!scope || req.body.modules !== undefined || (questions || []).some((q: any) => q.subExamId !== questionScopeId)) {
+        return res.status(400).json({ error: 'Invalid child exam save scope' });
+      }
+      if (Array.isArray(deletedQuestionIds) && deletedQuestionIds.length) {
+        const outOfScope = await prisma.question.count({ where: { id: { in: deletedQuestionIds }, examId: id, OR: [{ subExamId: null }, { subExamId: { not: questionScopeId } }] } });
+        if (outOfScope) return res.status(400).json({ error: 'Question deletion outside child exam scope' });
+      }
+    }
     const sanitizedQuestions = sanitizeDeep(questions || []);
 
     if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
@@ -908,18 +922,11 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
       if (Array.isArray(questions)) {
         // Fetch existing questions with their current explanation values for preservation
         const existingQuestionsWithExp = await tx.question.findMany({
-          where: { examId: id, deletedAt: null },
-          select: {
-            id: true,
-            text: true,
-            type: true,
-            options: true,
-            correctAnswer: true,
-            explanation: true,
-            order: true,
-            createdAt: true
-          }
+          where: { examId: id, deletedAt: null, ...(questionScopeId ? { subExamId: questionScopeId } : {}) },
         });
+        const existingQuestionMap = new Map(existingQuestionsWithExp.map(q => [q.id, q]));
+        const pendingQuestions: any[] = [];
+        const pendingUpdates: Array<{ id: string; data: Record<string, any> }> = [];
         const existingIds = new Set(existingQuestionsWithExp.map(q => q.id));
         const existingExplanationMap = new Map(existingQuestionsWithExp.map(q => [q.id, q.explanation]));
         const explicitDeletedIds = new Set<string>(
@@ -1006,7 +1013,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
             moduleId: resolvedModuleId,
             subExamId: resolvedSubExamId,
-            order: i
+            order: questionScopeId && typeof q.id === 'string' ? (existingQuestionMap.get(q.id)?.order ?? i) : i
           };
 
           // Skip completely empty question rows that have no text and no media
@@ -1050,20 +1057,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
                 delete updatePayload.explanation;
               }
             }
-            const qUpdateRes = await tx.question.updateMany({
-              where: { id: targetQuestionId, examId: id },
-              data: updatePayload
-            });
-            if (qUpdateRes.count > 0) {
-              usedExistingIds.add(targetQuestionId);
-              incomingQuestionIds.push(targetQuestionId);
-            } else {
-              const createdQuestion = await tx.question.create({
-                data: { ...updatePayload, examId: id }
-              });
-              usedExistingIds.add(createdQuestion.id);
-              incomingQuestionIds.push(createdQuestion.id);
-            }
+            const changes = changedQuestionFields(existingQuestionMap.get(targetQuestionId) || {}, updatePayload);
+            if (Object.keys(changes).length) pendingUpdates.push({ id: targetQuestionId, data: changes });
+            usedExistingIds.add(targetQuestionId);
+            incomingQuestionIds.push(targetQuestionId);
           } else {
             // Last-resort duplicate guard: before creating a new question, check if an
             // existing un-used question already has the same normalized text or core signature.
@@ -1082,21 +1079,23 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
 
             if (textDuplicateId) {
               console.warn(`[Exam Update] Prevented duplicate question creation – updating existing row instead: ${textDuplicateId}`);
-              await tx.question.updateMany({
-                where: { id: textDuplicateId, examId: id },
-                data: qData,
-              });
+              const changes = changedQuestionFields(existingQuestionMap.get(textDuplicateId) || {}, qData);
+              if (Object.keys(changes).length) pendingUpdates.push({ id: textDuplicateId, data: changes });
               usedExistingIds.add(textDuplicateId);
               incomingQuestionIds.push(textDuplicateId);
             } else {
               // Create new question (no ID = brand new question)
-              const createdQuestion = await tx.question.create({
-                data: { ...qData, examId: id }
-              });
+              const createdQuestion = { ...qData, examId: id, id: randomUUID() };
+              pendingQuestions.push(createdQuestion);
               usedExistingIds.add(createdQuestion.id);
               incomingQuestionIds.push(createdQuestion.id);
             }
           }
+        }
+
+        await persistQuestionUpdates(tx, id, pendingUpdates);
+        for (let offset = 0; offset < pendingQuestions.length; offset += 250) {
+          await tx.question.createMany({ data: pendingQuestions.slice(offset, offset + 250) });
         }
 
         // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
@@ -1105,12 +1104,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         // ONLY Super Admin is allowed to delete questions!
         const isSuperAdmin = (req as any).user?.role === 'SUPER_ADMIN';
         if (isSuperAdmin) {
-          for (const existingId of Array.from(explicitDeletedIds)) {
-            await tx.question.updateMany({
-              where: { id: existingId, examId: id },
-              data: { deletedAt: new Date() }
-            });
-          }
+          if (explicitDeletedIds.size) await tx.question.updateMany({
+            where: { id: { in: Array.from(explicitDeletedIds) }, examId: id },
+            data: { deletedAt: new Date() }
+          });
         }
 
         // A partial autosave must not delete unseen rows. Keep those rows and append
@@ -1118,21 +1115,31 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         // unique contiguous order values so every reader sees the same order.
         const activeQuestions = await tx.question.findMany({
           where: { examId: id, deletedAt: null },
-          select: { id: true, order: true, createdAt: true }
+          select: { id: true, order: true, createdAt: true, subExamId: true }
         });
         const retainedIncomingQuestionIds = incomingQuestionIds.filter((questionId) => !explicitDeletedIds.has(questionId));
         const incomingIdSet = new Set(retainedIncomingQuestionIds);
-        const orderedQuestionIds = [
+        let orderedQuestionIds = [
           ...retainedIncomingQuestionIds,
           ...sortPersistedOrder(activeQuestions)
             .filter((question) => !incomingIdSet.has(question.id))
             .map((question) => question.id)
         ];
-        for (let order = 0; order < orderedQuestionIds.length; order++) {
-          await tx.question.updateMany({
-            where: { id: orderedQuestionIds[order], examId: id },
-            data: { order }
-          });
+        if (questionScopeId) {
+          // Replace only the child slots; sibling relative order must survive partial saves.
+          const childSet = new Set(activeQuestions.filter(q => q.subExamId === questionScopeId).map(q => q.id));
+          const childIds = orderedQuestionIds.filter(questionId => childSet.has(questionId));
+          let childIndex = 0;
+          orderedQuestionIds = sortPersistedOrder(activeQuestions).map(q => q.subExamId === questionScopeId ? childIds[childIndex++] : q.id);
+        }
+        const orderChanges = changedQuestionOrders(activeQuestions, orderedQuestionIds);
+        if (orderChanges.length) {
+          // One parameterized statement, scoped to this exam; never interpolate identifiers or values.
+          await tx.$executeRaw`
+            UPDATE "Question" AS q SET "order" = v."order", "updatedAt" = NOW()
+            FROM jsonb_to_recordset(${JSON.stringify(orderChanges)}::jsonb) AS v(id text, "order" integer)
+            WHERE q.id = v.id AND q."examId" = ${id} AND q."deletedAt" IS NULL
+          `;
         }
       }
 
@@ -1141,7 +1148,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         where: { id },
         include: {
           questions: {
-            where: { deletedAt: null },
+            where: { deletedAt: null, ...(questionScopeId ? { subExamId: questionScopeId } : {}) },
             orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
           },
           modules: {
@@ -1156,7 +1163,8 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Exam not found or has been deleted' });
     }
 
-    res.json({ message: 'Exam updated successfully', exam, modules: exam?.modules, questions: exam?.questions });
+    const { questions: savedQuestions, modules: savedModules, ...examSummary } = exam;
+    res.json({ message: 'Exam updated successfully', exam: req.query.compact === 'true' ? examSummary : exam, modules: savedModules, questions: savedQuestions });
   } catch (error: any) {
     console.error('❌ Exam update error:', error); require('fs').writeFileSync('error_log.txt', String(error) + '\n' + error.stack);
     res.status(500).json({ error: 'Error updating exam', details: error.message });
@@ -1276,9 +1284,6 @@ export const getExamHandler9 = async (req: Request, res: Response) => {
       include: {
         user: {
           select: { id: true, name: true, schoolId: true, school: { select: { name: true } } }
-        },
-        answers: {
-          select: { questionId: true, isCorrect: true }
         }
       }
     });
@@ -1290,75 +1295,39 @@ export const getExamHandler9 = async (req: Request, res: Response) => {
     const avgScore = totalSubmissions > 0 ? submissions.reduce((acc, s) => acc + (s.percentage || 0), 0) / totalSubmissions : 0;
     const totalExamPoints = exam.questions.reduce((acc, q) => acc + (q.points || 1), 0);
 
-    // 2. Module Stats
-    const moduleStats = exam.modules.map(mod => {
-      const modQuestions = exam.questions.filter(q => q.moduleId === mod.id).map(q => q.id);
-      let correctAnswers = 0;
-      let totalAnswers = 0;
-
-      submissions.forEach(sub => {
-        sub.answers.forEach(ans => {
-          if (modQuestions.includes(ans.questionId)) {
-            totalAnswers++;
-            if (ans.isCorrect) correctAnswers++;
-          }
-        });
-      });
-
-      return {
-        id: mod.id,
-        title: mod.title,
-        correctRate: totalAnswers > 0 ? (correctAnswers / totalAnswers) * 100 : 0,
-        totalAnswers
-      };
+    // Aggregate once in PostgreSQL rather than transferring every student's answers.
+    const answerCounts = await prisma.studentAnswer.groupBy({
+      by: ['questionId', 'isCorrect'], where: { submission: where }, _count: { _all: true }
     });
-
-    // 3. SubExam Stats
-    const subExamStats = exam.modules.flatMap(m => m.subExams || []).map(se => {
-      const seQuestions = exam.questions.filter(q => q.subExamId === se.id).map(q => q.id);
-      let correctAnswers = 0;
-      let totalAnswers = 0;
-
-      submissions.forEach(sub => {
-        sub.answers.forEach(ans => {
-          if (seQuestions.includes(ans.questionId)) {
-            totalAnswers++;
-            if (ans.isCorrect) correctAnswers++;
-          }
-        });
-      });
-
-      return {
-        id: se.id,
-        title: se.title,
-        moduleId: se.moduleId,
-        correctRate: totalAnswers > 0 ? (correctAnswers / totalAnswers) * 100 : 0,
-        totalAnswers
-      };
-    });
-
-    // 4. Question Stats
+    const countsByQuestion = new Map<string, { correct: number; total: number }>();
+    for (const row of answerCounts) {
+      const count = countsByQuestion.get(row.questionId) || { correct: 0, total: 0 };
+      count.total += row._count._all;
+      if (row.isCorrect) count.correct += row._count._all;
+      countsByQuestion.set(row.questionId, count);
+    }
+    const moduleCounts = new Map<string, { correct: number; total: number }>();
+    const subExamCounts = new Map<string, { correct: number; total: number }>();
+    const addCounts = (map: Map<string, { correct: number; total: number }>, key: string | null, count: { correct: number; total: number }) => {
+      if (!key) return;
+      const previous = map.get(key) || { correct: 0, total: 0 };
+      map.set(key, { correct: previous.correct + count.correct, total: previous.total + count.total });
+    };
     const questionStats = exam.questions.map(q => {
-      let correctAnswers = 0;
-      let totalAnswers = 0;
-
-      submissions.forEach(sub => {
-        const ans = sub.answers.find(a => a.questionId === q.id);
-        if (ans) {
-          totalAnswers++;
-          if (ans.isCorrect) correctAnswers++;
-        }
-      });
-
-      return {
-        id: q.id,
-        text: q.text,
-        type: q.type,
-        moduleId: q.moduleId,
-        subExamId: q.subExamId,
-        correctRate: totalAnswers > 0 ? (correctAnswers / totalAnswers) * 100 : 0
-      };
-    }).sort((a, b) => b.correctRate - a.correctRate); // Easiest to hardest
+      const count = countsByQuestion.get(q.id) || { correct: 0, total: 0 };
+      addCounts(moduleCounts, q.moduleId, count);
+      addCounts(subExamCounts, q.subExamId, count);
+      return { id: q.id, text: q.text, type: q.type, moduleId: q.moduleId, subExamId: q.subExamId,
+        correctRate: count.total ? count.correct / count.total * 100 : 0 };
+    }).sort((a, b) => b.correctRate - a.correctRate);
+    const moduleStats = exam.modules.map(mod => {
+      const count = moduleCounts.get(mod.id) || { correct: 0, total: 0 };
+      return { id: mod.id, title: mod.title, totalAnswers: count.total, correctRate: count.total ? count.correct / count.total * 100 : 0 };
+    });
+    const subExamStats = exam.modules.flatMap(m => m.subExams || []).map(se => {
+      const count = subExamCounts.get(se.id) || { correct: 0, total: 0 };
+      return { id: se.id, title: se.title, moduleId: se.moduleId, totalAnswers: count.total, correctRate: count.total ? count.correct / count.total * 100 : 0 };
+    });
 
     // 5. School Stats (For Super Admin)
     const schoolStats: any[] = [];
@@ -1768,7 +1737,7 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
         schools: { select: { id: true } },
         modules: { include: { subExams: true } },
         questions: {
-          where: { deletedAt: null },
+          where: { deletedAt: null, ...(subExamId ? { subExamId } : {}) },
           orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
           select: { id: true, points: true, correctAnswer: true, type: true, order: true, xpPoints: true, options: true, subExamId: true }
         }
@@ -1818,9 +1787,11 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
     let maxPossibleScore = 0;
     const studentAnswersData: any[] = [];
 
+    const submittedAnswerMap = new Map<string, any>();
+    for (const answer of answers) if (!submittedAnswerMap.has(answer.questionId)) submittedAnswerMap.set(answer.questionId, answer);
     exam.questions.forEach(q => {
       maxPossibleScore += q.points;
-      const studentAnswer = answers.find((a: any) => a.questionId === q.id);
+      const studentAnswer = submittedAnswerMap.get(q.id);
       const selectedAnswer = studentAnswer?.selectedAnswer;
       const isCorrect = isAnswerCorrect(q, selectedAnswer);
 
@@ -1850,8 +1821,9 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
     let tempStreak = 0;
     let maxStreak = 0;
 
+    const gradedAnswerMap = new Map(studentAnswersData.map(answer => [answer.questionId, answer]));
     sortedQuestions.forEach(q => {
-      const sa = studentAnswersData.find((a: any) => a.questionId === q.id);
+      const sa = gradedAnswerMap.get(q.id);
       const isCorrect = sa?.isCorrect || false;
       if (isCorrect) {
         tempStreak++;
@@ -1886,18 +1858,13 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
           }))
         }
       },
-      include: {
-        answers: {
-          include: {
-            question: true
-          }
-        }
-      }
+      include: (exam.resultVisibility === 'SHOW_ANSWERS' || exam.resultVisibility === 'SHOW_ALL')
+        ? { answers: { include: { question: true } } } : undefined
     });
 
     // Save XPHistory log entries in bulk
     const xpHistoryData = exam.questions.map(q => {
-      const sa = studentAnswersData.find((a: any) => a.questionId === q.id);
+      const sa = gradedAnswerMap.get(q.id);
       const isCorrect = sa?.isCorrect || false;
       const earnedXP = (isFirstExamAttempt && isCorrect) ? (q.xpPoints !== undefined ? Number(q.xpPoints) : 10) : 0;
       return {
@@ -1958,7 +1925,7 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
     }
 
     // Invalidate student stats cache
-    statsCache.delete(`student_stats_${userId}`);
+    await invalidateCache(`student_stats_${userId}`);
 
     res.json({
       message: 'Exam submitted successfully',
@@ -1969,7 +1936,7 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
       bonusXP,
       currentStreak: isFirstExamAttempt ? maxStreak : 0,
       resultVisibility: exam.resultVisibility,
-      details: (exam.resultVisibility === 'SHOW_ANSWERS' || exam.resultVisibility === 'SHOW_ALL') ? submission.answers : null
+      details: (exam.resultVisibility === 'SHOW_ANSWERS' || exam.resultVisibility === 'SHOW_ALL') ? (submission as any).answers : null
     });
   } catch (error: any) {
     console.error('❌ Submission error:', error);
@@ -1986,14 +1953,7 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
     const submission = await prisma.examSubmission.findUnique({
       where: { id },
       include: {
-        exam: {
-          include: {
-            questions: {
-              where: { deletedAt: null },
-              orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
-            }
-          }
-        },
+        exam: true,
         user: { select: { name: true, role: true, schoolId: true } },
         answers: {
           where: { question: { deletedAt: null } },
@@ -2027,13 +1987,8 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
     }
 
     const buildSubmissionXpStats = async (targetSubmission: any, targetAnswers: any[]) => {
-      const answerQuestionIds = targetAnswers.map((answer: any) => answer.questionId);
-      const relevantQuestions = targetSubmission.exam.questions.filter((question: any) => {
-        if (targetSubmission.subExamId) {
-          return question.subExamId === targetSubmission.subExamId && answerQuestionIds.includes(question.id);
-        }
-        return answerQuestionIds.includes(question.id);
-      });
+      const relevantQuestions = targetAnswers.map((answer: any) => answer.question)
+        .filter((question: any) => !targetSubmission.subExamId || question.subExamId === targetSubmission.subExamId);
 
       const previousAttemptsCount = await prisma.examSubmission.count({
         where: {
@@ -2045,44 +2000,7 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
       });
       const isFirstAttemptForThisSubmission = previousAttemptsCount === 0;
 
-      const orderedAnswers = [...targetAnswers].sort((a: any, b: any) => {
-        const aOrder = relevantQuestions.find((question: any) => question.id === a.questionId)?.order ?? 0;
-        const bOrder = relevantQuestions.find((question: any) => question.id === b.questionId)?.order ?? 0;
-        return aOrder - bOrder;
-      });
-
-      let regularXP = 0;
-      let dynamicTotalScore = 0;
-      let streakCounter = 0;
-      let hasStreak5 = false;
-      let hasStreak10 = false;
-
-      orderedAnswers.forEach((answer: any) => {
-        const answerQuestion = relevantQuestions.find((question: any) => question.id === answer.questionId);
-        if (!answerQuestion) return;
-
-        if (answer.isCorrect) {
-          streakCounter++;
-          dynamicTotalScore += Number(answerQuestion.points) || 0;
-          if (streakCounter === 5) hasStreak5 = true;
-          if (streakCounter === 10) hasStreak10 = true;
-          if (isFirstAttemptForThisSubmission) {
-            regularXP += answerQuestion.xpPoints !== undefined ? Number(answerQuestion.xpPoints) : 10;
-          }
-        } else {
-          streakCounter = 0;
-        }
-      });
-
-      const bonusXP = isFirstAttemptForThisSubmission ? ((hasStreak5 ? 10 : 0) + (hasStreak10 ? 30 : 0)) : 0;
-
-      return {
-        earnedXP: regularXP + bonusXP,
-        dynamicTotalScore,
-        totalPoints: relevantQuestions.reduce((acc: number, question: any) => acc + (Number(question.points) || 0), 0),
-        correctAnswers: orderedAnswers.filter((answer: any) => answer.isCorrect).length,
-        totalQuestions: relevantQuestions.length,
-      };
+      return calculateSubmissionStats(relevantQuestions, targetAnswers, isFirstAttemptForThisSubmission);
     };
 
     // Apply Result Policy for Students

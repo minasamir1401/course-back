@@ -988,9 +988,8 @@ export const getCacheAsync = async (key: string): Promise<{ data: any; timestamp
  */
 export const invalidateCache = async (key: string): Promise<void> => {
   statsCache.delete(key);
-  if (isRedisActive()) {
-    await cacheDelete(`stats:${key}`).catch(() => {});
-  }
+  // cacheDelete also clears the fallback store when Redis is disabled/unavailable.
+  await cacheDelete(`stats:${key}`).catch(() => {});
 };
 
 /**

@@ -72,3 +72,13 @@ describe('Unified Cache & Multi-Worker State Resilience', () => {
     await resetRateLimit(rateLimitKey);
   });
 });
+
+test('student report cache is fresh after submission invalidation without Redis', async () => {
+  process.env.JWT_SECRET ||= 'cache-performance-test-key-only-not-for-production-2026';
+  const shared = require('../../../src/shared');
+  const key = 'student_stats_performance_test';
+  shared.setCache(key, { totalExams: 1 });
+  expect((await shared.getCacheAsync(key)).data.totalExams).toBe(1);
+  await shared.invalidateCache(key);
+  expect(await shared.getCacheAsync(key)).toBeUndefined();
+});
