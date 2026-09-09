@@ -19,7 +19,7 @@ function resolvePrismaStartupMode(input) {
     strategy: 'skip-prisma-sync',
     shouldRunMigrateDeploy: false,
     shouldRunDbPush: false,
-    reason: 'No migration files were found, so migrate deploy would fail on a non-empty production database.',
+    reason: 'No bundled Prisma migrations; automatic schema migration is disabled. Continuing startup without running Prisma schema changes.',
   };
 }
 

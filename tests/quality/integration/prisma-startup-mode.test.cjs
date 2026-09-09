@@ -31,6 +31,6 @@ describe('prisma startup mode', () => {
 
     expect(mode.strategy).toBe('skip-prisma-sync');
     expect(mode.shouldRunMigrateDeploy).toBe(false);
-    expect(mode.reason).toMatch(/no migration files/i);
+    expect(mode.reason).toMatch(/no bundled Prisma migrations/i);
   });
 });

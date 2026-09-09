@@ -38,8 +38,6 @@ async function main() {
 
   if (mode.shouldRunMigrateDeploy) {
     await spawnCommand('npx', ['prisma', 'migrate', 'deploy']);
-  } else {
-    console.log('[startup] Skipping Prisma schema sync to avoid P3005 on an already-populated production database.');
   }
 
   // Automatically check and clean invalid indexes before PM2 cluster workers start
