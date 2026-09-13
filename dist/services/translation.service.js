@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -44,10 +11,6 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.translateSingleText = translateSingleText;
 exports.translateBatchTexts = translateBatchTexts;
-let arEnPipeline = null;
-let enArPipeline = null;
-let arEnPromise = null;
-let enArPromise = null;
 const translationCache = new Map();
 const MAX_CACHE_SIZE = 5000;
 function getCacheKey(text, from, to) {
@@ -60,29 +23,6 @@ function setCache(key, value) {
             translationCache.delete(firstKey);
     }
     translationCache.set(key, value);
-}
-function getOfflinePipeline(from, to) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const { pipeline } = yield Promise.resolve().then(() => __importStar(require('@xenova/transformers')));
-        if (from === 'ar' && to === 'en') {
-            if (!arEnPipeline) {
-                if (!arEnPromise) {
-                    arEnPromise = pipeline('translation', 'Xenova/opus-mt-ar-en', { quantized: true });
-                }
-                arEnPipeline = yield arEnPromise;
-            }
-            return arEnPipeline;
-        }
-        else {
-            if (!enArPipeline) {
-                if (!enArPromise) {
-                    enArPromise = pipeline('translation', 'Xenova/opus-mt-en-ar', { quantized: true });
-                }
-                enArPipeline = yield enArPromise;
-            }
-            return enArPipeline;
-        }
-    });
 }
 function maskSpecialContent(text) {
     const tokens = [];
@@ -101,38 +41,72 @@ function maskSpecialContent(text) {
 function restoreSpecialContent(text, tokens) {
     let restored = text;
     tokens.forEach((original, index) => {
-        const mathRegex = new RegExp(`\\s*__MATH_${index}__\\s*`, 'gi');
-        const htmlRegex = new RegExp(`\\s*__HTML_${index}__\\s*`, 'gi');
-        restored = restored.replace(mathRegex, original).replace(htmlRegex, original);
+        const mathRegex = new RegExp(`\\s*__\\s*MATH_${index}\\s*__\\s*`, 'gi');
+        const htmlRegex = new RegExp(`\\s*__\\s*HTML_${index}\\s*__\\s*`, 'gi');
+        restored = restored.replace(mathRegex, ` ${original} `).replace(htmlRegex, original);
     });
     return restored;
 }
+function fetchGoogleTranslation(text, from, to, client) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const url = `https://translate.googleapis.com/translate_a/single?client=${client}&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`;
+        const response = yield fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            },
+            signal: AbortSignal.timeout(4000)
+        });
+        if (!response.ok)
+            return null;
+        const data = yield response.json();
+        if (!Array.isArray(data) || !Array.isArray(data[0]))
+            return null;
+        const translatedParts = data[0].map((item) => (item === null || item === void 0 ? void 0 : item[0]) || '').filter(Boolean);
+        const result = translatedParts.join('');
+        return result.trim() ? result : null;
+    });
+}
+function fetchMyMemoryTranslation(text, from, to) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        const langpair = `${from}|${to}`;
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(langpair)}`;
+        const response = yield fetch(url, {
+            signal: AbortSignal.timeout(4000)
+        });
+        if (!response.ok)
+            return null;
+        const data = yield response.json();
+        const result = (_a = data === null || data === void 0 ? void 0 : data.responseData) === null || _a === void 0 ? void 0 : _a.translatedText;
+        return (typeof result === 'string' && result.trim()) ? result : null;
+    });
+}
 function translateViaFastEngine(text, from, to) {
     return __awaiter(this, void 0, void 0, function* () {
+        const clients = ['dict-chrome-ex', 'it'];
+        for (const client of clients) {
+            try {
+                const result = yield fetchGoogleTranslation(text, from, to, client);
+                if (result)
+                    return result;
+            }
+            catch (_a) {
+                continue;
+            }
+        }
         try {
-            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`;
-            const response = yield fetch(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
-                signal: AbortSignal.timeout(4000)
-            });
-            if (!response.ok)
-                return null;
-            const data = yield response.json();
-            if (!Array.isArray(data) || !Array.isArray(data[0]))
-                return null;
-            const translatedParts = data[0].map((item) => (item === null || item === void 0 ? void 0 : item[0]) || '').filter(Boolean);
-            return translatedParts.join('') || null;
+            const fallbackResult = yield fetchMyMemoryTranslation(text, from, to);
+            if (fallbackResult)
+                return fallbackResult;
         }
-        catch (_a) {
-            return null;
+        catch (_b) {
+            // Fallback failed
         }
+        return null;
     });
 }
 function translateSingleText(text_1) {
     return __awaiter(this, arguments, void 0, function* (text, from = 'ar', to = 'en') {
-        var _a;
         if (!text || !text.trim())
             return text;
         const cacheKey = getCacheKey(text, from, to);
@@ -148,19 +122,6 @@ function translateSingleText(text_1) {
             const finalResult = restoreSpecialContent(fastResult, tokens);
             setCache(cacheKey, finalResult);
             return finalResult;
-        }
-        try {
-            const translator = yield getOfflinePipeline(from, to);
-            const result = yield translator(maskedText.trim());
-            const translated = ((_a = result === null || result === void 0 ? void 0 : result[0]) === null || _a === void 0 ? void 0 : _a.translation_text) || '';
-            const finalResult = restoreSpecialContent(translated, tokens);
-            if (finalResult) {
-                setCache(cacheKey, finalResult);
-                return finalResult;
-            }
-        }
-        catch (err) {
-            console.error('Offline pipeline translation failed:', err);
         }
         return text;
     });
