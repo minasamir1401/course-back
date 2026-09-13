@@ -15,7 +15,6 @@ import {
   sanitizeDeep,
   sanitizeUser,
   sanitizeExam,
-  multerUpload,
   diagnosticLogs,
   pushDiagnosticLog,
   ALL_ROLES,

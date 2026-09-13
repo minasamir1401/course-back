@@ -14,16 +14,25 @@ import {
   resetRateLimit,
   isRedisActive,
 } from './lib/redis';
+import {
+  persistUpload,
+  deleteStoredFile,
+  isCloudStorageActive,
+} from './lib/storage';
+
+export {
+  persistUpload,
+  deleteStoredFile,
+  isCloudStorageActive,
+};
 
 if (!process.env.JWT_SECRET) {
-  console.warn('⚠️ WARNING: JWT_SECRET environment variable is missing!');
+  console.warn('[Security] WARNING: JWT_SECRET environment variable is missing!');
 }
 export const JWT_SECRET = process.env.JWT_SECRET as string;
 export const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || '4h') as SignOptions['expiresIn'];
 
-// ==========================================
-// 📁 FILE UPLOAD CONFIGURATION (multer)
-// ==========================================
+// File upload configuration (multer)
 export const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -80,6 +89,34 @@ export const multerUpload = multer({
   }
 });
 
+/**
+ * Express middleware that mirrors a freshly disk-saved multer file to R2/S3 when cloud
+ * storage is active. Must be placed immediately after multerUpload.single/array/fields.
+ * Non-fatal: a cloud failure never blocks the response — the local copy is always kept.
+ */
+export function mirrorUploadToCloud(req: Request, _res: Response, next: NextFunction): void {
+  if (!isCloudStorageActive()) return next();
+  const files: Express.Multer.File[] = req.file
+    ? [req.file]
+    : req.files
+      ? Array.isArray(req.files)
+        ? req.files
+        : Object.values(req.files as Record<string, Express.Multer.File[]>).flat()
+      : [];
+
+  if (files.length === 0) return next();
+
+  Promise.all(
+    files.map(f =>
+      persistUpload(f.path, f.filename, f.mimetype).then(({ url, isCloud }) => {
+        if (isCloud) f.path = url; // let downstream handlers use the cloud URL if needed
+      })
+    )
+  ).catch(err => console.warn('[Storage] Cloud mirror failed (local copy kept):', err.message));
+
+  next();
+}
+
 export const ALLOWED_VIDEO_HOSTS = new Set([
   'youtube.com',
   'www.youtube.com',
@@ -102,7 +139,7 @@ loginAttempts.set = function(key, value) {
   return originalLoginAttemptsSet(key, value);
 };
 
-// ✅ CLUSTER-MODE SYNCHRONIZATION:
+// Cluster-mode synchronization:
 // In PM2 cluster mode (pm2 -i max), Redis acts as the authoritative shared store
 // for rate limiting (loginAttempts) and stats cache (statsCache).
 // When Redis is active, atomic increments and cache invalidations synchronize across workers.
@@ -153,7 +190,7 @@ const DATA_IMAGE_URI_REGEX = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/
 const extensionFromImageMime = (mimeSubtype: string): string => {
   const normalized = mimeSubtype.toLowerCase();
   if (normalized === 'jpeg' || normalized === 'jpg') return 'jpg';
-  // 🔒 SVG intentionally removed: SVG can contain arbitrary JS (XSS vector)
+  // Security note: SVG intentionally removed: SVG can contain arbitrary JS (XSS vector)
   if (normalized === 'png' || normalized === 'webp' || normalized === 'gif') return normalized;
   return 'bin'; // Unknown / unsafe types: save as binary (won't be served as image)
 };
@@ -174,11 +211,12 @@ export const replaceEmbeddedDataImages = (input: string): string => {
       const destination = path.join(UPLOADS_DIR, filename);
       if (!fs.existsSync(destination)) {
         fs.writeFileSync(destination, buffer);
+        persistUpload(destination, filename, `image/${ext}`).catch(() => {});
       }
 
       return `/uploads/${filename}`;
     } catch (err: any) {
-      console.warn(`⚠️ Failed to externalize embedded image: ${err.message}`);
+      console.warn(`Failed to externalize embedded image: ${err.message}`);
       return '';
     }
   });
@@ -440,7 +478,7 @@ export function extractAndSaveBase64Images(input: any): any {
   if (!input) return input;
   
   if (typeof input === 'string') {
-    // 🔒 SECURITY: svg+xml intentionally excluded — SVG can contain arbitrary JS (XSS).
+    // Security note: svg+xml intentionally excluded — SVG can contain arbitrary JS (XSS).
     const base64Regex = /data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)/g;
     return input.replace(base64Regex, (_match: string, mimeType: string, base64Data: string) => {
       try {
@@ -451,6 +489,7 @@ export function extractAndSaveBase64Images(input: any): any {
         const filePath = path.join(UPLOADS_DIR, filename);
         if (!fs.existsSync(filePath)) {
           fs.writeFileSync(filePath, buffer);
+          persistUpload(filePath, filename, `image/${ext}`).catch(() => {});
         }
         return `/uploads/${filename}`;
       } catch (err) {
@@ -597,7 +636,30 @@ export const isAnswerCorrect = (question: any, selectedAnswer: any) => {
   }
 
   if (question.type === 'MULTI_SELECT') {
-    return arraysMatch(parseStringArray(question.correctAnswer), parseStringArray(selectedAnswer));
+    const correctArr = parseStringArray(question.correctAnswer);
+    const studentArr = parseStringArray(selectedAnswer);
+    if (arraysMatch(correctArr, studentArr)) return true;
+
+    let optsAr: any[] = [];
+    try { optsAr = typeof question.options === 'string' ? JSON.parse(question.options || '[]') : (Array.isArray(question.options) ? question.options : []); } catch {}
+    let optsEn: any[] = [];
+    try { optsEn = typeof question.optionsEn === 'string' ? JSON.parse(question.optionsEn || '[]') : (Array.isArray(question.optionsEn) ? question.optionsEn : []); } catch {}
+
+    const resolveOptionIndex = (ans: string) => {
+      for (let i = 0; i < Math.max(optsAr.length, optsEn.length); i++) {
+        if ((optsAr[i] && isOptionMatch(ans, optsAr[i], i)) || (optsEn[i] && isOptionMatch(ans, optsEn[i], i))) return i;
+      }
+      return -1;
+    };
+
+    const correctIndices = correctArr.map(resolveOptionIndex).filter(idx => idx !== -1).sort();
+    const studentIndices = studentArr.map(resolveOptionIndex).filter(idx => idx !== -1).sort();
+
+    if (correctIndices.length > 0 && correctIndices.length === studentIndices.length) {
+      if (correctIndices.every((val, i) => val === studentIndices[i])) return true;
+    }
+
+    return false;
   }
 
   if (question.type === 'MEMORY_GAME') {
@@ -642,7 +704,7 @@ export const isAnswerCorrect = (question: any, selectedAnswer: any) => {
     return arraysMatch(parseStringArray(question.correctAnswer), parseStringArray(selectedAnswer));
   }
 
-  // Handle MCQ or options-based questions
+  // Handle MCQ or options-based questions (with bilingual optionsEn support)
   let optionsArr: any[] = [];
   try {
     optionsArr = typeof question.options === 'string'
@@ -650,11 +712,20 @@ export const isAnswerCorrect = (question: any, selectedAnswer: any) => {
       : (Array.isArray(question.options) ? question.options : []);
   } catch { optionsArr = []; }
 
-  if (Array.isArray(optionsArr) && optionsArr.length > 0) {
-    for (let i = 0; i < optionsArr.length; i++) {
-      const opt = optionsArr[i];
-      const matchesStudent = isOptionMatch(selectedAnswer, opt, i);
-      const matchesCorrect = isOptionMatch(question.correctAnswer, opt, i);
+  let optionsEnArr: any[] = [];
+  try {
+    optionsEnArr = typeof question.optionsEn === 'string'
+      ? JSON.parse(question.optionsEn || '[]')
+      : (Array.isArray(question.optionsEn) ? question.optionsEn : []);
+  } catch { optionsEnArr = []; }
+
+  const maxOptionsCount = Math.max(optionsArr.length, optionsEnArr.length);
+  if (maxOptionsCount > 0) {
+    for (let i = 0; i < maxOptionsCount; i++) {
+      const optAr = optionsArr[i];
+      const optEn = optionsEnArr[i];
+      const matchesStudent = (optAr && isOptionMatch(selectedAnswer, optAr, i)) || (optEn && isOptionMatch(selectedAnswer, optEn, i));
+      const matchesCorrect = (optAr && isOptionMatch(question.correctAnswer, optAr, i)) || (optEn && isOptionMatch(question.correctAnswer, optEn, i));
       if (matchesStudent && matchesCorrect) return true;
     }
   }
@@ -843,11 +914,6 @@ export async function ensurePerformanceIndexes() {
       } catch (lockErr: any) {
         console.warn(`[DB Index Setup] Advisory lock/cleanup notice: ${lockErr.message}`);
       }
-      try {
-        await prisma.$executeRawUnsafe('ALTER TABLE "ExamModule" ADD COLUMN IF NOT EXISTS "parentModuleId" TEXT;');
-      } catch (colErr: any) {
-        console.warn(`[DB Schema Setup] Notice adding parentModuleId: ${colErr.message}`);
-      }
     }
 
     const statements = [
@@ -959,7 +1025,7 @@ export const setCache = (key: string, data: any) => {
 export const getCache = (key: string) => {
   const cached = statsCache.get(key);
   if (cached) {
-    // 🔒 LRU Cache implementation: Move accessed key to the end of the Map
+    // LRU Cache implementation: Move accessed key to the end of the Map
     statsCache.delete(key);
     statsCache.set(key, cached);
     return cached;

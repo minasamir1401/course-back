@@ -23,11 +23,19 @@ const canManageExamRecord = (user, exam, hasTeacherCourseAccess) => {
         return false;
     if (user.role === 'SUPER_ADMIN')
         return true;
-    // Central content is shared across schools and is mutable only by super admins.
     if (exam.isCentral)
         return false;
+    if (exam.creatorId && exam.creatorId === user.id)
+        return true;
     const belongsToSchool = Boolean(user.schoolId && (exam.schoolId === user.schoolId ||
         (exam.schools || []).some((school) => school.id === user.schoolId)));
-    return belongsToSchool || exam.creatorId === user.id || (user.role === 'TEACHER' && hasTeacherCourseAccess);
+    if (!belongsToSchool)
+        return false;
+    if (user.role === 'SCHOOL_ADMIN')
+        return true;
+    if (user.role === 'TEACHER') {
+        return Boolean(hasTeacherCourseAccess);
+    }
+    return false;
 };
 exports.canManageExamRecord = canManageExamRecord;

@@ -83,8 +83,8 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
         console.log('===========================================================');
-        console.log(`🚀 Starting Safe Question Deduplication & Empty Cleanup ${targetExamId ? `for Exam ${targetExamId}` : '(All Exams)'}`);
-        console.log('🔒 SAFETY RULE: Questions with student answers will NEVER be deleted.');
+        console.log(`[Deduplication] Starting Safe Question Deduplication & Empty Cleanup ${targetExamId ? `for Exam ${targetExamId}` : '(All Exams)'}`);
+        console.log('[Deduplication] SAFETY RULE: Questions with student answers will NEVER be deleted.');
         console.log('===========================================================');
         let duplicatesDeleted = 0;
         let duplicatesSoftDeleted = 0;
@@ -107,7 +107,9 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                 select: {
                     id: true,
                     text: true,
+                    textEn: true,
                     options: true,
+                    optionsEn: true,
                     subExamId: true,
                     moduleId: true,
                     imageUrl: true,
@@ -120,7 +122,9 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
             // Group by core signature
             const groups = new Map();
             for (const q of questions) {
-                const sig = getQuestionCoreSignature(q.text, q.options);
+                const sigAr = getQuestionCoreSignature(q.text, q.options);
+                const sigEn = getQuestionCoreSignature(q.textEn, q.optionsEn);
+                const sig = sigAr || sigEn;
                 // Empty questions will be handled in Phase 2
                 if (!sig && !q.imageUrl && !q.videoUrl)
                     continue;
@@ -132,7 +136,7 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
             for (const [sig, group] of groups.entries()) {
                 if (group.length <= 1)
                     continue;
-                console.log(`\n🔎 Found ${group.length} duplicate questions in Exam "${exam.title}" (${exam.id}) [Sig: ${sig}]`);
+                console.log(`\nFound ${group.length} duplicate questions in Exam "${exam.title}" (${exam.id}) [Sig: ${sig}]`);
                 // Check student answers for all questions in this duplicate group
                 const questionsWithAnswerCounts = yield Promise.all(group.map((q) => __awaiter(this, void 0, void 0, function* () {
                     const answersCount = yield prisma.studentAnswer.count({
@@ -153,10 +157,10 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                         yield prisma.xPHistory.deleteMany({ where: { questionId: item.id } }).catch(() => { });
                         yield prisma.question.delete({ where: { id: item.id } });
                         duplicatesDeleted++;
-                        console.log(`   ✅ [DELETED DUPLICATE] Question ${item.id} (0 answers) - kept ${questionToKeep.id}`);
+                        console.log(`   [DELETED DUPLICATE] Question ${item.id} (0 answers) - kept ${questionToKeep.id}`);
                     }
                     catch (delErr) {
-                        console.error(`   ❌ Failed to delete duplicate question ${item.id}:`, delErr.message);
+                        console.error(`   Failed to delete duplicate question ${item.id}:`, delErr.message);
                     }
                 }
                 // 2. Extra duplicates that HAVE student answers:
@@ -171,10 +175,10 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                         });
                         duplicatesSoftDeleted++;
                         preservedWithAnswers++;
-                        console.log(`   🛡️ [SOFT-DELETED DUPLICATE] Question ${item.id} (${item.answersCount} answers preserved in DB) - kept active ${questionToKeep.id}`);
+                        console.log(`   [SOFT-DELETED DUPLICATE] Question ${item.id} (${item.answersCount} answers preserved in DB) - kept active ${questionToKeep.id}`);
                     }
                     catch (softErr) {
-                        console.error(`   ❌ Failed to soft-delete duplicate question ${item.id}:`, softErr.message);
+                        console.error(`   Failed to soft-delete duplicate question ${item.id}:`, softErr.message);
                     }
                 }
             }
@@ -190,6 +194,7 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
             select: {
                 id: true,
                 text: true,
+                textEn: true,
                 imageUrl: true,
                 videoUrl: true,
                 exam: { select: { title: true } },
@@ -197,10 +202,11 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
         });
         for (const q of allQuestions) {
             const cleanText = normalizeQuestionText(q.text);
+            const cleanTextEn = normalizeQuestionText(q.textEn);
             const hasImage = Boolean(q.imageUrl && q.imageUrl.trim().length > 0);
             const hasVideo = Boolean(q.videoUrl && q.videoUrl.trim().length > 0);
-            // If completely empty text (< 2 non-whitespace characters) and no image/video
-            if (cleanText.length < 2 && !hasImage && !hasVideo) {
+            // If completely empty text in both Arabic and English (< 2 characters) and no image/video
+            if (cleanText.length < 2 && cleanTextEn.length < 2 && !hasImage && !hasVideo) {
                 // Check for student answers
                 const answersCount = yield prisma.studentAnswer.count({
                     where: { questionId: q.id },
@@ -214,10 +220,10 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                         });
                         emptyQuestionsSoftDeleted++;
                         preservedWithAnswers++;
-                        console.log(`   🛡️ [SOFT-DELETED EMPTY] Blank question ${q.id} in Exam "${(_a = q.exam) === null || _a === void 0 ? void 0 : _a.title}" (${answersCount} answers preserved in DB).`);
+                        console.log(`   [SOFT-DELETED EMPTY] Blank question ${q.id} in Exam "${(_a = q.exam) === null || _a === void 0 ? void 0 : _a.title}" (${answersCount} answers preserved in DB).`);
                     }
                     catch (softErr) {
-                        console.error(`   ❌ Failed to soft-delete empty question ${q.id}:`, softErr.message);
+                        console.error(`   Failed to soft-delete empty question ${q.id}:`, softErr.message);
                     }
                 }
                 else {
@@ -226,10 +232,10 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
                         yield prisma.xPHistory.deleteMany({ where: { questionId: q.id } }).catch(() => { });
                         yield prisma.question.delete({ where: { id: q.id } });
                         emptyQuestionsDeleted++;
-                        console.log(`   ✅ [DELETED EMPTY] Removed blank question ${q.id} (0 answers).`);
+                        console.log(`   [DELETED EMPTY] Removed blank question ${q.id} (0 answers).`);
                     }
                     catch (delErr) {
-                        console.error(`   ❌ Failed to delete empty question ${q.id}:`, delErr.message);
+                        console.error(`   Failed to delete empty question ${q.id}:`, delErr.message);
                     }
                 }
             }
@@ -239,7 +245,7 @@ function runSafeDeduplicationAndEmptyCleanup(targetExamId) {
             ? yield prisma.question.count({ where: { examId: targetExamId, deletedAt: null } })
             : yield prisma.question.count({ where: { deletedAt: null } });
         console.log('===========================================================');
-        console.log('🎉 Cleanup Summary:');
+        console.log('[Deduplication] Cleanup Summary:');
         console.log(`   - Duplicate Questions Hard-Deleted (0 answers): ${duplicatesDeleted}`);
         console.log(`   - Duplicate Questions Soft-Deleted (answers kept): ${duplicatesSoftDeleted}`);
         console.log(`   - Empty Questions Hard-Deleted (0 answers):     ${emptyQuestionsDeleted}`);

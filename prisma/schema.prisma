@@ -304,8 +304,10 @@ model Question {
   id              String          @id @default(uuid())
   examId          String
   text            String
+  textEn          String?
   type            String          @default("MCQ")
   options         String
+  optionsEn       String?
   correctAnswer   String
   points          Int             @default(1)
   xpPoints        Int             @default(10)
@@ -326,6 +328,7 @@ model Question {
   errorPattern    String?
   estimatedTime   String?
   explanation     String?
+  explanationEn   String?
   imageUrl        String?
   order           Int             @default(0)
   deletedAt       DateTime?
@@ -489,9 +492,14 @@ model InteractiveActivity {
   id               String                @id @default(uuid())
   lessonId         String
   title            String
+  titleEn          String?
+  questionText     String?
+  questionTextEn   String?
   type             String                // MCQ, MATCHING, DRAG_DROP, SORTING, CLOCK, MAZE...
   options          String                // JSON config
+  optionsEn        String?               // JSON config for English
   correctAnswer    String                // JSON correct answer
+  correctAnswerEn  String?               // JSON correct answer for English
   points           Int                   @default(10)
   xpPoints         Int                   @default(10)
   difficulty       String                @default("Medium") // Easy, Medium, Hard
@@ -506,9 +514,13 @@ model InteractiveActivity {
   
   // Educational elements
   hint             String?
+  hintEn           String?
   tip              String?
+  tipEn            String?
   explanation      String?
+  explanationEn    String?
   keyInsight       String?
+  keyInsightEn     String?
   
   lesson           SkillLesson           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   attempts         ActivityAttempt[]

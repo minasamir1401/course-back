@@ -278,6 +278,48 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
           });
           if (s.id) subExamIdMap[s.id] = createdSubExam.id;
         }
+
+        const subModulesInput = Array.isArray(m.subModules) ? m.subModules : [];
+        for (let smIdx = 0; smIdx < subModulesInput.length; smIdx++) {
+          const sm = subModulesInput[smIdx];
+          if (!sm) continue;
+          const frontendSubModId = sm.id;
+          const createdSubMod = await tx.examModule.create({
+            data: {
+              examId: newExam.id,
+              parentModuleId: createdMod.id,
+              title: sm.title ? sanitizeHtml(sm.title) : `Sub-Module ${smIdx + 1}`,
+              description: sm.description ? sanitizeHtml(sm.description) : null,
+              order: sm.order !== undefined ? parseInt(sm.order) : smIdx,
+              duration: sm.duration ? parseInt(sm.duration) : null,
+              passingScore: sm.passingScore ? parseInt(sm.passingScore) : null,
+              gradeTarget: sm.gradeTarget ? sanitizeHtml(sm.gradeTarget) : null,
+              publishDate: sm.publishDate ? new Date(sm.publishDate) : null,
+              cutOffDate: sm.cutOffDate ? new Date(sm.cutOffDate) : null,
+            }
+          });
+          if (frontendSubModId) moduleIdMap[frontendSubModId] = createdSubMod.id;
+
+          const smSubExamsInput = Array.isArray(sm.subExams) ? sm.subExams : [];
+          for (let sj = 0; sj < smSubExamsInput.length; sj++) {
+            const s = smSubExamsInput[sj];
+            if (!s) continue;
+            const createdSubExam = await tx.subExam.create({
+              data: {
+                moduleId: createdSubMod.id,
+                title: s.title ? sanitizeHtml(s.title) : `Sub-Exam ${sj + 1}`,
+                password: s.password ? sanitizeHtml(s.password) : null,
+                duration: s.duration ? parseInt(s.duration) : null,
+                passingScore: s.passingScore ? parseInt(s.passingScore) : null,
+                attemptsAllowed: s.attemptsAllowed ? parseInt(s.attemptsAllowed) : 1,
+                order: s.order !== undefined ? parseInt(s.order) : sj,
+                publishDate: s.publishDate ? new Date(s.publishDate) : null,
+                cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null,
+              }
+            });
+            if (s.id) subExamIdMap[s.id] = createdSubExam.id;
+          }
+        }
       }
 
       // Sequential Question Creation
@@ -290,8 +332,10 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
           data: {
             examId: newExam.id,
             text: extractAndSaveBase64Images(sanitizeHtml(q.text || '')),
+            textEn: q.textEn ? extractAndSaveBase64Images(sanitizeHtml(q.textEn)) : null,
             type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type) ? sanitizeHtml(q.type) : 'MCQ',
             options: extractAndSaveBase64Images(typeof q.options === 'string' ? q.options : JSON.stringify(q.options || [])),
+            optionsEn: q.optionsEn ? extractAndSaveBase64Images(typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(q.optionsEn || [])) : null,
             correctAnswer: formatCorrectAnswer(q),
             points: parseInt(q.points) || 1,
             xpPoints: parseInt(q.xpPoints) || 10,
@@ -312,6 +356,7 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
             errorPattern: q.errorPattern ? sanitizeHtml(q.errorPattern) : null,
             estimatedTime: q.estimatedTime ? sanitizeHtml(q.estimatedTime) : null,
             explanation: formatExplanation(q),
+            explanationEn: q.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(q.explanationEn)) : null,
             imageUrl: q.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(q.imageUrl)) : null,
             moduleId: resolvedModuleId,
             subExamId: q.subExamId
@@ -331,8 +376,15 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
             orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
           },
           modules: {
+            where: { parentModuleId: null },
             orderBy: { order: 'asc' },
-            include: { subExams: { orderBy: { order: 'asc' } } }
+            include: {
+              subExams: { orderBy: { order: 'asc' } },
+              subModules: {
+                orderBy: { order: 'asc' },
+                include: { subExams: { orderBy: { order: 'asc' } } }
+              }
+            }
           }
         }
       });
@@ -341,7 +393,7 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
 
     res.json({ message: 'Exam created successfully', exam });
   } catch (error: any) {
-    console.error('❌ Exam creation error:', error);
+    console.error(' Exam creation error:', error);
     res.status(500).json({ error: 'Error creating exam', details: error.message });
   }
 };
@@ -461,6 +513,7 @@ export const getExamHandler3 = async (req: Request, res: Response) => {
         creator: { select: { name: true } },
         _count: { select: { questions: { where: { deletedAt: null } } } },
         modules: {
+          where: { parentModuleId: null },
           orderBy: { order: 'asc' },
           include: {
             parentModule: { select: { id: true, title: true } },
@@ -593,14 +646,22 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
     if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
       return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
     }
-    // Removing an unsaved draft row is allowed; persisted deletions require Super Admin.
+    // Removing an unsaved draft row is allowed.
+    // Persisted questions with existing student answers cannot be deleted to preserve grade integrity.
     const requestedDeletes = (deletedQuestionIds || []).filter((value: unknown): value is string => typeof value === 'string');
-    if ((req as any).user.role !== 'SUPER_ADMIN' && requestedDeletes.length > 0) {
+    if (requestedDeletes.length > 0 && (req as any).user.role !== 'SUPER_ADMIN') {
       const persistedDeletes = await prisma.question.count({
         where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
       });
       if (persistedDeletes > 0) {
-        return res.status(403).json({ error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.' });
+        const answersCount = await prisma.studentAnswer.count({
+          where: { questionId: { in: requestedDeletes } }
+        });
+        if (answersCount > 0) {
+          return res.status(403).json({
+            error: 'لا يمكن حذف أسئلة تم تسجيل إجابات للطلاب عليها للحفاظ على سلامة درجات الطلاب. Questions with student answers cannot be deleted.'
+          });
+        }
       }
     }
 
@@ -662,10 +723,16 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
       if (req.body.modules !== undefined) {
         modulesProvided = true;
         const sanitizedModules = Array.isArray(req.body.modules) ? req.body.modules : [];
-        incomingModuleIds = sanitizedModules.map((m: any) => m.id).filter(Boolean);
+        incomingModuleIds = sanitizedModules.flatMap((m: any) => [
+          m?.id,
+          ...(Array.isArray(m?.subModules) ? m.subModules.map((sm: any) => sm?.id) : [])
+        ]).filter(Boolean);
 
-        // 1. Gather all incoming SubExams across all modules
-        incomingSubExamIds = sanitizedModules.flatMap((m: any) => (m.subExams || []).map((s: any) => s.id)).filter(Boolean);
+        // 1. Gather all incoming SubExams across all modules and subModules
+        incomingSubExamIds = sanitizedModules.flatMap((m: any) => [
+          ...(Array.isArray(m?.subExams) ? m.subExams.map((s: any) => s?.id) : []),
+          ...(Array.isArray(m?.subModules) ? m.subModules.flatMap((sm: any) => (Array.isArray(sm?.subExams) ? sm.subExams.map((s: any) => s?.id) : [])) : [])
+        ]).filter(Boolean);
 
         const { moduleIds: deletedModuleIds, subExamIds: deletedSubExamIds } = resolveExplicitExamDeletions(req.body);
 
@@ -832,6 +899,64 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
 
             if (sm.id) moduleIdMap.set(String(sm.id).trim(), subModId);
             moduleIdMap.set(subModId, subModId);
+
+            // Sub-exams inside this submodule
+            const sanitizedSmSubExams = Array.isArray(sm.subExams) ? sm.subExams : [];
+            for (let sj = 0; sj < sanitizedSmSubExams.length; sj++) {
+              const s = sanitizedSmSubExams[sj];
+              if (!s) continue;
+              const sData = {
+                title: s.title ? sanitizeHtml(s.title) : `Sub-Exam ${sj + 1}`,
+                password: s.password ? sanitizeHtml(s.password) : null,
+                duration: s.duration ? parseInt(s.duration) : null,
+                passingScore: s.passingScore ? parseInt(s.passingScore) : null,
+                attemptsAllowed: s.attemptsAllowed ? parseInt(s.attemptsAllowed) : 1,
+                order: s.order !== undefined ? parseInt(s.order) : sj,
+                publishDate: s.publishDate ? new Date(s.publishDate) : null,
+                cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null
+              };
+
+              const existingSub = s.id
+                ? await tx.subExam.findFirst({ where: { moduleId: subModId, OR: [{ id: s.id }, { title: sData.title }] } })
+                : await tx.subExam.findFirst({ where: { moduleId: subModId, title: sData.title } });
+
+              const candidateSubId = existingSub?.id || (s.id ? String(s.id).trim() : null);
+              let subUpdated = false;
+              let subExamId = s.id;
+
+              if (candidateSubId) {
+                const updateSubRes = await tx.subExam.updateMany({
+                  where: { id: candidateSubId, moduleId: subModId },
+                  data: sData
+                });
+                if (updateSubRes.count > 0) {
+                  subExamId = candidateSubId;
+                  subUpdated = true;
+                }
+              }
+
+              if (!subUpdated) {
+                const isValidSubUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateSubId || '');
+                let subIdToUse: string | undefined = undefined;
+                if (isValidSubUuid && candidateSubId) {
+                  const subAlreadyExists = await tx.subExam.findUnique({ where: { id: candidateSubId } });
+                  if (!subAlreadyExists) {
+                    subIdToUse = candidateSubId;
+                  }
+                }
+                const createdSub = await tx.subExam.create({
+                  data: {
+                    ...(subIdToUse ? { id: subIdToUse } : {}),
+                    moduleId: subModId,
+                    ...sData
+                  }
+                });
+                subExamId = createdSub.id;
+              }
+
+              if (s.id) subExamIdMap.set(String(s.id).trim(), subExamId);
+              subExamIdMap.set(subExamId, subExamId);
+            }
           }
 
           // Sub-exams
@@ -895,18 +1020,19 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         // Clean up any empty duplicate modules for this exam
         const allModulesInExam = await tx.examModule.findMany({
           where: { examId: id },
-          include: { _count: { select: { questions: { where: { deletedAt: null } }, subExams: true } } }
+          include: { _count: { select: { questions: { where: { deletedAt: null } }, subExams: true, subModules: true } } }
         });
         const seenTitleMap = new Map<string, string>();
         for (const curMod of allModulesInExam) {
           const normTitle = String(curMod.title || '').trim().toLowerCase();
           if (!normTitle) continue;
-          if (seenTitleMap.has(normTitle)) {
-            if (curMod._count.questions === 0 && curMod._count.subExams === 0) {
+          const groupKey = `${curMod.parentModuleId || 'root'}:${normTitle}`;
+          if (seenTitleMap.has(groupKey)) {
+            if (curMod._count.questions === 0 && curMod._count.subExams === 0 && curMod._count.subModules === 0) {
               await tx.examModule.deleteMany({ where: { id: curMod.id, examId: id } });
             }
           } else {
-            seenTitleMap.set(normTitle, curMod.id);
+            seenTitleMap.set(groupKey, curMod.id);
           }
         }
       }
@@ -959,12 +1085,12 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           select: { id: true }
         });
 
-        // 🔒 100% FOREIGN KEY SAFE: ONLY real DB IDs confirmed to exist in the database!
+        //  100% FOREIGN KEY SAFE: ONLY real DB IDs confirmed to exist in the database!
         // Unverified client IDs from incomingModuleIds or incomingSubExamIds MUST NEVER be added directly.
         const validModuleIdSet = new Set<string>(existingExamModules.map(m => m.id));
         const validSubExamIdSet = new Set<string>(existingSubExams.map(s => s.id));
 
-        // ✅ KEY FIX: Track which IDs the client explicitly sent in the payload
+        //  KEY FIX: Track which IDs the client explicitly sent in the payload
         // We only soft-delete questions the client KNEW about (had their ID) but chose to remove.
         // Questions sent without an ID are new — they never trigger deletions.
         for (let i = 0; i < sanitizedQuestions.length; i++) {
@@ -974,11 +1100,12 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             continue;
           }
           const newExplanation = formatExplanation(q);
+          const newExplanationEn = q.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(q.explanationEn)) : null;
 
           const cleanModuleId = q.moduleId ? sanitizeHtml(String(q.moduleId).trim()) : null;
           const cleanSubExamId = q.subExamId ? sanitizeHtml(String(q.subExamId).trim()) : null;
 
-          // 🔒 Resolve client temporary or mapped IDs to actual DB IDs, strictly verifying FK existence
+          //  Resolve client temporary or mapped IDs to actual DB IDs, strictly verifying FK existence
           const mappedModuleId = cleanModuleId ? (moduleIdMap.get(cleanModuleId) || cleanModuleId) : null;
           const resolvedModuleId = mappedModuleId && validModuleIdSet.has(mappedModuleId) ? mappedModuleId : null;
 
@@ -987,8 +1114,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
 
           const qData = {
             text: extractAndSaveBase64Images(sanitizeHtml(q.text || '')),
+            textEn: q.textEn !== undefined ? (q.textEn ? extractAndSaveBase64Images(sanitizeHtml(q.textEn)) : null) : undefined,
             type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type === 'QUESTION' && q.label ? q.label : q.type) ? sanitizeHtml(q.type === 'QUESTION' && q.label ? q.label : q.type) : 'MCQ',
             options: extractAndSaveBase64Images(typeof q.options === 'string' ? q.options : JSON.stringify(q.options || [])),
+            optionsEn: q.optionsEn !== undefined ? (q.optionsEn ? extractAndSaveBase64Images(typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(q.optionsEn)) : null) : undefined,
             correctAnswer: formatCorrectAnswer(q),
             points: parseInt(q.points) || 1,
             xpPoints: parseInt(q.xpPoints) || 10,
@@ -1009,16 +1138,18 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             errorPattern: q.errorPattern !== undefined ? (q.errorPattern ? sanitizeHtml(q.errorPattern) : null) : undefined,
             estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? sanitizeHtml(q.estimatedTime) : null) : undefined,
             explanation: newExplanation,
+            explanationEn: newExplanationEn,
             imageUrl: q.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(q.imageUrl)) : null,
-            // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
+            //  FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
             moduleId: resolvedModuleId,
             subExamId: resolvedSubExamId,
             order: questionScopeId && typeof q.id === 'string' ? (existingQuestionMap.get(q.id)?.order ?? i) : i
           };
 
-          // Skip completely empty question rows that have no text and no media
+          // Skip completely empty question rows that have no text in either Arabic or English and no media
           const qNormText = robustNormalizeText(qData.text);
-          if (qNormText.length < 2 && !qData.imageUrl && !qData.videoUrl) {
+          const qNormTextEn = qData.textEn ? robustNormalizeText(qData.textEn) : '';
+          if (qNormText.length < 2 && qNormTextEn.length < 2 && !qData.imageUrl && !qData.videoUrl) {
             console.warn(`[Exam Update] Skipping empty question row with no text or media (index ${i})`);
             continue;
           }
@@ -1047,7 +1178,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           if (targetQuestionId) {
             // Update existing question to preserve StudentAnswers
             const updatePayload: any = { ...qData };
-            // ✅ ROOT CAUSE FIX: If the new explanation is null (frontend sent empty/[])
+            //  ROOT CAUSE FIX: If the new explanation is null (frontend sent empty/[])
             // AND the DB has an existing non-null explanation → preserve it.
             // Only overwrite explanation if the incoming payload has real content.
             if (updatePayload.explanation === null && q.clearExplanation !== true) {
@@ -1098,13 +1229,10 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           await tx.question.createMany({ data: pendingQuestions.slice(offset, offset + 250) });
         }
 
-        // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
-        // Never infer deletes from a missing question in the payload; that can happen when
-        // frontend IDs are lost, and would hide existing StudentAnswers in reports.
-        // ONLY Super Admin is allowed to delete questions!
-        const isSuperAdmin = (req as any).user?.role === 'SUPER_ADMIN';
-        if (isSuperAdmin) {
-          if (explicitDeletedIds.size) await tx.question.updateMany({
+        // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI
+        // and verified against student submission protection above.
+        if (explicitDeletedIds.size) {
+          await tx.question.updateMany({
             where: { id: { in: Array.from(explicitDeletedIds) }, examId: id },
             data: { deletedAt: new Date() }
           });
@@ -1152,8 +1280,15 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
           },
           modules: {
+            where: { parentModuleId: null },
             orderBy: { order: 'asc' },
-            include: { subExams: { orderBy: { order: 'asc' } } }
+            include: {
+              subExams: { orderBy: { order: 'asc' } },
+              subModules: {
+                orderBy: { order: 'asc' },
+                include: { subExams: { orderBy: { order: 'asc' } } }
+              }
+            }
           }
         }
       });
@@ -1166,7 +1301,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
     const { questions: savedQuestions, modules: savedModules, ...examSummary } = exam;
     res.json({ message: 'Exam updated successfully', exam: req.query.compact === 'true' ? examSummary : exam, modules: savedModules, questions: savedQuestions });
   } catch (error: any) {
-    console.error('❌ Exam update error:', error); require('fs').writeFileSync('error_log.txt', String(error) + '\n' + error.stack);
+    console.error(' Exam update error:', error); require('fs').writeFileSync('error_log.txt', String(error) + '\n' + error.stack);
     res.status(500).json({ error: 'Error updating exam', details: error.message });
   }
 };
@@ -1194,7 +1329,7 @@ export const deleteExamHandler6 = async (req: Request, res: Response) => {
 
     res.json({ message: 'Exam deleted successfully' });
   } catch (error) {
-    console.error('❌ Delete error:', error);
+    console.error(' Delete error:', error);
     res.status(500).json({ error: 'Error deleting exam' });
   }
 };
@@ -1440,15 +1575,23 @@ export const getExamQuestionsHandler = async (req: Request, res: Response) => {
     const parsedQuestions = questions.map(q => {
       let options = [];
       try {
-        options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+        options = typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || []);
       } catch (e) {
         options = [];
       }
-      if (role === 'STUDENT') {
-        const { correctAnswer, explanation, ...rest } = q;
-        return { ...rest, options };
+      let optionsEn = null;
+      if (q.optionsEn) {
+        try {
+          optionsEn = typeof q.optionsEn === 'string' ? JSON.parse(q.optionsEn) : q.optionsEn;
+        } catch (e) {
+          optionsEn = q.optionsEn;
+        }
       }
-      return { ...q, options };
+      if (role === 'STUDENT') {
+        const { correctAnswer, explanation, explanationEn, ...rest } = q;
+        return { ...rest, options, optionsEn };
+      }
+      return { ...q, options, optionsEn };
     });
 
     res.json({ questions: parsedQuestions });
@@ -1475,6 +1618,7 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
       include: {
         schools: { select: { id: true, name: true } },
         modules: {
+          where: { parentModuleId: null },
           orderBy: { order: 'asc' },
           include: {
             parentModule: { select: { id: true, title: true } },
@@ -1542,11 +1686,19 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
       parsedQuestions = (exam as any).questions.map((q: any) => {
         let options = [];
         try {
-          options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+          options = typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || []);
         } catch (e) {
           options = [];
         }
-        return { ...q, options };
+        let optionsEn = null;
+        if (q.optionsEn) {
+          try {
+            optionsEn = typeof q.optionsEn === 'string' ? JSON.parse(q.optionsEn) : q.optionsEn;
+          } catch (e) {
+            optionsEn = q.optionsEn;
+          }
+        }
+        return { ...q, options, optionsEn };
       });
     }
 
@@ -1575,7 +1727,7 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
 
     if ((req as any).user.role === 'STUDENT') {
       const sanitizedQuestions = parsedQuestions.map(q => {
-        const { correctAnswer, explanation, ...rest } = q;
+        const { correctAnswer, explanation, explanationEn, ...rest } = q;
         return rest;
       });
       return res.json({
@@ -1612,7 +1764,14 @@ export const postExamHandler11 = async (req: any, res: any) => {
       where: { id: examId },
       include: {
         schools: { select: { id: true } },
-        modules: { include: { subExams: true } },
+        modules: {
+          include: {
+            subExams: true,
+            subModules: {
+              include: { subExams: true }
+            }
+          }
+        },
         _count: {
           select: { submissions: { where: { userId } } }
         }
@@ -1621,7 +1780,10 @@ export const postExamHandler11 = async (req: any, res: any) => {
 
     if (!exam) return res.status(404).json({ error: 'الامتحان غير موجود' });
     const selectedSubExam = subExamId
-      ? exam.modules.flatMap((module: any) => module.subExams || []).find((subExam: any) => subExam.id === subExamId)
+      ? exam.modules.flatMap((module: any) => [
+          ...(module.subExams || []),
+          ...((module.subModules || []).flatMap((sm: any) => sm.subExams || []))
+        ]).find((subExam: any) => subExam.id === subExamId)
       : null;
     if (subExamId && !selectedSubExam) return res.status(404).json({ error: 'الاختبار غير موجود داخل هذا الموديول.' });
     const accessUser = (req as any).user.role === 'STUDENT'
@@ -1672,7 +1834,26 @@ export const getExamHandler12 = async (req: any, res: any) => {
 
     const exam = await prisma.exam.findUnique({
       where: { id: examId },
-      select: { attemptsAllowed: true, isCentral: true, schoolId: true, schools: { select: { id: true } }, grade: true, grades: true, status: true, deletedAt: true, modules: { select: { subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } } } } }
+      select: {
+        attemptsAllowed: true,
+        isCentral: true,
+        schoolId: true,
+        schools: { select: { id: true } },
+        grade: true,
+        grades: true,
+        status: true,
+        deletedAt: true,
+        modules: {
+          select: {
+            subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } },
+            subModules: {
+              select: {
+                subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } }
+              }
+            }
+          }
+        }
+      }
     });
 
     if (!exam || exam.deletedAt) return res.status(404).json({ error: 'Exam not found' });
@@ -1692,7 +1873,11 @@ export const getExamHandler12 = async (req: any, res: any) => {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
     });
 
-    const selectedAttemptsAllowed = exam?.modules.flatMap((module: any) => module.subExams || [])[0]?.attemptsAllowed;
+    const allMatchingSubExams = exam?.modules ? exam.modules.flatMap((module: any) => [
+      ...(module.subExams || []),
+      ...((module.subModules || []).flatMap((sm: any) => sm.subExams || []))
+    ]) : [];
+    const selectedAttemptsAllowed = allMatchingSubExams[0]?.attemptsAllowed;
     res.json({
       taken: submissionCount > 0,
       submissionId: lastSubmission?.id,
@@ -1735,7 +1920,14 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
         startDate: true, endDate: true, resultVisibility: true, password: true,
         grade: true, grades: true,
         schools: { select: { id: true } },
-        modules: { include: { subExams: true } },
+        modules: {
+          include: {
+            subExams: true,
+            subModules: {
+              include: { subExams: true }
+            }
+          }
+        },
         questions: {
           where: { deletedAt: null, ...(subExamId ? { subExamId } : {}) },
           orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
@@ -1746,7 +1938,10 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
 
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
     const selectedSubExam = subExamId
-      ? exam.modules.flatMap((module: any) => module.subExams || []).find((subExam: any) => subExam.id === subExamId)
+      ? exam.modules.flatMap((module: any) => [
+          ...(module.subExams || []),
+          ...((module.subModules || []).flatMap((sm: any) => sm.subExams || []))
+        ]).find((subExam: any) => subExam.id === subExamId)
       : null;
     if (subExamId && !selectedSubExam) return res.status(404).json({ error: 'Exam section not found' });
     const accessUser = (req as any).user.role === 'STUDENT'
@@ -1939,7 +2134,7 @@ export const postExamHandler13 = async (req: Request, res: Response) => {
       details: (exam.resultVisibility === 'SHOW_ANSWERS' || exam.resultVisibility === 'SHOW_ALL') ? (submission as any).answers : null
     });
   } catch (error: any) {
-    console.error('❌ Submission error:', error);
+    console.error(' Submission error:', error);
     res.status(500).json({ error: 'Error submitting exam', details: error.message });
   } finally {
     releaseLock(lockKey);
@@ -2170,7 +2365,7 @@ export const postExamHandler16 = async (req: any, res: any) => {
     });
     res.json({ message: 'Exam restored successfully', exam });
   } catch (error) {
-    console.error('❌ Restore exam error:', error);
+    console.error(' Restore exam error:', error);
     res.status(500).json({ error: 'Error restoring exam' });
   }
 };
@@ -2185,7 +2380,7 @@ export const postExamHandler17 = async (req: any, res: any) => {
     });
     res.json({ message: 'Question restored successfully', question });
   } catch (error) {
-    console.error('❌ Restore question error:', error);
+    console.error(' Restore question error:', error);
     res.status(500).json({ error: 'Error restoring question' });
   }
 };
@@ -3067,8 +3262,10 @@ export const getExamHandler31 = async (req: Request, res: Response) => {
       },
       questions: subExam.questions.map((question: any) => ({
         text: question.text,
+        textEn: question.textEn,
         type: question.type,
         options: question.options,
+        optionsEn: question.optionsEn,
         correctAnswer: question.correctAnswer,
         points: question.points,
         xpPoints: question.xpPoints,
@@ -3089,6 +3286,7 @@ export const getExamHandler31 = async (req: Request, res: Response) => {
         errorPattern: question.errorPattern,
         estimatedTime: question.estimatedTime,
         explanation: question.explanation,
+        explanationEn: question.explanationEn,
         imageUrl: question.imageUrl,
         order: question.order,
       })),
@@ -3148,8 +3346,10 @@ export const postExamHandler32 = async (req: Request, res: Response) => {
             moduleId,
             subExamId: created.id,
             text: extractAndSaveBase64Images(sanitizeHtml(question.text || '')),
+            textEn: question.textEn ? extractAndSaveBase64Images(sanitizeHtml(question.textEn)) : null,
             type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(question.type) ? sanitizeHtml(question.type) : 'MCQ',
             options: extractAndSaveBase64Images(typeof question.options === 'string' ? question.options : JSON.stringify(question.options || [])),
+            optionsEn: question.optionsEn ? extractAndSaveBase64Images(typeof question.optionsEn === 'string' ? question.optionsEn : JSON.stringify(question.optionsEn || [])) : null,
             correctAnswer: formatCorrectAnswer(question),
             points: parseInt(question.points) || 1,
             xpPoints: parseInt(question.xpPoints) || 10,
@@ -3170,6 +3370,7 @@ export const postExamHandler32 = async (req: Request, res: Response) => {
             errorPattern: question.errorPattern ? sanitizeHtml(question.errorPattern) : null,
             estimatedTime: question.estimatedTime ? sanitizeHtml(question.estimatedTime) : null,
             explanation: formatExplanation(question),
+            explanationEn: question.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(question.explanationEn)) : null,
             imageUrl: question.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(question.imageUrl)) : null,
             order: question.order !== undefined ? parseInt(question.order) : index,
           }
@@ -3521,7 +3722,7 @@ export function formatExplanation(q: any): string | null {
   }
   // 2. Check explanation field
   if (q.explanation !== undefined && q.explanation !== null) {
-    // 🔒 SECURITY FIX: Always sanitize HTML regardless of input type.
+    //  SECURITY FIX: Always sanitize HTML regardless of input type.
     // Convert non-strings to string safely before sanitizing.
     const rawExplanation: string =
       typeof q.explanation === 'string'
@@ -3559,7 +3760,20 @@ export function formatExplanation(q: any): string | null {
 
 export const cleanDuplicatesHandler = async (req: Request, res: Response) => {
   try {
-    const examId = req.params.id || req.body?.examId;
+    const userRole = (req as any).user?.role;
+    let examId: string | undefined = undefined;
+
+    if (req.params.id) {
+      if (req.body?.examId && String(req.body.examId) !== String(req.params.id)) {
+        return res.status(400).json({ error: 'Mismatched exam ID between path and body parameters.' });
+      }
+      examId = String(req.params.id);
+    } else if (userRole === 'SUPER_ADMIN') {
+      examId = req.body?.examId ? String(req.body.examId) : undefined;
+    } else {
+      return res.status(403).json({ error: 'Exam ID path parameter is required.' });
+    }
+
     const result = await runSafeDeduplicationAndEmptyCleanup(examId);
     return res.json({
       success: true,

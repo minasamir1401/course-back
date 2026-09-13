@@ -16,19 +16,20 @@ const express_1 = require("express");
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
 const shared_1 = require("../shared");
+const translation_service_1 = require("../services/translation.service");
 const router = (0, express_1.Router)();
-// --- Extracted from lines 645-649 ---
-router.get('/api/health', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+// ==========================================
+// SYSTEM & HEALTH API
+// ==========================================
+router.get('/api/health', (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        yield Promise.race([
-            prisma_1.default.$queryRaw `SELECT 1`,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Database health check timed out')), 5000)),
-        ]);
-        res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+        yield prisma_1.default.$queryRaw `SELECT 1`;
+        return res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() });
     }
-    catch (_a) {
-        res.status(503).json({
-            status: 'degraded',
+    catch (err) {
+        return res.status(503).json({
+            status: 'error',
+            database: 'disconnected',
             error: 'Database unavailable',
             timestamp: new Date().toISOString(),
         });
@@ -36,7 +37,7 @@ router.get('/api/health', (req, res) => __awaiter(void 0, void 0, void 0, functi
 }));
 // Serve uploaded files as static assets with Cache-Control
 router.post('/api/upload', auth_1.verifyToken, (req, res) => {
-    shared_1.multerUpload.single('file')(req, res, (err) => {
+    shared_1.multerUpload.single('file')(req, res, (err) => __awaiter(void 0, void 0, void 0, function* () {
         if (err) {
             return res.status(400).json({ error: 'Upload failed', details: err.message });
         }
@@ -44,24 +45,22 @@ router.post('/api/upload', auth_1.verifyToken, (req, res) => {
             if (!req.file) {
                 return res.status(400).json({ error: 'No file provided.' });
             }
-            const fileUrl = `/uploads/${req.file.filename}`;
+            const persisted = yield (0, shared_1.persistUpload)(req.file.path, req.file.filename, req.file.mimetype);
             return res.json({
                 message: 'File uploaded successfully',
-                url: fileUrl,
+                url: persisted.url,
                 filename: req.file.filename,
                 originalName: req.file.originalname,
                 size: req.file.size,
-                mimetype: req.file.mimetype
+                mimetype: req.file.mimetype,
+                isCloud: persisted.isCloud,
             });
         }
         catch (innerErr) {
             return res.status(500).json({ error: 'Upload processing failed', details: innerErr.message });
         }
-    });
+    }));
 });
-// ==========================================
-// 👥 BULK USER IMPORT (Excel → JSON payload)
-// ==========================================
 // Protected admin-only migration trigger
 router.post('/api/system/migrate-images-now', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => {
     const { exec } = require('child_process');
@@ -72,7 +71,6 @@ router.post('/api/system/migrate-images-now', auth_1.verifyToken, (0, auth_1.che
         res.json({ message: "Migration triggered successfully!", stdout });
     });
 });
-// 🔴 DANGER: WIPE ALL DUMMY DATA 🔴
 router.post('/api/system/wipe-all-dummy-data-danger', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { confirm, dryRun } = req.body;
@@ -153,6 +151,26 @@ router.post('/api/system/wipe-seeded-dummy-data', auth_1.verifyToken, (0, auth_1
     catch (error) {
         console.error("Error wiping dummy data:", error);
         res.status(500).json({ error: "Failed to wipe dummy data", details: error.message });
+    }
+}));
+router.post('/api/translate', auth_1.verifyToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { text, texts, from = 'ar', to = 'en' } = req.body;
+        const validFrom = from === 'en' ? 'en' : 'ar';
+        const validTo = to === 'ar' ? 'ar' : 'en';
+        if (text !== undefined) {
+            const translated = yield (0, translation_service_1.translateSingleText)(String(text || ''), validFrom, validTo);
+            return res.json({ translatedText: translated });
+        }
+        if (Array.isArray(texts)) {
+            const translations = yield (0, translation_service_1.translateBatchTexts)(texts, validFrom, validTo);
+            return res.json({ translations });
+        }
+        return res.status(400).json({ error: 'Either "text" or "texts" must be provided.' });
+    }
+    catch (error) {
+        console.error('Translation error:', error);
+        return res.status(500).json({ error: 'Translation failed', details: error.message });
     }
 }));
 exports.default = router;

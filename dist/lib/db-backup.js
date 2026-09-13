@@ -63,10 +63,8 @@ const cloudBackupArchive_1 = require("./cloudBackupArchive");
 // @ts-ignore
 const pg_1 = require("pg");
 const prisma_1 = __importDefault(require("./prisma"));
-const archiverLib = __importStar(require("archiver"));
 const dotenv = __importStar(require("dotenv"));
 dotenv.config();
-const archiverObj = archiverLib.default || archiverLib;
 function createArchive(format, options) {
     const archiver = require('archiver');
     if (format === 'zip' && archiver.ZipArchive) {
@@ -103,7 +101,7 @@ const pool = exports.CLOUD_BACKUP_ENABLED ? new pg_1.Pool({
     end: () => __awaiter(void 0, void 0, void 0, function* () { })
 };
 pool.on('error', (err) => {
-    console.error('❌ [Backup DB] Unexpected error on idle client', err);
+    console.error(' [Backup DB] Unexpected error on idle client', err);
 });
 /**
  * Ensures the cloud_backups table exists
@@ -125,7 +123,7 @@ function ensureTableExists() {
             yield pool.query(query);
         }
         catch (err) {
-            console.error('❌ [Backup DB] Error ensuring table exists:', err);
+            console.error(' [Backup DB] Error ensuring table exists:', err);
         }
     });
 }
@@ -324,7 +322,7 @@ function keepCloudBackupAlive() {
             yield pool.query('SELECT 1;');
         }
         catch (err) {
-            console.error(`❌ [Backup DB] Keep-alive ping failed:`, err);
+            console.error(` [Backup DB] Keep-alive ping failed:`, err);
         }
     });
 }
@@ -392,25 +390,29 @@ function syncMissingCloudCourses() {
                         } : undefined,
                         exams: c.exams && c.exams.length > 0 ? {
                             create: c.exams.map((e) => {
-                                var _a, _b, _c, _d, _e;
+                                var _a, _b, _c, _d, _e, _f;
                                 return ({
                                     id: e.id,
                                     title: e.title,
                                     description: (_a = e.description) !== null && _a !== void 0 ? _a : null,
-                                    durationMinutes: (_b = e.durationMinutes) !== null && _b !== void 0 ? _b : 60,
-                                    passingScore: (_c = e.passingScore) !== null && _c !== void 0 ? _c : 50,
-                                    isCentral: (_d = e.isCentral) !== null && _d !== void 0 ? _d : true,
-                                    isActive: (_e = e.isActive) !== null && _e !== void 0 ? _e : true,
+                                    duration: typeof e.duration === 'number' ? e.duration : (parseInt((_c = (_b = e.durationMinutes) !== null && _b !== void 0 ? _b : e.duration) !== null && _c !== void 0 ? _c : '30', 10) || 30),
+                                    passingScore: typeof e.passingScore === 'number' ? e.passingScore : (parseInt((_d = e.passingScore) !== null && _d !== void 0 ? _d : '50', 10) || 50),
+                                    isCentral: (_e = e.isCentral) !== null && _e !== void 0 ? _e : true,
+                                    status: (_f = e.status) !== null && _f !== void 0 ? _f : 'PUBLISHED',
                                     questions: e.questions && e.questions.length > 0 ? {
                                         create: e.questions.map((q) => {
-                                            var _a, _b, _c, _d;
+                                            var _a, _b, _c, _d, _e, _f, _g, _h, _j;
                                             return ({
                                                 id: q.id,
-                                                questionText: q.questionText,
-                                                type: (_a = q.type) !== null && _a !== void 0 ? _a : 'MULTIPLE_CHOICE',
-                                                options: (_b = q.options) !== null && _b !== void 0 ? _b : null,
-                                                correctAnswer: (_c = q.correctAnswer) !== null && _c !== void 0 ? _c : '',
-                                                points: (_d = q.points) !== null && _d !== void 0 ? _d : 1
+                                                text: (_b = (_a = q.text) !== null && _a !== void 0 ? _a : q.questionText) !== null && _b !== void 0 ? _b : '',
+                                                textEn: (_c = q.textEn) !== null && _c !== void 0 ? _c : null,
+                                                type: (_d = q.type) !== null && _d !== void 0 ? _d : 'MCQ',
+                                                options: typeof q.options === 'string' ? q.options : JSON.stringify((_e = q.options) !== null && _e !== void 0 ? _e : []),
+                                                optionsEn: q.optionsEn ? (typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(q.optionsEn)) : null,
+                                                correctAnswer: typeof q.correctAnswer === 'string' ? q.correctAnswer : JSON.stringify((_f = q.correctAnswer) !== null && _f !== void 0 ? _f : ''),
+                                                points: typeof q.points === 'number' ? q.points : (parseInt((_g = q.points) !== null && _g !== void 0 ? _g : '1', 10) || 1),
+                                                explanation: (_h = q.explanation) !== null && _h !== void 0 ? _h : null,
+                                                explanationEn: (_j = q.explanationEn) !== null && _j !== void 0 ? _j : null
                                             });
                                         })
                                     } : undefined
@@ -419,11 +421,11 @@ function syncMissingCloudCourses() {
                         } : undefined
                     }
                 });
-                console.log(`✅ [Backup DB Sync] Successfully imported missing course: ${c.title}`);
+                console.log(`[Backup DB Sync] Successfully imported missing course: ${c.title}`);
             }
         }
         catch (err) {
-            console.error(`❌ [Backup DB Sync] Error importing missing courses: ${err.message}`);
+            console.error(`[Backup DB Sync] Error importing missing courses: ${err.message}`);
         }
     });
 }

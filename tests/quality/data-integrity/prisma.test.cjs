@@ -17,7 +17,7 @@ describe('read-only Prisma data integrity', () => {
   test('active exam titles are not duplicated within the same course', async () => {
     const duplicates = await prisma.exam.groupBy({
       by: ['courseId', 'title'],
-      where: { deletedAt: null },
+      where: { deletedAt: null, courseId: { not: null } },
       _count: { title: true },
       having: { title: { _count: { gt: 1 } } },
     });

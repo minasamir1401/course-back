@@ -44,8 +44,10 @@ export const canonicalContent = (value: unknown): string => JSON.stringify(canon
 
 export const buildQuestionFingerprint = (question: any): string => canonicalContent({
   text: question?.text ?? '',
+  textEn: question?.textEn ?? '',
   type: question?.type ?? 'MCQ',
   options: question?.options ?? [],
+  optionsEn: question?.optionsEn ?? [],
   correctAnswer: question?.correctAnswer ?? question?.correctAnswers ?? '',
 });
 
@@ -100,7 +102,9 @@ export const sortPersistedOrder = <T extends PersistedOrderedItem>(items: T[]): 
 const extractText = (fingerprint: string): string => {
   try {
     const parsed = JSON.parse(fingerprint);
-    return typeof parsed?.text === 'string' ? parsed.text.trim() : '';
+    const text = typeof parsed?.text === 'string' ? parsed.text.trim() : '';
+    const textEn = typeof parsed?.textEn === 'string' ? parsed.textEn.trim() : '';
+    return text || textEn;
   } catch {
     return '';
   }

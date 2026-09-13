@@ -55,13 +55,14 @@ if (REDIS_URL) {
             maxRetriesPerRequest: 1,
             enableOfflineQueue: false,
             connectTimeout: 5000,
+            commandTimeout: 1000, // A stalled optional cache must not hold page requests indefinitely.
             retryStrategy(times) {
                 // Exponential backoff capped at 30s
                 return Math.min(times * 1000, 30000);
             }
         });
         redisClient.on('connect', () => {
-            isRedisConnected = true;
+            isRedisConnected = false;
             console.log('✅ [Redis] Connected successfully to shared cache store.');
         });
         redisClient.on('ready', () => {

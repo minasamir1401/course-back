@@ -71,8 +71,8 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
   remainingQuestions: number;
 }> {
   console.log('===========================================================');
-  console.log(`🚀 Starting Safe Question Deduplication & Empty Cleanup ${targetExamId ? `for Exam ${targetExamId}` : '(All Exams)'}`);
-  console.log('🔒 SAFETY RULE: Questions with student answers will NEVER be deleted.');
+  console.log(`[Deduplication] Starting Safe Question Deduplication & Empty Cleanup ${targetExamId ? `for Exam ${targetExamId}` : '(All Exams)'}`);
+  console.log('[Deduplication] SAFETY RULE: Questions with student answers will NEVER be deleted.');
   console.log('===========================================================');
   
   let duplicatesDeleted = 0;
@@ -99,7 +99,9 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
       select: {
         id: true,
         text: true,
+        textEn: true,
         options: true,
+        optionsEn: true,
         subExamId: true,
         moduleId: true,
         imageUrl: true,
@@ -114,7 +116,9 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
     const groups = new Map<string, typeof questions>();
 
     for (const q of questions) {
-      const sig = getQuestionCoreSignature(q.text, q.options);
+      const sigAr = getQuestionCoreSignature(q.text, q.options);
+      const sigEn = getQuestionCoreSignature(q.textEn, q.optionsEn);
+      const sig = sigAr || sigEn;
       // Empty questions will be handled in Phase 2
       if (!sig && !q.imageUrl && !q.videoUrl) continue;
 
@@ -127,7 +131,7 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
     for (const [sig, group] of groups.entries()) {
       if (group.length <= 1) continue;
 
-      console.log(`\n🔎 Found ${group.length} duplicate questions in Exam "${exam.title}" (${exam.id}) [Sig: ${sig}]`);
+      console.log(`\nFound ${group.length} duplicate questions in Exam "${exam.title}" (${exam.id}) [Sig: ${sig}]`);
 
       // Check student answers for all questions in this duplicate group
       const questionsWithAnswerCounts = await Promise.all(
@@ -154,9 +158,9 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
           await prisma.xPHistory.deleteMany({ where: { questionId: item.id } }).catch(() => {});
           await prisma.question.delete({ where: { id: item.id } });
           duplicatesDeleted++;
-          console.log(`   ✅ [DELETED DUPLICATE] Question ${item.id} (0 answers) - kept ${questionToKeep.id}`);
+          console.log(`   [DELETED DUPLICATE] Question ${item.id} (0 answers) - kept ${questionToKeep.id}`);
         } catch (delErr: any) {
-          console.error(`   ❌ Failed to delete duplicate question ${item.id}:`, delErr.message);
+          console.error(`   Failed to delete duplicate question ${item.id}:`, delErr.message);
         }
       }
 
@@ -172,9 +176,9 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
           });
           duplicatesSoftDeleted++;
           preservedWithAnswers++;
-          console.log(`   🛡️ [SOFT-DELETED DUPLICATE] Question ${item.id} (${item.answersCount} answers preserved in DB) - kept active ${questionToKeep.id}`);
+          console.log(`   [SOFT-DELETED DUPLICATE] Question ${item.id} (${item.answersCount} answers preserved in DB) - kept active ${questionToKeep.id}`);
         } catch (softErr: any) {
-          console.error(`   ❌ Failed to soft-delete duplicate question ${item.id}:`, softErr.message);
+          console.error(`   Failed to soft-delete duplicate question ${item.id}:`, softErr.message);
         }
       }
     }
@@ -193,6 +197,7 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
     select: {
       id: true,
       text: true,
+      textEn: true,
       imageUrl: true,
       videoUrl: true,
       exam: { select: { title: true } },
@@ -201,11 +206,12 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
 
   for (const q of allQuestions) {
     const cleanText = normalizeQuestionText(q.text);
+    const cleanTextEn = normalizeQuestionText(q.textEn);
     const hasImage = Boolean(q.imageUrl && q.imageUrl.trim().length > 0);
     const hasVideo = Boolean(q.videoUrl && q.videoUrl.trim().length > 0);
 
-    // If completely empty text (< 2 non-whitespace characters) and no image/video
-    if (cleanText.length < 2 && !hasImage && !hasVideo) {
+    // If completely empty text in both Arabic and English (< 2 characters) and no image/video
+    if (cleanText.length < 2 && cleanTextEn.length < 2 && !hasImage && !hasVideo) {
       // Check for student answers
       const answersCount = await prisma.studentAnswer.count({
         where: { questionId: q.id },
@@ -221,10 +227,10 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
           emptyQuestionsSoftDeleted++;
           preservedWithAnswers++;
           console.log(
-            `   🛡️ [SOFT-DELETED EMPTY] Blank question ${q.id} in Exam "${q.exam?.title}" (${answersCount} answers preserved in DB).`
+            `   [SOFT-DELETED EMPTY] Blank question ${q.id} in Exam "${q.exam?.title}" (${answersCount} answers preserved in DB).`
           );
         } catch (softErr: any) {
-          console.error(`   ❌ Failed to soft-delete empty question ${q.id}:`, softErr.message);
+          console.error(`   Failed to soft-delete empty question ${q.id}:`, softErr.message);
         }
       } else {
         // Hard-delete empty question with 0 answers
@@ -232,9 +238,9 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
           await prisma.xPHistory.deleteMany({ where: { questionId: q.id } }).catch(() => {});
           await prisma.question.delete({ where: { id: q.id } });
           emptyQuestionsDeleted++;
-          console.log(`   ✅ [DELETED EMPTY] Removed blank question ${q.id} (0 answers).`);
+          console.log(`   [DELETED EMPTY] Removed blank question ${q.id} (0 answers).`);
         } catch (delErr: any) {
-          console.error(`   ❌ Failed to delete empty question ${q.id}:`, delErr.message);
+          console.error(`   Failed to delete empty question ${q.id}:`, delErr.message);
         }
       }
     }
@@ -247,7 +253,7 @@ export async function runSafeDeduplicationAndEmptyCleanup(targetExamId?: string)
     : await prisma.question.count({ where: { deletedAt: null } });
 
   console.log('===========================================================');
-  console.log('🎉 Cleanup Summary:');
+  console.log('[Deduplication] Cleanup Summary:');
   console.log(`   - Duplicate Questions Hard-Deleted (0 answers): ${duplicatesDeleted}`);
   console.log(`   - Duplicate Questions Soft-Deleted (answers kept): ${duplicatesSoftDeleted}`);
   console.log(`   - Empty Questions Hard-Deleted (0 answers):     ${emptyQuestionsDeleted}`);

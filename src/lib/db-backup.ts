@@ -2,12 +2,9 @@ import { archiveCloudBatch, ArchiveEntry } from './cloudBackupArchive';
 // @ts-ignore
 import { Pool } from 'pg';
 import prisma from './prisma';
-import * as archiverLib from 'archiver';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
-
-const archiverObj = (archiverLib as any).default || archiverLib;
 
 function createArchive(format: any, options?: any) {
   const archiver = require('archiver');
@@ -46,7 +43,7 @@ const pool = CLOUD_BACKUP_ENABLED ? new Pool({
 } as any);
 
 pool.on('error', (err: Error) => {
-  console.error('❌ [Backup DB] Unexpected error on idle client', err);
+  console.error(' [Backup DB] Unexpected error on idle client', err);
 });
 
 export interface CloudBackupRecord {
@@ -74,7 +71,7 @@ async function ensureTableExists() {
   try {
     await pool.query(query);
   } catch (err) {
-    console.error('❌ [Backup DB] Error ensuring table exists:', err);
+    console.error(' [Backup DB] Error ensuring table exists:', err);
   }
 }
 
@@ -255,7 +252,7 @@ export async function keepCloudBackupAlive(): Promise<void> {
   try {
     await pool.query('SELECT 1;');
   } catch (err) {
-    console.error(`❌ [Backup DB] Keep-alive ping failed:`, err);
+    console.error(` [Backup DB] Keep-alive ping failed:`, err);
   }
 }
 
@@ -318,32 +315,36 @@ export async function syncMissingCloudCourses() {
           } : undefined,
           
           exams: c.exams && c.exams.length > 0 ? {
-             create: c.exams.map((e: any) => ({
-               id: e.id,
-               title: e.title,
-               description: e.description ?? null,
-               durationMinutes: e.durationMinutes ?? 60,
-               passingScore: e.passingScore ?? 50,
-               isCentral: e.isCentral ?? true,
-               isActive: e.isActive ?? true,
-               questions: e.questions && e.questions.length > 0 ? {
-                 create: e.questions.map((q: any) => ({
-                   id: q.id,
-                   questionText: q.questionText,
-                   type: q.type ?? 'MULTIPLE_CHOICE',
-                   options: q.options ?? null,
-                   correctAnswer: q.correctAnswer ?? '',
-                   points: q.points ?? 1
-                 }))
-               } : undefined
-             }))
-          } : undefined
+              create: c.exams.map((e: any) => ({
+                id: e.id,
+                title: e.title,
+                description: e.description ?? null,
+                duration: typeof e.duration === 'number' ? e.duration : (parseInt(e.durationMinutes ?? e.duration ?? '30', 10) || 30),
+                passingScore: typeof e.passingScore === 'number' ? e.passingScore : (parseInt(e.passingScore ?? '50', 10) || 50),
+                isCentral: e.isCentral ?? true,
+                status: e.status ?? 'PUBLISHED',
+                questions: e.questions && e.questions.length > 0 ? {
+                  create: e.questions.map((q: any) => ({
+                    id: q.id,
+                    text: q.text ?? q.questionText ?? '',
+                    textEn: q.textEn ?? null,
+                    type: q.type ?? 'MCQ',
+                    options: typeof q.options === 'string' ? q.options : JSON.stringify(q.options ?? []),
+                    optionsEn: q.optionsEn ? (typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(q.optionsEn)) : null,
+                    correctAnswer: typeof q.correctAnswer === 'string' ? q.correctAnswer : JSON.stringify(q.correctAnswer ?? ''),
+                    points: typeof q.points === 'number' ? q.points : (parseInt(q.points ?? '1', 10) || 1),
+                    explanation: q.explanation ?? null,
+                    explanationEn: q.explanationEn ?? null
+                  }))
+                } : undefined
+              }))
+           } : undefined
         }
       });
-      console.log(`✅ [Backup DB Sync] Successfully imported missing course: ${c.title}`);
+      console.log(`[Backup DB Sync] Successfully imported missing course: ${c.title}`);
     }
   } catch (err: any) {
-    console.error(`❌ [Backup DB Sync] Error importing missing courses: ${err.message}`);
+    console.error(`[Backup DB Sync] Error importing missing courses: ${err.message}`);
   }
 }
 

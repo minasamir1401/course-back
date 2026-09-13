@@ -26,6 +26,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.cleanDuplicatesHandler = exports.postExamHandler26 = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.postMoveModuleHandler = exports.postMoveAllSubExamsHandler = exports.postMoveSubExamHandler = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamQuestionsHandler = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = void 0;
 exports.formatCorrectAnswer = formatCorrectAnswer;
 exports.formatExplanation = formatExplanation;
+const examQuestionWrites_1 = require("../utils/examQuestionWrites");
+const node_crypto_1 = require("node:crypto");
+const examPerformance_1 = require("../utils/examPerformance");
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const clean_duplicates_and_empty_1 = require("../scripts/clean-duplicates-and-empty");
 const contentReconciliation_1 = require("../lib/contentReconciliation");
@@ -258,6 +261,50 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                     if (s.id)
                         subExamIdMap[s.id] = createdSubExam.id;
                 }
+                const subModulesInput = Array.isArray(m.subModules) ? m.subModules : [];
+                for (let smIdx = 0; smIdx < subModulesInput.length; smIdx++) {
+                    const sm = subModulesInput[smIdx];
+                    if (!sm)
+                        continue;
+                    const frontendSubModId = sm.id;
+                    const createdSubMod = yield tx.examModule.create({
+                        data: {
+                            examId: newExam.id,
+                            parentModuleId: createdMod.id,
+                            title: sm.title ? (0, shared_1.sanitizeHtml)(sm.title) : `Sub-Module ${smIdx + 1}`,
+                            description: sm.description ? (0, shared_1.sanitizeHtml)(sm.description) : null,
+                            order: sm.order !== undefined ? parseInt(sm.order) : smIdx,
+                            duration: sm.duration ? parseInt(sm.duration) : null,
+                            passingScore: sm.passingScore ? parseInt(sm.passingScore) : null,
+                            gradeTarget: sm.gradeTarget ? (0, shared_1.sanitizeHtml)(sm.gradeTarget) : null,
+                            publishDate: sm.publishDate ? new Date(sm.publishDate) : null,
+                            cutOffDate: sm.cutOffDate ? new Date(sm.cutOffDate) : null,
+                        }
+                    });
+                    if (frontendSubModId)
+                        moduleIdMap[frontendSubModId] = createdSubMod.id;
+                    const smSubExamsInput = Array.isArray(sm.subExams) ? sm.subExams : [];
+                    for (let sj = 0; sj < smSubExamsInput.length; sj++) {
+                        const s = smSubExamsInput[sj];
+                        if (!s)
+                            continue;
+                        const createdSubExam = yield tx.subExam.create({
+                            data: {
+                                moduleId: createdSubMod.id,
+                                title: s.title ? (0, shared_1.sanitizeHtml)(s.title) : `Sub-Exam ${sj + 1}`,
+                                password: s.password ? (0, shared_1.sanitizeHtml)(s.password) : null,
+                                duration: s.duration ? parseInt(s.duration) : null,
+                                passingScore: s.passingScore ? parseInt(s.passingScore) : null,
+                                attemptsAllowed: s.attemptsAllowed ? parseInt(s.attemptsAllowed) : 1,
+                                order: s.order !== undefined ? parseInt(s.order) : sj,
+                                publishDate: s.publishDate ? new Date(s.publishDate) : null,
+                                cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null,
+                            }
+                        });
+                        if (s.id)
+                            subExamIdMap[s.id] = createdSubExam.id;
+                    }
+                }
             }
             // Sequential Question Creation
             for (let index = 0; index < sanitizedQuestions.length; index++) {
@@ -269,8 +316,10 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                     data: {
                         examId: newExam.id,
                         text: (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.text || '')),
+                        textEn: q.textEn ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.textEn)) : null,
                         type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type) ? (0, shared_1.sanitizeHtml)(q.type) : 'MCQ',
                         options: (0, shared_1.extractAndSaveBase64Images)(typeof q.options === 'string' ? q.options : JSON.stringify(q.options || [])),
+                        optionsEn: q.optionsEn ? (0, shared_1.extractAndSaveBase64Images)(typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(q.optionsEn || [])) : null,
                         correctAnswer: formatCorrectAnswer(q),
                         points: parseInt(q.points) || 1,
                         xpPoints: parseInt(q.xpPoints) || 10,
@@ -291,6 +340,7 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                         errorPattern: q.errorPattern ? (0, shared_1.sanitizeHtml)(q.errorPattern) : null,
                         estimatedTime: q.estimatedTime ? (0, shared_1.sanitizeHtml)(q.estimatedTime) : null,
                         explanation: formatExplanation(q),
+                        explanationEn: q.explanationEn ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.explanationEn)) : null,
                         imageUrl: q.imageUrl ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.imageUrl)) : null,
                         moduleId: resolvedModuleId,
                         subExamId: q.subExamId
@@ -309,8 +359,15 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                         orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
                     },
                     modules: {
+                        where: { parentModuleId: null },
                         orderBy: { order: 'asc' },
-                        include: { subExams: { orderBy: { order: 'asc' } } }
+                        include: {
+                            subExams: { orderBy: { order: 'asc' } },
+                            subModules: {
+                                orderBy: { order: 'asc' },
+                                include: { subExams: { orderBy: { order: 'asc' } } }
+                            }
+                        }
                     }
                 }
             });
@@ -319,7 +376,7 @@ const postExamHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         res.json({ message: 'Exam created successfully', exam });
     }
     catch (error) {
-        console.error('❌ Exam creation error:', error);
+        console.error(' Exam creation error:', error);
         res.status(500).json({ error: 'Error creating exam', details: error.message });
     }
 });
@@ -437,6 +494,7 @@ const getExamHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 creator: { select: { name: true } },
                 _count: { select: { questions: { where: { deletedAt: null } } } },
                 modules: {
+                    where: { parentModuleId: null },
                     orderBy: { order: 'asc' },
                     include: {
                         parentModule: { select: { id: true, title: true } },
@@ -523,18 +581,38 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (!(yield (0, exports.canManageExam)(req.user, existingExam))) {
             return res.status(403).json({ error: 'Access denied: You do not have permission to edit this exam.' });
         }
+        const questionScopeId = typeof req.body.questionScopeId === 'string' ? req.body.questionScopeId : null;
+        if (questionScopeId) {
+            const scope = yield prisma_1.default.subExam.findFirst({ where: { id: questionScopeId, module: { examId: id } }, select: { id: true } });
+            if (!scope || req.body.modules !== undefined || (questions || []).some((q) => q.subExamId !== questionScopeId)) {
+                return res.status(400).json({ error: 'Invalid child exam save scope' });
+            }
+            if (Array.isArray(deletedQuestionIds) && deletedQuestionIds.length) {
+                const outOfScope = yield prisma_1.default.question.count({ where: { id: { in: deletedQuestionIds }, examId: id, OR: [{ subExamId: null }, { subExamId: { not: questionScopeId } }] } });
+                if (outOfScope)
+                    return res.status(400).json({ error: 'Question deletion outside child exam scope' });
+            }
+        }
         const sanitizedQuestions = (0, shared_1.sanitizeDeep)(questions || []);
         if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
             return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
         }
-        // Removing an unsaved draft row is allowed; persisted deletions require Super Admin.
+        // Removing an unsaved draft row is allowed.
+        // Persisted questions with existing student answers cannot be deleted to preserve grade integrity.
         const requestedDeletes = (deletedQuestionIds || []).filter((value) => typeof value === 'string');
-        if (req.user.role !== 'SUPER_ADMIN' && requestedDeletes.length > 0) {
+        if (requestedDeletes.length > 0 && req.user.role !== 'SUPER_ADMIN') {
             const persistedDeletes = yield prisma_1.default.question.count({
                 where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
             });
             if (persistedDeletes > 0) {
-                return res.status(403).json({ error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.' });
+                const answersCount = yield prisma_1.default.studentAnswer.count({
+                    where: { questionId: { in: requestedDeletes } }
+                });
+                if (answersCount > 0) {
+                    return res.status(403).json({
+                        error: 'لا يمكن حذف أسئلة تم تسجيل إجابات للطلاب عليها للحفاظ على سلامة درجات الطلاب. Questions with student answers cannot be deleted.'
+                    });
+                }
             }
         }
         const updateData = {
@@ -587,7 +665,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             }
         }
         const exam = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a, _b, _c;
+            var _a, _b, _c, _d;
             // --- MODULES UPSERT LOGIC ---
             let incomingModuleIds = [];
             let incomingSubExamIds = [];
@@ -597,9 +675,15 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             if (req.body.modules !== undefined) {
                 modulesProvided = true;
                 const sanitizedModules = Array.isArray(req.body.modules) ? req.body.modules : [];
-                incomingModuleIds = sanitizedModules.map((m) => m.id).filter(Boolean);
-                // 1. Gather all incoming SubExams across all modules
-                incomingSubExamIds = sanitizedModules.flatMap((m) => (m.subExams || []).map((s) => s.id)).filter(Boolean);
+                incomingModuleIds = sanitizedModules.flatMap((m) => [
+                    m === null || m === void 0 ? void 0 : m.id,
+                    ...(Array.isArray(m === null || m === void 0 ? void 0 : m.subModules) ? m.subModules.map((sm) => sm === null || sm === void 0 ? void 0 : sm.id) : [])
+                ]).filter(Boolean);
+                // 1. Gather all incoming SubExams across all modules and subModules
+                incomingSubExamIds = sanitizedModules.flatMap((m) => [
+                    ...(Array.isArray(m === null || m === void 0 ? void 0 : m.subExams) ? m.subExams.map((s) => s === null || s === void 0 ? void 0 : s.id) : []),
+                    ...(Array.isArray(m === null || m === void 0 ? void 0 : m.subModules) ? m.subModules.flatMap((sm) => (Array.isArray(sm === null || sm === void 0 ? void 0 : sm.subExams) ? sm.subExams.map((s) => s === null || s === void 0 ? void 0 : s.id) : [])) : [])
+                ]).filter(Boolean);
                 const { moduleIds: deletedModuleIds, subExamIds: deletedSubExamIds } = (0, examDeletionPolicy_1.resolveExplicitExamDeletions)(req.body);
                 // A collection snapshot can be stale during autosave. Only an explicit
                 // deletion request is allowed to unlink or remove persisted content.
@@ -749,6 +833,56 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         if (sm.id)
                             moduleIdMap.set(String(sm.id).trim(), subModId);
                         moduleIdMap.set(subModId, subModId);
+                        // Sub-exams inside this submodule
+                        const sanitizedSmSubExams = Array.isArray(sm.subExams) ? sm.subExams : [];
+                        for (let sj = 0; sj < sanitizedSmSubExams.length; sj++) {
+                            const s = sanitizedSmSubExams[sj];
+                            if (!s)
+                                continue;
+                            const sData = {
+                                title: s.title ? (0, shared_1.sanitizeHtml)(s.title) : `Sub-Exam ${sj + 1}`,
+                                password: s.password ? (0, shared_1.sanitizeHtml)(s.password) : null,
+                                duration: s.duration ? parseInt(s.duration) : null,
+                                passingScore: s.passingScore ? parseInt(s.passingScore) : null,
+                                attemptsAllowed: s.attemptsAllowed ? parseInt(s.attemptsAllowed) : 1,
+                                order: s.order !== undefined ? parseInt(s.order) : sj,
+                                publishDate: s.publishDate ? new Date(s.publishDate) : null,
+                                cutOffDate: s.cutOffDate ? new Date(s.cutOffDate) : null
+                            };
+                            const existingSub = s.id
+                                ? yield tx.subExam.findFirst({ where: { moduleId: subModId, OR: [{ id: s.id }, { title: sData.title }] } })
+                                : yield tx.subExam.findFirst({ where: { moduleId: subModId, title: sData.title } });
+                            const candidateSubId = (existingSub === null || existingSub === void 0 ? void 0 : existingSub.id) || (s.id ? String(s.id).trim() : null);
+                            let subUpdated = false;
+                            let subExamId = s.id;
+                            if (candidateSubId) {
+                                const updateSubRes = yield tx.subExam.updateMany({
+                                    where: { id: candidateSubId, moduleId: subModId },
+                                    data: sData
+                                });
+                                if (updateSubRes.count > 0) {
+                                    subExamId = candidateSubId;
+                                    subUpdated = true;
+                                }
+                            }
+                            if (!subUpdated) {
+                                const isValidSubUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateSubId || '');
+                                let subIdToUse = undefined;
+                                if (isValidSubUuid && candidateSubId) {
+                                    const subAlreadyExists = yield tx.subExam.findUnique({ where: { id: candidateSubId } });
+                                    if (!subAlreadyExists) {
+                                        subIdToUse = candidateSubId;
+                                    }
+                                }
+                                const createdSub = yield tx.subExam.create({
+                                    data: Object.assign(Object.assign(Object.assign({}, (subIdToUse ? { id: subIdToUse } : {})), { moduleId: subModId }), sData)
+                                });
+                                subExamId = createdSub.id;
+                            }
+                            if (s.id)
+                                subExamIdMap.set(String(s.id).trim(), subExamId);
+                            subExamIdMap.set(subExamId, subExamId);
+                        }
                     }
                     // Sub-exams
                     const sanitizedSubExams = Array.isArray(m.subExams) ? m.subExams : [];
@@ -802,20 +936,21 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 // Clean up any empty duplicate modules for this exam
                 const allModulesInExam = yield tx.examModule.findMany({
                     where: { examId: id },
-                    include: { _count: { select: { questions: { where: { deletedAt: null } }, subExams: true } } }
+                    include: { _count: { select: { questions: { where: { deletedAt: null } }, subExams: true, subModules: true } } }
                 });
                 const seenTitleMap = new Map();
                 for (const curMod of allModulesInExam) {
                     const normTitle = String(curMod.title || '').trim().toLowerCase();
                     if (!normTitle)
                         continue;
-                    if (seenTitleMap.has(normTitle)) {
-                        if (curMod._count.questions === 0 && curMod._count.subExams === 0) {
+                    const groupKey = `${curMod.parentModuleId || 'root'}:${normTitle}`;
+                    if (seenTitleMap.has(groupKey)) {
+                        if (curMod._count.questions === 0 && curMod._count.subExams === 0 && curMod._count.subModules === 0) {
                             yield tx.examModule.deleteMany({ where: { id: curMod.id, examId: id } });
                         }
                     }
                     else {
-                        seenTitleMap.set(normTitle, curMod.id);
+                        seenTitleMap.set(groupKey, curMod.id);
                     }
                 }
             }
@@ -829,18 +964,11 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             if (Array.isArray(questions)) {
                 // Fetch existing questions with their current explanation values for preservation
                 const existingQuestionsWithExp = yield tx.question.findMany({
-                    where: { examId: id, deletedAt: null },
-                    select: {
-                        id: true,
-                        text: true,
-                        type: true,
-                        options: true,
-                        correctAnswer: true,
-                        explanation: true,
-                        order: true,
-                        createdAt: true
-                    }
+                    where: Object.assign({ examId: id, deletedAt: null }, (questionScopeId ? { subExamId: questionScopeId } : {})),
                 });
+                const existingQuestionMap = new Map(existingQuestionsWithExp.map(q => [q.id, q]));
+                const pendingQuestions = [];
+                const pendingUpdates = [];
                 const existingIds = new Set(existingQuestionsWithExp.map(q => q.id));
                 const existingExplanationMap = new Map(existingQuestionsWithExp.map(q => [q.id, q.explanation]));
                 const explicitDeletedIds = new Set((Array.isArray(deletedQuestionIds) ? deletedQuestionIds : [])
@@ -865,11 +993,11 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     where: { module: { examId: id } },
                     select: { id: true }
                 });
-                // 🔒 100% FOREIGN KEY SAFE: ONLY real DB IDs confirmed to exist in the database!
+                //  100% FOREIGN KEY SAFE: ONLY real DB IDs confirmed to exist in the database!
                 // Unverified client IDs from incomingModuleIds or incomingSubExamIds MUST NEVER be added directly.
                 const validModuleIdSet = new Set(existingExamModules.map(m => m.id));
                 const validSubExamIdSet = new Set(existingSubExams.map(s => s.id));
-                // ✅ KEY FIX: Track which IDs the client explicitly sent in the payload
+                //  KEY FIX: Track which IDs the client explicitly sent in the payload
                 // We only soft-delete questions the client KNEW about (had their ID) but chose to remove.
                 // Questions sent without an ID are new — they never trigger deletions.
                 for (let i = 0; i < sanitizedQuestions.length; i++) {
@@ -879,17 +1007,20 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         continue;
                     }
                     const newExplanation = formatExplanation(q);
+                    const newExplanationEn = q.explanationEn ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.explanationEn)) : null;
                     const cleanModuleId = q.moduleId ? (0, shared_1.sanitizeHtml)(String(q.moduleId).trim()) : null;
                     const cleanSubExamId = q.subExamId ? (0, shared_1.sanitizeHtml)(String(q.subExamId).trim()) : null;
-                    // 🔒 Resolve client temporary or mapped IDs to actual DB IDs, strictly verifying FK existence
+                    //  Resolve client temporary or mapped IDs to actual DB IDs, strictly verifying FK existence
                     const mappedModuleId = cleanModuleId ? (moduleIdMap.get(cleanModuleId) || cleanModuleId) : null;
                     const resolvedModuleId = mappedModuleId && validModuleIdSet.has(mappedModuleId) ? mappedModuleId : null;
                     const mappedSubExamId = cleanSubExamId ? (subExamIdMap.get(cleanSubExamId) || cleanSubExamId) : null;
                     const resolvedSubExamId = mappedSubExamId && validSubExamIdSet.has(mappedSubExamId) ? mappedSubExamId : null;
                     const qData = {
                         text: (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.text || '')),
+                        textEn: q.textEn !== undefined ? (q.textEn ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.textEn)) : null) : undefined,
                         type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(q.type === 'QUESTION' && q.label ? q.label : q.type) ? (0, shared_1.sanitizeHtml)(q.type === 'QUESTION' && q.label ? q.label : q.type) : 'MCQ',
                         options: (0, shared_1.extractAndSaveBase64Images)(typeof q.options === 'string' ? q.options : JSON.stringify(q.options || [])),
+                        optionsEn: q.optionsEn !== undefined ? (q.optionsEn ? (0, shared_1.extractAndSaveBase64Images)(typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(q.optionsEn)) : null) : undefined,
                         correctAnswer: formatCorrectAnswer(q),
                         points: parseInt(q.points) || 1,
                         xpPoints: parseInt(q.xpPoints) || 10,
@@ -910,15 +1041,17 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         errorPattern: q.errorPattern !== undefined ? (q.errorPattern ? (0, shared_1.sanitizeHtml)(q.errorPattern) : null) : undefined,
                         estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? (0, shared_1.sanitizeHtml)(q.estimatedTime) : null) : undefined,
                         explanation: newExplanation,
+                        explanationEn: newExplanationEn,
                         imageUrl: q.imageUrl ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(q.imageUrl)) : null,
-                        // ✅ FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
+                        //  FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
                         moduleId: resolvedModuleId,
                         subExamId: resolvedSubExamId,
-                        order: i
+                        order: questionScopeId && typeof q.id === 'string' ? ((_b = (_a = existingQuestionMap.get(q.id)) === null || _a === void 0 ? void 0 : _a.order) !== null && _b !== void 0 ? _b : i) : i
                     };
-                    // Skip completely empty question rows that have no text and no media
+                    // Skip completely empty question rows that have no text in either Arabic or English and no media
                     const qNormText = (0, shared_1.robustNormalizeText)(qData.text);
-                    if (qNormText.length < 2 && !qData.imageUrl && !qData.videoUrl) {
+                    const qNormTextEn = qData.textEn ? (0, shared_1.robustNormalizeText)(qData.textEn) : '';
+                    if (qNormText.length < 2 && qNormTextEn.length < 2 && !qData.imageUrl && !qData.videoUrl) {
                         console.warn(`[Exam Update] Skipping empty question row with no text or media (index ${i})`);
                         continue;
                     }
@@ -927,7 +1060,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     // POST/PUT autosave responses can be interrupted before the editor receives
                     // database IDs. Reconcile an identical ID-less row instead of inserting it again.
                     if (!targetQuestionId) {
-                        targetQuestionId = (_a = (0, contentReconciliation_1.pickReconciliationCandidate)(existingCandidates.filter((candidate) => !explicitDeletedIds.has(candidate.id)), i, incomingFingerprint, reservedIncomingIds, usedExistingIds, existingExam._count.submissions === 0)) === null || _a === void 0 ? void 0 : _a.id;
+                        targetQuestionId = (_c = (0, contentReconciliation_1.pickReconciliationCandidate)(existingCandidates.filter((candidate) => !explicitDeletedIds.has(candidate.id)), i, incomingFingerprint, reservedIncomingIds, usedExistingIds, existingExam._count.submissions === 0)) === null || _c === void 0 ? void 0 : _c.id;
                     }
                     if (targetQuestionId && usedExistingIds.has(targetQuestionId)) {
                         console.warn(`[Exam Update] Ignoring duplicate question ID in payload: ${targetQuestionId}`);
@@ -936,7 +1069,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     if (targetQuestionId) {
                         // Update existing question to preserve StudentAnswers
                         const updatePayload = Object.assign({}, qData);
-                        // ✅ ROOT CAUSE FIX: If the new explanation is null (frontend sent empty/[])
+                        //  ROOT CAUSE FIX: If the new explanation is null (frontend sent empty/[])
                         // AND the DB has an existing non-null explanation → preserve it.
                         // Only overwrite explanation if the incoming payload has real content.
                         if (updatePayload.explanation === null && q.clearExplanation !== true) {
@@ -946,21 +1079,11 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                                 delete updatePayload.explanation;
                             }
                         }
-                        const qUpdateRes = yield tx.question.updateMany({
-                            where: { id: targetQuestionId, examId: id },
-                            data: updatePayload
-                        });
-                        if (qUpdateRes.count > 0) {
-                            usedExistingIds.add(targetQuestionId);
-                            incomingQuestionIds.push(targetQuestionId);
-                        }
-                        else {
-                            const createdQuestion = yield tx.question.create({
-                                data: Object.assign(Object.assign({}, updatePayload), { examId: id })
-                            });
-                            usedExistingIds.add(createdQuestion.id);
-                            incomingQuestionIds.push(createdQuestion.id);
-                        }
+                        const changes = (0, examPerformance_1.changedQuestionFields)(existingQuestionMap.get(targetQuestionId) || {}, updatePayload);
+                        if (Object.keys(changes).length)
+                            pendingUpdates.push({ id: targetQuestionId, data: changes });
+                        usedExistingIds.add(targetQuestionId);
+                        incomingQuestionIds.push(targetQuestionId);
                     }
                     else {
                         // Last-resort duplicate guard: before creating a new question, check if an
@@ -969,63 +1092,70 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         const incomingSig = (0, shared_1.getQuestionCoreSignature)(qData.text);
                         const incomingTextNorm = (0, shared_1.robustNormalizeText)(qData.text);
                         const textDuplicateId = (incomingSig.length >= 5 || incomingTextNorm.length > 5)
-                            ? (_b = existingQuestionsWithExp.find((eq) => !usedExistingIds.has(eq.id) &&
+                            ? (_d = existingQuestionsWithExp.find((eq) => !usedExistingIds.has(eq.id) &&
                                 !explicitDeletedIds.has(eq.id) &&
                                 ((incomingSig.length >= 5 && (0, shared_1.getQuestionCoreSignature)(eq.text) === incomingSig) ||
-                                    (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm))) === null || _b === void 0 ? void 0 : _b.id
+                                    (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm))) === null || _d === void 0 ? void 0 : _d.id
                             : undefined;
                         if (textDuplicateId) {
                             console.warn(`[Exam Update] Prevented duplicate question creation – updating existing row instead: ${textDuplicateId}`);
-                            yield tx.question.updateMany({
-                                where: { id: textDuplicateId, examId: id },
-                                data: qData,
-                            });
+                            const changes = (0, examPerformance_1.changedQuestionFields)(existingQuestionMap.get(textDuplicateId) || {}, qData);
+                            if (Object.keys(changes).length)
+                                pendingUpdates.push({ id: textDuplicateId, data: changes });
                             usedExistingIds.add(textDuplicateId);
                             incomingQuestionIds.push(textDuplicateId);
                         }
                         else {
                             // Create new question (no ID = brand new question)
-                            const createdQuestion = yield tx.question.create({
-                                data: Object.assign(Object.assign({}, qData), { examId: id })
-                            });
+                            const createdQuestion = Object.assign(Object.assign({}, qData), { examId: id, id: (0, node_crypto_1.randomUUID)() });
+                            pendingQuestions.push(createdQuestion);
                             usedExistingIds.add(createdQuestion.id);
                             incomingQuestionIds.push(createdQuestion.id);
                         }
                     }
                 }
-                // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
-                // Never infer deletes from a missing question in the payload; that can happen when
-                // frontend IDs are lost, and would hide existing StudentAnswers in reports.
-                // ONLY Super Admin is allowed to delete questions!
-                const isSuperAdmin = ((_c = req.user) === null || _c === void 0 ? void 0 : _c.role) === 'SUPER_ADMIN';
-                if (isSuperAdmin) {
-                    for (const existingId of Array.from(explicitDeletedIds)) {
-                        yield tx.question.updateMany({
-                            where: { id: existingId, examId: id },
-                            data: { deletedAt: new Date() }
-                        });
-                    }
+                yield (0, examQuestionWrites_1.persistQuestionUpdates)(tx, id, pendingUpdates);
+                for (let offset = 0; offset < pendingQuestions.length; offset += 250) {
+                    yield tx.question.createMany({ data: pendingQuestions.slice(offset, offset + 250) });
+                }
+                // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI
+                // and verified against student submission protection above.
+                if (explicitDeletedIds.size) {
+                    yield tx.question.updateMany({
+                        where: { id: { in: Array.from(explicitDeletedIds) }, examId: id },
+                        data: { deletedAt: new Date() }
+                    });
                 }
                 // A partial autosave must not delete unseen rows. Keep those rows and append
                 // them deterministically after the sequence sent by the editor, then persist
                 // unique contiguous order values so every reader sees the same order.
                 const activeQuestions = yield tx.question.findMany({
                     where: { examId: id, deletedAt: null },
-                    select: { id: true, order: true, createdAt: true }
+                    select: { id: true, order: true, createdAt: true, subExamId: true }
                 });
                 const retainedIncomingQuestionIds = incomingQuestionIds.filter((questionId) => !explicitDeletedIds.has(questionId));
                 const incomingIdSet = new Set(retainedIncomingQuestionIds);
-                const orderedQuestionIds = [
+                let orderedQuestionIds = [
                     ...retainedIncomingQuestionIds,
                     ...(0, contentReconciliation_1.sortPersistedOrder)(activeQuestions)
                         .filter((question) => !incomingIdSet.has(question.id))
                         .map((question) => question.id)
                 ];
-                for (let order = 0; order < orderedQuestionIds.length; order++) {
-                    yield tx.question.updateMany({
-                        where: { id: orderedQuestionIds[order], examId: id },
-                        data: { order }
-                    });
+                if (questionScopeId) {
+                    // Replace only the child slots; sibling relative order must survive partial saves.
+                    const childSet = new Set(activeQuestions.filter(q => q.subExamId === questionScopeId).map(q => q.id));
+                    const childIds = orderedQuestionIds.filter(questionId => childSet.has(questionId));
+                    let childIndex = 0;
+                    orderedQuestionIds = (0, contentReconciliation_1.sortPersistedOrder)(activeQuestions).map(q => q.subExamId === questionScopeId ? childIds[childIndex++] : q.id);
+                }
+                const orderChanges = (0, examPerformance_1.changedQuestionOrders)(activeQuestions, orderedQuestionIds);
+                if (orderChanges.length) {
+                    // One parameterized statement, scoped to this exam; never interpolate identifiers or values.
+                    yield tx.$executeRaw `
+            UPDATE "Question" AS q SET "order" = v."order", "updatedAt" = NOW()
+            FROM jsonb_to_recordset(${JSON.stringify(orderChanges)}::jsonb) AS v(id text, "order" integer)
+            WHERE q.id = v.id AND q."examId" = ${id} AND q."deletedAt" IS NULL
+          `;
                 }
             }
             // Return the updated questions with their IDs so the frontend can sync
@@ -1033,12 +1163,19 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                 where: { id },
                 include: {
                     questions: {
-                        where: { deletedAt: null },
+                        where: Object.assign({ deletedAt: null }, (questionScopeId ? { subExamId: questionScopeId } : {})),
                         orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
                     },
                     modules: {
+                        where: { parentModuleId: null },
                         orderBy: { order: 'asc' },
-                        include: { subExams: { orderBy: { order: 'asc' } } }
+                        include: {
+                            subExams: { orderBy: { order: 'asc' } },
+                            subModules: {
+                                orderBy: { order: 'asc' },
+                                include: { subExams: { orderBy: { order: 'asc' } } }
+                            }
+                        }
                     }
                 }
             });
@@ -1046,10 +1183,11 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (!exam) {
             return res.status(404).json({ error: 'Exam not found or has been deleted' });
         }
-        res.json({ message: 'Exam updated successfully', exam, modules: exam === null || exam === void 0 ? void 0 : exam.modules, questions: exam === null || exam === void 0 ? void 0 : exam.questions });
+        const { questions: savedQuestions, modules: savedModules } = exam, examSummary = __rest(exam, ["questions", "modules"]);
+        res.json({ message: 'Exam updated successfully', exam: req.query.compact === 'true' ? examSummary : exam, modules: savedModules, questions: savedQuestions });
     }
     catch (error) {
-        console.error('❌ Exam update error:', error);
+        console.error(' Exam update error:', error);
         require('fs').writeFileSync('error_log.txt', String(error) + '\n' + error.stack);
         res.status(500).json({ error: 'Error updating exam', details: error.message });
     }
@@ -1075,7 +1213,7 @@ const deleteExamHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         res.json({ message: 'Exam deleted successfully' });
     }
     catch (error) {
-        console.error('❌ Delete error:', error);
+        console.error(' Delete error:', error);
         res.status(500).json({ error: 'Error deleting exam' });
     }
 });
@@ -1157,9 +1295,6 @@ const getExamHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, function
             include: {
                 user: {
                     select: { id: true, name: true, schoolId: true, school: { select: { name: true } } }
-                },
-                answers: {
-                    select: { questionId: true, isCorrect: true }
                 }
             }
         });
@@ -1169,70 +1304,41 @@ const getExamHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, function
         const passRate = totalSubmissions > 0 ? (passCount / totalSubmissions) * 100 : 0;
         const avgScore = totalSubmissions > 0 ? submissions.reduce((acc, s) => acc + (s.percentage || 0), 0) / totalSubmissions : 0;
         const totalExamPoints = exam.questions.reduce((acc, q) => acc + (q.points || 1), 0);
-        // 2. Module Stats
-        const moduleStats = exam.modules.map(mod => {
-            const modQuestions = exam.questions.filter(q => q.moduleId === mod.id).map(q => q.id);
-            let correctAnswers = 0;
-            let totalAnswers = 0;
-            submissions.forEach(sub => {
-                sub.answers.forEach(ans => {
-                    if (modQuestions.includes(ans.questionId)) {
-                        totalAnswers++;
-                        if (ans.isCorrect)
-                            correctAnswers++;
-                    }
-                });
-            });
-            return {
-                id: mod.id,
-                title: mod.title,
-                correctRate: totalAnswers > 0 ? (correctAnswers / totalAnswers) * 100 : 0,
-                totalAnswers
-            };
+        // Aggregate once in PostgreSQL rather than transferring every student's answers.
+        const answerCounts = yield prisma_1.default.studentAnswer.groupBy({
+            by: ['questionId', 'isCorrect'], where: { submission: where }, _count: { _all: true }
         });
-        // 3. SubExam Stats
-        const subExamStats = exam.modules.flatMap(m => m.subExams || []).map(se => {
-            const seQuestions = exam.questions.filter(q => q.subExamId === se.id).map(q => q.id);
-            let correctAnswers = 0;
-            let totalAnswers = 0;
-            submissions.forEach(sub => {
-                sub.answers.forEach(ans => {
-                    if (seQuestions.includes(ans.questionId)) {
-                        totalAnswers++;
-                        if (ans.isCorrect)
-                            correctAnswers++;
-                    }
-                });
-            });
-            return {
-                id: se.id,
-                title: se.title,
-                moduleId: se.moduleId,
-                correctRate: totalAnswers > 0 ? (correctAnswers / totalAnswers) * 100 : 0,
-                totalAnswers
-            };
-        });
-        // 4. Question Stats
+        const countsByQuestion = new Map();
+        for (const row of answerCounts) {
+            const count = countsByQuestion.get(row.questionId) || { correct: 0, total: 0 };
+            count.total += row._count._all;
+            if (row.isCorrect)
+                count.correct += row._count._all;
+            countsByQuestion.set(row.questionId, count);
+        }
+        const moduleCounts = new Map();
+        const subExamCounts = new Map();
+        const addCounts = (map, key, count) => {
+            if (!key)
+                return;
+            const previous = map.get(key) || { correct: 0, total: 0 };
+            map.set(key, { correct: previous.correct + count.correct, total: previous.total + count.total });
+        };
         const questionStats = exam.questions.map(q => {
-            let correctAnswers = 0;
-            let totalAnswers = 0;
-            submissions.forEach(sub => {
-                const ans = sub.answers.find(a => a.questionId === q.id);
-                if (ans) {
-                    totalAnswers++;
-                    if (ans.isCorrect)
-                        correctAnswers++;
-                }
-            });
-            return {
-                id: q.id,
-                text: q.text,
-                type: q.type,
-                moduleId: q.moduleId,
-                subExamId: q.subExamId,
-                correctRate: totalAnswers > 0 ? (correctAnswers / totalAnswers) * 100 : 0
-            };
-        }).sort((a, b) => b.correctRate - a.correctRate); // Easiest to hardest
+            const count = countsByQuestion.get(q.id) || { correct: 0, total: 0 };
+            addCounts(moduleCounts, q.moduleId, count);
+            addCounts(subExamCounts, q.subExamId, count);
+            return { id: q.id, text: q.text, type: q.type, moduleId: q.moduleId, subExamId: q.subExamId,
+                correctRate: count.total ? count.correct / count.total * 100 : 0 };
+        }).sort((a, b) => b.correctRate - a.correctRate);
+        const moduleStats = exam.modules.map(mod => {
+            const count = moduleCounts.get(mod.id) || { correct: 0, total: 0 };
+            return { id: mod.id, title: mod.title, totalAnswers: count.total, correctRate: count.total ? count.correct / count.total * 100 : 0 };
+        });
+        const subExamStats = exam.modules.flatMap(m => m.subExams || []).map(se => {
+            const count = subExamCounts.get(se.id) || { correct: 0, total: 0 };
+            return { id: se.id, title: se.title, moduleId: se.moduleId, totalAnswers: count.total, correctRate: count.total ? count.correct / count.total * 100 : 0 };
+        });
         // 5. School Stats (For Super Admin)
         const schoolStats = [];
         if (req.user.role === 'SUPER_ADMIN') {
@@ -1342,16 +1448,25 @@ const getExamQuestionsHandler = (req, res) => __awaiter(void 0, void 0, void 0, 
         const parsedQuestions = questions.map(q => {
             let options = [];
             try {
-                options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+                options = typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || []);
             }
             catch (e) {
                 options = [];
             }
-            if (role === 'STUDENT') {
-                const { correctAnswer, explanation } = q, rest = __rest(q, ["correctAnswer", "explanation"]);
-                return Object.assign(Object.assign({}, rest), { options });
+            let optionsEn = null;
+            if (q.optionsEn) {
+                try {
+                    optionsEn = typeof q.optionsEn === 'string' ? JSON.parse(q.optionsEn) : q.optionsEn;
+                }
+                catch (e) {
+                    optionsEn = q.optionsEn;
+                }
             }
-            return Object.assign(Object.assign({}, q), { options });
+            if (role === 'STUDENT') {
+                const { correctAnswer, explanation, explanationEn } = q, rest = __rest(q, ["correctAnswer", "explanation", "explanationEn"]);
+                return Object.assign(Object.assign({}, rest), { options, optionsEn });
+            }
+            return Object.assign(Object.assign({}, q), { options, optionsEn });
         });
         res.json({ questions: parsedQuestions });
     }
@@ -1375,6 +1490,7 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         const exam = yield prisma_1.default.exam.findUnique({
             where: { id, deletedAt: null },
             include: Object.assign({ schools: { select: { id: true, name: true } }, modules: {
+                    where: { parentModuleId: null },
                     orderBy: { order: 'asc' },
                     include: {
                         parentModule: { select: { id: true, title: true } },
@@ -1438,12 +1554,21 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             parsedQuestions = exam.questions.map((q) => {
                 let options = [];
                 try {
-                    options = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+                    options = typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || []);
                 }
                 catch (e) {
                     options = [];
                 }
-                return Object.assign(Object.assign({}, q), { options });
+                let optionsEn = null;
+                if (q.optionsEn) {
+                    try {
+                        optionsEn = typeof q.optionsEn === 'string' ? JSON.parse(q.optionsEn) : q.optionsEn;
+                    }
+                    catch (e) {
+                        optionsEn = q.optionsEn;
+                    }
+                }
+                return Object.assign(Object.assign({}, q), { options, optionsEn });
             });
         }
         // Attach questionsCount to modules, subModules, and subExams for instant frontend display
@@ -1464,7 +1589,7 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         const activePassword = (0, examWorkflow_1.resolveExamAccessPassword)(exam, selectedSubExam);
         if (req.user.role === 'STUDENT') {
             const sanitizedQuestions = parsedQuestions.map(q => {
-                const { correctAnswer, explanation } = q, rest = __rest(q, ["correctAnswer", "explanation"]);
+                const { correctAnswer, explanation, explanationEn } = q, rest = __rest(q, ["correctAnswer", "explanation", "explanationEn"]);
                 return rest;
             });
             return res.json(Object.assign(Object.assign({}, (0, shared_1.sanitizeExam)(exam)), { modules: enrichedModules, selectedSubExam, password: activePassword ? true : null, questions: sanitizedQuestions }));
@@ -1488,7 +1613,14 @@ const postExamHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, functi
             where: { id: examId },
             include: {
                 schools: { select: { id: true } },
-                modules: { include: { subExams: true } },
+                modules: {
+                    include: {
+                        subExams: true,
+                        subModules: {
+                            include: { subExams: true }
+                        }
+                    }
+                },
                 _count: {
                     select: { submissions: { where: { userId } } }
                 }
@@ -1497,7 +1629,10 @@ const postExamHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         if (!exam)
             return res.status(404).json({ error: 'الامتحان غير موجود' });
         const selectedSubExam = subExamId
-            ? exam.modules.flatMap((module) => module.subExams || []).find((subExam) => subExam.id === subExamId)
+            ? exam.modules.flatMap((module) => [
+                ...(module.subExams || []),
+                ...((module.subModules || []).flatMap((sm) => sm.subExams || []))
+            ]).find((subExam) => subExam.id === subExamId)
             : null;
         if (subExamId && !selectedSubExam)
             return res.status(404).json({ error: 'الاختبار غير موجود داخل هذا الموديول.' });
@@ -1545,7 +1680,26 @@ const getExamHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         const subExamId = typeof req.query.subExamId === 'string' ? req.query.subExamId : null;
         const exam = yield prisma_1.default.exam.findUnique({
             where: { id: examId },
-            select: { attemptsAllowed: true, isCentral: true, schoolId: true, schools: { select: { id: true } }, grade: true, grades: true, status: true, deletedAt: true, modules: { select: { subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } } } } }
+            select: {
+                attemptsAllowed: true,
+                isCentral: true,
+                schoolId: true,
+                schools: { select: { id: true } },
+                grade: true,
+                grades: true,
+                status: true,
+                deletedAt: true,
+                modules: {
+                    select: {
+                        subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } },
+                        subModules: {
+                            select: {
+                                subExams: { where: subExamId ? { id: subExamId } : undefined, select: { attemptsAllowed: true } }
+                            }
+                        }
+                    }
+                }
+            }
         });
         if (!exam || exam.deletedAt)
             return res.status(404).json({ error: 'Exam not found' });
@@ -1562,7 +1716,11 @@ const getExamHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             where: Object.assign({ examId, userId }, (subExamId ? { subExamId } : {})),
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
         });
-        const selectedAttemptsAllowed = (_a = exam === null || exam === void 0 ? void 0 : exam.modules.flatMap((module) => module.subExams || [])[0]) === null || _a === void 0 ? void 0 : _a.attemptsAllowed;
+        const allMatchingSubExams = (exam === null || exam === void 0 ? void 0 : exam.modules) ? exam.modules.flatMap((module) => [
+            ...(module.subExams || []),
+            ...((module.subModules || []).flatMap((sm) => sm.subExams || []))
+        ]) : [];
+        const selectedAttemptsAllowed = (_a = allMatchingSubExams[0]) === null || _a === void 0 ? void 0 : _a.attemptsAllowed;
         res.json({
             taken: submissionCount > 0,
             submissionId: lastSubmission === null || lastSubmission === void 0 ? void 0 : lastSubmission.id,
@@ -1602,9 +1760,16 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                 startDate: true, endDate: true, resultVisibility: true, password: true,
                 grade: true, grades: true,
                 schools: { select: { id: true } },
-                modules: { include: { subExams: true } },
+                modules: {
+                    include: {
+                        subExams: true,
+                        subModules: {
+                            include: { subExams: true }
+                        }
+                    }
+                },
                 questions: {
-                    where: { deletedAt: null },
+                    where: Object.assign({ deletedAt: null }, (subExamId ? { subExamId } : {})),
                     orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
                     select: { id: true, points: true, correctAnswer: true, type: true, order: true, xpPoints: true, options: true, subExamId: true }
                 }
@@ -1613,7 +1778,10 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
         const selectedSubExam = subExamId
-            ? exam.modules.flatMap((module) => module.subExams || []).find((subExam) => subExam.id === subExamId)
+            ? exam.modules.flatMap((module) => [
+                ...(module.subExams || []),
+                ...((module.subModules || []).flatMap((sm) => sm.subExams || []))
+            ]).find((subExam) => subExam.id === subExamId)
             : null;
         if (subExamId && !selectedSubExam)
             return res.status(404).json({ error: 'Exam section not found' });
@@ -1650,9 +1818,13 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         let totalScore = 0;
         let maxPossibleScore = 0;
         const studentAnswersData = [];
+        const submittedAnswerMap = new Map();
+        for (const answer of answers)
+            if (!submittedAnswerMap.has(answer.questionId))
+                submittedAnswerMap.set(answer.questionId, answer);
         exam.questions.forEach(q => {
             maxPossibleScore += q.points;
-            const studentAnswer = answers.find((a) => a.questionId === q.id);
+            const studentAnswer = submittedAnswerMap.get(q.id);
             const selectedAnswer = studentAnswer === null || studentAnswer === void 0 ? void 0 : studentAnswer.selectedAnswer;
             const isCorrect = (0, shared_1.isAnswerCorrect)(q, selectedAnswer);
             if (isCorrect)
@@ -1677,8 +1849,9 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         let hasStreak10 = false;
         let tempStreak = 0;
         let maxStreak = 0;
+        const gradedAnswerMap = new Map(studentAnswersData.map(answer => [answer.questionId, answer]));
         sortedQuestions.forEach(q => {
-            const sa = studentAnswersData.find((a) => a.questionId === q.id);
+            const sa = gradedAnswerMap.get(q.id);
             const isCorrect = (sa === null || sa === void 0 ? void 0 : sa.isCorrect) || false;
             if (isCorrect) {
                 tempStreak++;
@@ -1715,17 +1888,12 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                     }))
                 }
             },
-            include: {
-                answers: {
-                    include: {
-                        question: true
-                    }
-                }
-            }
+            include: (exam.resultVisibility === 'SHOW_ANSWERS' || exam.resultVisibility === 'SHOW_ALL')
+                ? { answers: { include: { question: true } } } : undefined
         });
         // Save XPHistory log entries in bulk
         const xpHistoryData = exam.questions.map(q => {
-            const sa = studentAnswersData.find((a) => a.questionId === q.id);
+            const sa = gradedAnswerMap.get(q.id);
             const isCorrect = (sa === null || sa === void 0 ? void 0 : sa.isCorrect) || false;
             const earnedXP = (isFirstExamAttempt && isCorrect) ? (q.xpPoints !== undefined ? Number(q.xpPoints) : 10) : 0;
             return {
@@ -1782,7 +1950,7 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
             }
         }
         // Invalidate student stats cache
-        shared_1.statsCache.delete(`student_stats_${userId}`);
+        yield (0, shared_1.invalidateCache)(`student_stats_${userId}`);
         res.json({
             message: 'Exam submitted successfully',
             submissionId: submission.id,
@@ -1796,7 +1964,7 @@ const postExamHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         });
     }
     catch (error) {
-        console.error('❌ Submission error:', error);
+        console.error(' Submission error:', error);
         res.status(500).json({ error: 'Error submitting exam', details: error.message });
     }
     finally {
@@ -1810,14 +1978,7 @@ const getExamHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         const submission = yield prisma_1.default.examSubmission.findUnique({
             where: { id },
             include: {
-                exam: {
-                    include: {
-                        questions: {
-                            where: { deletedAt: null },
-                            orderBy: [{ order: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }]
-                        }
-                    }
-                },
+                exam: true,
                 user: { select: { name: true, role: true, schoolId: true } },
                 answers: {
                     where: { question: { deletedAt: null } },
@@ -1848,13 +2009,8 @@ const getExamHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             return res.status(403).json({ error: 'Access denied' });
         }
         const buildSubmissionXpStats = (targetSubmission, targetAnswers) => __awaiter(void 0, void 0, void 0, function* () {
-            const answerQuestionIds = targetAnswers.map((answer) => answer.questionId);
-            const relevantQuestions = targetSubmission.exam.questions.filter((question) => {
-                if (targetSubmission.subExamId) {
-                    return question.subExamId === targetSubmission.subExamId && answerQuestionIds.includes(question.id);
-                }
-                return answerQuestionIds.includes(question.id);
-            });
+            const relevantQuestions = targetAnswers.map((answer) => answer.question)
+                .filter((question) => !targetSubmission.subExamId || question.subExamId === targetSubmission.subExamId);
             const previousAttemptsCount = yield prisma_1.default.examSubmission.count({
                 where: {
                     userId: targetSubmission.userId,
@@ -1864,44 +2020,7 @@ const getExamHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 }
             });
             const isFirstAttemptForThisSubmission = previousAttemptsCount === 0;
-            const orderedAnswers = [...targetAnswers].sort((a, b) => {
-                var _a, _b, _c, _d;
-                const aOrder = (_b = (_a = relevantQuestions.find((question) => question.id === a.questionId)) === null || _a === void 0 ? void 0 : _a.order) !== null && _b !== void 0 ? _b : 0;
-                const bOrder = (_d = (_c = relevantQuestions.find((question) => question.id === b.questionId)) === null || _c === void 0 ? void 0 : _c.order) !== null && _d !== void 0 ? _d : 0;
-                return aOrder - bOrder;
-            });
-            let regularXP = 0;
-            let dynamicTotalScore = 0;
-            let streakCounter = 0;
-            let hasStreak5 = false;
-            let hasStreak10 = false;
-            orderedAnswers.forEach((answer) => {
-                const answerQuestion = relevantQuestions.find((question) => question.id === answer.questionId);
-                if (!answerQuestion)
-                    return;
-                if (answer.isCorrect) {
-                    streakCounter++;
-                    dynamicTotalScore += Number(answerQuestion.points) || 0;
-                    if (streakCounter === 5)
-                        hasStreak5 = true;
-                    if (streakCounter === 10)
-                        hasStreak10 = true;
-                    if (isFirstAttemptForThisSubmission) {
-                        regularXP += answerQuestion.xpPoints !== undefined ? Number(answerQuestion.xpPoints) : 10;
-                    }
-                }
-                else {
-                    streakCounter = 0;
-                }
-            });
-            const bonusXP = isFirstAttemptForThisSubmission ? ((hasStreak5 ? 10 : 0) + (hasStreak10 ? 30 : 0)) : 0;
-            return {
-                earnedXP: regularXP + bonusXP,
-                dynamicTotalScore,
-                totalPoints: relevantQuestions.reduce((acc, question) => acc + (Number(question.points) || 0), 0),
-                correctAnswers: orderedAnswers.filter((answer) => answer.isCorrect).length,
-                totalQuestions: relevantQuestions.length,
-            };
+            return (0, examPerformance_1.calculateSubmissionStats)(relevantQuestions, targetAnswers, isFirstAttemptForThisSubmission);
         });
         // Apply Result Policy for Students
         if (req.user.role === 'STUDENT') {
@@ -2033,7 +2152,7 @@ const postExamHandler16 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         res.json({ message: 'Exam restored successfully', exam });
     }
     catch (error) {
-        console.error('❌ Restore exam error:', error);
+        console.error(' Restore exam error:', error);
         res.status(500).json({ error: 'Error restoring exam' });
     }
 });
@@ -2048,7 +2167,7 @@ const postExamHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         res.json({ message: 'Question restored successfully', question });
     }
     catch (error) {
-        console.error('❌ Restore question error:', error);
+        console.error(' Restore question error:', error);
         res.status(500).json({ error: 'Error restoring question' });
     }
 });
@@ -2835,8 +2954,10 @@ const getExamHandler31 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             },
             questions: subExam.questions.map((question) => ({
                 text: question.text,
+                textEn: question.textEn,
                 type: question.type,
                 options: question.options,
+                optionsEn: question.optionsEn,
                 correctAnswer: question.correctAnswer,
                 points: question.points,
                 xpPoints: question.xpPoints,
@@ -2857,6 +2978,7 @@ const getExamHandler31 = (req, res) => __awaiter(void 0, void 0, void 0, functio
                 errorPattern: question.errorPattern,
                 estimatedTime: question.estimatedTime,
                 explanation: question.explanation,
+                explanationEn: question.explanationEn,
                 imageUrl: question.imageUrl,
                 order: question.order,
             })),
@@ -2914,8 +3036,10 @@ const postExamHandler32 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                         moduleId,
                         subExamId: created.id,
                         text: (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(question.text || '')),
+                        textEn: question.textEn ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(question.textEn)) : null,
                         type: ["MCQ", "TRUE_FALSE", "MULTI_SELECT", "FLASH_CARD", "FILL_BLANK", "ESSAY", "VIDEO_RESPONSE", "AUDIO_RESPONSE", "MATCHING", "ORDERING", "TEXT", "IMAGE", "VIDEO"].includes(question.type) ? (0, shared_1.sanitizeHtml)(question.type) : 'MCQ',
                         options: (0, shared_1.extractAndSaveBase64Images)(typeof question.options === 'string' ? question.options : JSON.stringify(question.options || [])),
+                        optionsEn: question.optionsEn ? (0, shared_1.extractAndSaveBase64Images)(typeof question.optionsEn === 'string' ? question.optionsEn : JSON.stringify(question.optionsEn || [])) : null,
                         correctAnswer: formatCorrectAnswer(question),
                         points: parseInt(question.points) || 1,
                         xpPoints: parseInt(question.xpPoints) || 10,
@@ -2936,6 +3060,7 @@ const postExamHandler32 = (req, res) => __awaiter(void 0, void 0, void 0, functi
                         errorPattern: question.errorPattern ? (0, shared_1.sanitizeHtml)(question.errorPattern) : null,
                         estimatedTime: question.estimatedTime ? (0, shared_1.sanitizeHtml)(question.estimatedTime) : null,
                         explanation: formatExplanation(question),
+                        explanationEn: question.explanationEn ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(question.explanationEn)) : null,
                         imageUrl: question.imageUrl ? (0, shared_1.extractAndSaveBase64Images)((0, shared_1.sanitizeHtml)(question.imageUrl)) : null,
                         order: question.order !== undefined ? parseInt(question.order) : index,
                     }
@@ -3244,7 +3369,7 @@ function formatExplanation(q) {
     }
     // 2. Check explanation field
     if (q.explanation !== undefined && q.explanation !== null) {
-        // 🔒 SECURITY FIX: Always sanitize HTML regardless of input type.
+        //  SECURITY FIX: Always sanitize HTML regardless of input type.
         // Convert non-strings to string safely before sanitizing.
         const rawExplanation = typeof q.explanation === 'string'
             ? q.explanation
@@ -3276,9 +3401,22 @@ function formatExplanation(q) {
     return null;
 }
 const cleanDuplicatesHandler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
+    var _a, _b, _c;
     try {
-        const examId = req.params.id || ((_a = req.body) === null || _a === void 0 ? void 0 : _a.examId);
+        const userRole = (_a = req.user) === null || _a === void 0 ? void 0 : _a.role;
+        let examId = undefined;
+        if (req.params.id) {
+            if (((_b = req.body) === null || _b === void 0 ? void 0 : _b.examId) && String(req.body.examId) !== String(req.params.id)) {
+                return res.status(400).json({ error: 'Mismatched exam ID between path and body parameters.' });
+            }
+            examId = String(req.params.id);
+        }
+        else if (userRole === 'SUPER_ADMIN') {
+            examId = ((_c = req.body) === null || _c === void 0 ? void 0 : _c.examId) ? String(req.body.examId) : undefined;
+        }
+        else {
+            return res.status(403).json({ error: 'Exam ID path parameter is required.' });
+        }
         const result = yield (0, clean_duplicates_and_empty_1.runSafeDeduplicationAndEmptyCleanup)(examId);
         return res.json(Object.assign({ success: true, message: `تم تنظيف ${result.duplicatesDeleted} سؤال مكرر و ${result.emptyQuestionsDeleted} سؤال فارغ بنجاح!` }, result));
     }

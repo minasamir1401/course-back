@@ -46,11 +46,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeRestoredValue = exports.postBackupHandler20 = exports.postBackupHandler19 = exports.getBackupHandler18 = exports.postBackupHandler17 = exports.postBackupHandler16 = exports.getBackupHandler15 = exports.postBackupHandler14 = exports.postBackupHandler13 = exports.deleteBackupHandler12 = exports.postBackupHandler11 = exports.postBackupHandler10 = exports.getBackupHandler9 = exports.getBackupHandler8 = exports.getBackupHandler7 = exports.postBackupHandler6 = exports.postBackupHandler5 = exports.postBackupHandler4 = exports.getBackupHandler3 = exports.getBackupHandler2 = exports.postBackupHandler1 = exports.BACKUPS_DIR = void 0;
+exports.restoreExamWithHierarchy = restoreExamWithHierarchy;
 exports.parseBackupBuffer = parseBackupBuffer;
 exports.generateFullSystemBackupData = generateFullSystemBackupData;
 exports.performBackupAndPruning = performBackupAndPruning;
 exports.readLocalBackupFile = readLocalBackupFile;
 const backupSnapshot_1 = require("../lib/backupSnapshot");
+const storage_1 = require("../lib/storage");
 var backupSnapshot_2 = require("../lib/backupSnapshot");
 Object.defineProperty(exports, "BACKUPS_DIR", { enumerable: true, get: function () { return backupSnapshot_2.BACKUPS_DIR; } });
 const db_backup_1 = require("../lib/db-backup");
@@ -71,7 +73,7 @@ const postBackupHandler1 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         });
     }
     catch (error) {
-        console.error('❌ Backup creation error:', error);
+        console.error(' Backup creation error:', error);
         res.status(500).json({ error: 'Failed to create backup', details: error.message });
     }
 });
@@ -111,7 +113,7 @@ const getBackupHandler2 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         res.json(allFiles);
     }
     catch (error) {
-        console.error('❌ Backup list error:', error);
+        console.error(' Backup list error:', error);
         res.status(500).json({ error: 'Failed to list backups', details: error.message });
     }
 });
@@ -123,7 +125,7 @@ const getBackupHandler3 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         res.json(filtered);
     }
     catch (error) {
-        console.error('❌ Cloud backup list error:', error);
+        console.error(' Cloud backup list error:', error);
         res.status(500).json({ error: 'Failed to list cloud backups', details: error.message });
     }
 });
@@ -140,38 +142,299 @@ const postBackupHandler4 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         res.json({ message: 'Cloud backup created successfully on Cloud Backup', filename: backupName });
     }
     catch (error) {
-        console.error('❌ Cloud backup create error:', error);
+        console.error(' Cloud backup create error:', error);
         res.status(500).json({ error: 'Failed to create cloud backup', details: error.message });
     }
 });
 exports.postBackupHandler4 = postBackupHandler4;
+function restoreExamWithHierarchy(tx, e, backupData, targetCourseId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36;
+        const toDate = (v) => (v ? (isNaN(new Date(v).getTime()) ? null : new Date(v)) : null);
+        const resolvedCourseId = targetCourseId !== undefined ? targetCourseId : ((_a = e.courseId) !== null && _a !== void 0 ? _a : null);
+        const ePayload = {
+            title: (_b = e.title) !== null && _b !== void 0 ? _b : 'Untitled',
+            description: (_c = e.description) !== null && _c !== void 0 ? _c : null,
+            type: (_d = e.type) !== null && _d !== void 0 ? _d : 'Quiz',
+            duration: typeof e.duration === 'number' ? e.duration : (parseInt(e.duration, 10) || 30),
+            passingScore: typeof e.passingScore === 'number' ? e.passingScore : (parseInt(e.passingScore, 10) || 50),
+            isCentral: (_e = e.isCentral) !== null && _e !== void 0 ? _e : false,
+            showAnswers: e.showAnswers !== false,
+            resultVisibility: (_f = e.resultVisibility) !== null && _f !== void 0 ? _f : 'SHOW_SCORE',
+            password: (_g = e.password) !== null && _g !== void 0 ? _g : null,
+            startDate: toDate(e.startDate),
+            endDate: toDate(e.endDate),
+            attemptsAllowed: typeof e.attemptsAllowed === 'number' ? e.attemptsAllowed : (parseInt(e.attemptsAllowed, 10) || 1),
+            status: (_h = e.status) !== null && _h !== void 0 ? _h : 'PUBLISHED',
+            category: (_j = e.category) !== null && _j !== void 0 ? _j : null,
+            grade: (_k = e.grade) !== null && _k !== void 0 ? _k : null,
+            grades: (_l = e.grades) !== null && _l !== void 0 ? _l : null,
+            subjects: (_m = e.subjects) !== null && _m !== void 0 ? _m : null,
+            schoolId: (_o = e.schoolId) !== null && _o !== void 0 ? _o : null,
+            courseId: resolvedCourseId,
+            folderId: (_p = e.folderId) !== null && _p !== void 0 ? _p : null,
+            courseName: (_q = e.courseName) !== null && _q !== void 0 ? _q : null,
+            section: (_r = e.section) !== null && _r !== void 0 ? _r : null,
+            domain: (_s = e.domain) !== null && _s !== void 0 ? _s : null,
+            learningOutcomes: (_t = e.learningOutcomes) !== null && _t !== void 0 ? _t : null,
+            indicators: (_u = e.indicators) !== null && _u !== void 0 ? _u : null,
+            skills: (_v = e.skills) !== null && _v !== void 0 ? _v : null,
+            skill: (_w = e.skill) !== null && _w !== void 0 ? _w : null,
+            gradeTarget: (_x = e.gradeTarget) !== null && _x !== void 0 ? _x : null,
+            level: (_y = e.level) !== null && _y !== void 0 ? _y : 'Medium',
+            creatorId: (_z = e.creatorId) !== null && _z !== void 0 ? _z : null,
+            deletedAt: null,
+            createdAt: (_0 = toDate(e.createdAt)) !== null && _0 !== void 0 ? _0 : new Date(),
+            updatedAt: (_1 = toDate(e.updatedAt)) !== null && _1 !== void 0 ? _1 : new Date()
+        };
+        yield tx.exam.upsert({
+            where: { id: e.id },
+            update: ePayload,
+            create: Object.assign({ id: e.id }, ePayload)
+        });
+        // 1. Gather all ExamModules
+        const backupModules = Array.isArray(backupData.examModule) ? backupData.examModule : [];
+        const embeddedModules = Array.isArray(e.modules) ? e.modules : [];
+        const allModulesMap = new Map();
+        for (const m of backupModules) {
+            if ((m === null || m === void 0 ? void 0 : m.examId) === e.id)
+                allModulesMap.set(m.id, m);
+        }
+        for (const m of embeddedModules) {
+            if (m === null || m === void 0 ? void 0 : m.id)
+                allModulesMap.set(m.id, Object.assign(Object.assign({}, m), { examId: e.id }));
+            if (Array.isArray(m.subModules)) {
+                for (const sm of m.subModules) {
+                    if (sm === null || sm === void 0 ? void 0 : sm.id)
+                        allModulesMap.set(sm.id, Object.assign(Object.assign({}, sm), { examId: e.id, parentModuleId: m.id }));
+                }
+            }
+        }
+        const modulesList = Array.from(allModulesMap.values());
+        const parentModules = modulesList.filter((m) => !m.parentModuleId);
+        const childModules = modulesList.filter((m) => !!m.parentModuleId);
+        for (const m of parentModules) {
+            const mPayload = {
+                examId: e.id,
+                parentModuleId: null,
+                title: m.title || 'Untitled Module',
+                description: (_2 = m.description) !== null && _2 !== void 0 ? _2 : null,
+                order: typeof m.order === 'number' ? m.order : 0,
+                duration: m.duration !== undefined && m.duration !== null ? Number(m.duration) : null,
+                passingScore: m.passingScore !== undefined && m.passingScore !== null ? Number(m.passingScore) : null,
+                gradeTarget: (_3 = m.gradeTarget) !== null && _3 !== void 0 ? _3 : null,
+                publishDate: toDate(m.publishDate),
+                cutOffDate: toDate(m.cutOffDate),
+                createdAt: (_4 = toDate(m.createdAt)) !== null && _4 !== void 0 ? _4 : new Date(),
+                updatedAt: (_5 = toDate(m.updatedAt)) !== null && _5 !== void 0 ? _5 : new Date()
+            };
+            yield tx.examModule.upsert({
+                where: { id: m.id },
+                update: mPayload,
+                create: Object.assign({ id: m.id }, mPayload)
+            });
+        }
+        for (const m of childModules) {
+            const mPayload = {
+                examId: e.id,
+                parentModuleId: m.parentModuleId,
+                title: m.title || 'Untitled Submodule',
+                description: (_6 = m.description) !== null && _6 !== void 0 ? _6 : null,
+                order: typeof m.order === 'number' ? m.order : 0,
+                duration: m.duration !== undefined && m.duration !== null ? Number(m.duration) : null,
+                passingScore: m.passingScore !== undefined && m.passingScore !== null ? Number(m.passingScore) : null,
+                gradeTarget: (_7 = m.gradeTarget) !== null && _7 !== void 0 ? _7 : null,
+                publishDate: toDate(m.publishDate),
+                cutOffDate: toDate(m.cutOffDate),
+                createdAt: (_8 = toDate(m.createdAt)) !== null && _8 !== void 0 ? _8 : new Date(),
+                updatedAt: (_9 = toDate(m.updatedAt)) !== null && _9 !== void 0 ? _9 : new Date()
+            };
+            yield tx.examModule.upsert({
+                where: { id: m.id },
+                update: mPayload,
+                create: Object.assign({ id: m.id }, mPayload)
+            });
+        }
+        // 2. Gather and restore SubExams
+        const backupSubExams = Array.isArray(backupData.subExam) ? backupData.subExam : [];
+        const allSubExamsMap = new Map();
+        for (const se of backupSubExams) {
+            if (allModulesMap.has(se.moduleId))
+                allSubExamsMap.set(se.id, se);
+        }
+        for (const m of modulesList) {
+            if (Array.isArray(m.subExams)) {
+                for (const se of m.subExams) {
+                    if (se === null || se === void 0 ? void 0 : se.id)
+                        allSubExamsMap.set(se.id, Object.assign(Object.assign({}, se), { moduleId: m.id }));
+                }
+            }
+        }
+        for (const se of allSubExamsMap.values()) {
+            const sePayload = {
+                moduleId: se.moduleId,
+                title: se.title || 'Untitled SubExam',
+                password: (_10 = se.password) !== null && _10 !== void 0 ? _10 : null,
+                duration: se.duration !== undefined && se.duration !== null ? Number(se.duration) : null,
+                passingScore: se.passingScore !== undefined && se.passingScore !== null ? Number(se.passingScore) : null,
+                attemptsAllowed: typeof se.attemptsAllowed === 'number' ? se.attemptsAllowed : 1,
+                order: typeof se.order === 'number' ? se.order : 0,
+                publishDate: toDate(se.publishDate),
+                cutOffDate: toDate(se.cutOffDate),
+                createdAt: (_11 = toDate(se.createdAt)) !== null && _11 !== void 0 ? _11 : new Date(),
+                updatedAt: (_12 = toDate(se.updatedAt)) !== null && _12 !== void 0 ? _12 : new Date()
+            };
+            yield tx.subExam.upsert({
+                where: { id: se.id },
+                update: sePayload,
+                create: Object.assign({ id: se.id }, sePayload)
+            });
+        }
+        // 3. Gather and restore Questions (with bilingual fields)
+        const backupQuestions = Array.isArray(backupData.question) ? backupData.question : [];
+        const embeddedQuestions = Array.isArray(e.questions) ? e.questions : [];
+        const allQuestionsMap = new Map();
+        for (const q of backupQuestions) {
+            if ((q === null || q === void 0 ? void 0 : q.examId) === e.id)
+                allQuestionsMap.set(q.id, q);
+        }
+        for (const q of embeddedQuestions) {
+            if (q === null || q === void 0 ? void 0 : q.id)
+                allQuestionsMap.set(q.id, Object.assign(Object.assign({}, q), { examId: e.id }));
+        }
+        for (const m of modulesList) {
+            if (Array.isArray(m.questions)) {
+                for (const q of m.questions) {
+                    if (q === null || q === void 0 ? void 0 : q.id)
+                        allQuestionsMap.set(q.id, Object.assign(Object.assign({}, q), { examId: e.id, moduleId: m.id }));
+                }
+            }
+        }
+        for (const se of allSubExamsMap.values()) {
+            if (Array.isArray(se.questions)) {
+                for (const q of se.questions) {
+                    if (q === null || q === void 0 ? void 0 : q.id)
+                        allQuestionsMap.set(q.id, Object.assign(Object.assign({}, q), { examId: e.id, subExamId: se.id, moduleId: se.moduleId }));
+                }
+            }
+        }
+        for (const q of allQuestionsMap.values()) {
+            const optionsStr = typeof q.options === 'string'
+                ? q.options
+                : JSON.stringify(Array.isArray(q.options) ? q.options : []);
+            const optionsEnStr = q.optionsEn
+                ? (typeof q.optionsEn === 'string' ? q.optionsEn : JSON.stringify(Array.isArray(q.optionsEn) ? q.optionsEn : []))
+                : null;
+            const correctAnswerStr = Array.isArray(q.correctAnswer)
+                ? JSON.stringify(q.correctAnswer)
+                : String((_13 = q.correctAnswer) !== null && _13 !== void 0 ? _13 : '');
+            const qPayload = {
+                examId: e.id,
+                text: (_15 = (_14 = q.text) !== null && _14 !== void 0 ? _14 : q.content) !== null && _15 !== void 0 ? _15 : '',
+                textEn: (_16 = q.textEn) !== null && _16 !== void 0 ? _16 : null,
+                type: q.type || q.questionType || 'MCQ',
+                options: optionsStr,
+                optionsEn: optionsEnStr,
+                correctAnswer: correctAnswerStr,
+                points: Number(q.points) || 1,
+                xpPoints: Number(q.xpPoints) || 10,
+                skill: (_17 = q.skill) !== null && _17 !== void 0 ? _17 : null,
+                learningOutcome: (_18 = q.learningOutcome) !== null && _18 !== void 0 ? _18 : null,
+                indicator: (_19 = q.indicator) !== null && _19 !== void 0 ? _19 : null,
+                videoUrl: (_20 = q.videoUrl) !== null && _20 !== void 0 ? _20 : null,
+                level: (_21 = q.level) !== null && _21 !== void 0 ? _21 : 'Medium',
+                dok: (_22 = q.dok) !== null && _22 !== void 0 ? _22 : null,
+                cognitive: (_23 = q.cognitive) !== null && _23 !== void 0 ? _23 : null,
+                course: (_24 = q.course) !== null && _24 !== void 0 ? _24 : null,
+                section: (_25 = q.section) !== null && _25 !== void 0 ? _25 : null,
+                domain: (_26 = q.domain) !== null && _26 !== void 0 ? _26 : null,
+                standard: (_27 = q.standard) !== null && _27 !== void 0 ? _27 : null,
+                subskill: (_28 = q.subskill) !== null && _28 !== void 0 ? _28 : null,
+                microSkill: (_29 = q.microSkill) !== null && _29 !== void 0 ? _29 : null,
+                gradeTarget: (_30 = q.gradeTarget) !== null && _30 !== void 0 ? _30 : null,
+                errorPattern: (_31 = q.errorPattern) !== null && _31 !== void 0 ? _31 : null,
+                estimatedTime: q.estimatedTime ? String(q.estimatedTime) : null,
+                explanation: (_32 = q.explanation) !== null && _32 !== void 0 ? _32 : null,
+                explanationEn: (_33 = q.explanationEn) !== null && _33 !== void 0 ? _33 : null,
+                imageUrl: (_34 = q.imageUrl) !== null && _34 !== void 0 ? _34 : null,
+                order: Number(q.order) || 0,
+                deletedAt: null,
+                moduleId: (q.moduleId && allModulesMap.has(q.moduleId)) ? q.moduleId : null,
+                subExamId: (q.subExamId && allSubExamsMap.has(q.subExamId)) ? q.subExamId : null,
+                createdAt: (_35 = toDate(q.createdAt)) !== null && _35 !== void 0 ? _35 : new Date(),
+                updatedAt: (_36 = toDate(q.updatedAt)) !== null && _36 !== void 0 ? _36 : new Date()
+            };
+            yield tx.question.upsert({
+                where: { id: q.id },
+                update: qPayload,
+                create: Object.assign({ id: q.id }, qPayload)
+            });
+        }
+    });
+}
 const postBackupHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const allCourses = yield prisma_1.default.course.findMany({
             include: {
                 lessons: { include: { blocks: true } },
-                exams: { include: { questions: true } },
+                exams: {
+                    include: {
+                        questions: true,
+                        modules: {
+                            where: { parentModuleId: null },
+                            include: {
+                                subExams: true,
+                                subModules: {
+                                    include: {
+                                        subExams: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
                 schools: true,
                 school: true
+            }
+        });
+        const standaloneExams = yield prisma_1.default.exam.findMany({
+            where: { courseId: null },
+            include: {
+                questions: true,
+                modules: {
+                    where: { parentModuleId: null },
+                    include: {
+                        subExams: true,
+                        subModules: {
+                            include: {
+                                subExams: true
+                            }
+                        }
+                    }
+                }
             }
         });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const backupName = `backup_forced_sync_${timestamp}`;
         const saved = yield (0, db_backup_2.saveToCloudBackup)(backupName, 'REALTIME_SYNC', {
-            data: { course: allCourses }
+            data: {
+                course: allCourses,
+                exam: standaloneExams
+            }
         });
         if (!saved) {
             return res.status(500).json({ error: 'Failed to sync courses to Cloud Backup' });
         }
-        console.log(`☁️ [Force Sync] Synced ${allCourses.length} courses to Cloud Backup as REALTIME_SYNC`);
+        console.log(`[Force Sync] Synced ${allCourses.length} courses and ${standaloneExams.length} standalone exams to Cloud Backup as REALTIME_SYNC`);
         res.json({
-            message: `تمت مزامنة ${allCourses.length} كورس بنجاح إلى Cloud Backup`,
+            message: `تمت مزامنة ${allCourses.length} كورس و ${standaloneExams.length} امتحان بنجاح إلى Cloud Backup`,
             coursesCount: allCourses.length,
+            examsCount: standaloneExams.length,
             backupName
         });
     }
     catch (error) {
-        console.error('❌ Cloud sync-all error:', error);
+        console.error('Cloud sync-all error:', error);
         res.status(500).json({ error: 'Failed to sync all courses', details: error.message });
     }
 });
@@ -182,7 +445,7 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         const { Pool } = require('pg');
         const BACKUP_DB_URL = process.env.BACKUP_DB_URL;
         const cloudPool = new Pool({ connectionString: BACKUP_DB_URL, max: 3, connectionTimeoutMillis: 8000 });
-        // 1. Fetch the most recent cloud backup records (prefer REALTIME_SYNC then AUTO_HOURLY)
+        // 1. Fetch the most recent cloud backup records
         const result = yield cloudPool.query(`
       SELECT data, created_at, type
       FROM cloud_backups
@@ -194,19 +457,26 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         if (!result.rows || result.rows.length === 0) {
             return res.status(404).json({ error: 'No cloud backup records found' });
         }
-        // 2. Merge all course + lesson data from cloud records (newest first)
+        // 2. Merge all course, lesson, and modular exam data from cloud records (newest first)
         const mergedCourses = new Map();
         const mergedLessons = new Map();
+        const mergedExams = new Map();
+        const mergedModules = new Map();
+        const mergedSubExams = new Map();
+        const mergedQuestions = new Map();
         for (const row of result.rows) {
             try {
                 const payload = row.data;
                 const data = (payload === null || payload === void 0 ? void 0 : payload.data) || payload;
                 const courses = Array.isArray(data === null || data === void 0 ? void 0 : data.course) ? data.course : [];
                 const lessons = Array.isArray(data === null || data === void 0 ? void 0 : data.lesson) ? data.lesson : [];
+                const exams = Array.isArray(data === null || data === void 0 ? void 0 : data.exam) ? data.exam : [];
+                const modules = Array.isArray(data === null || data === void 0 ? void 0 : data.examModule) ? data.examModule : [];
+                const subExams = Array.isArray(data === null || data === void 0 ? void 0 : data.subExam) ? data.subExam : [];
+                const questions = Array.isArray(data === null || data === void 0 ? void 0 : data.question) ? data.question : [];
                 for (const c of courses) {
                     if ((c === null || c === void 0 ? void 0 : c.id) && !mergedCourses.has(c.id)) {
                         mergedCourses.set(c.id, c);
-                        // Also extract lessons embedded inside course objects (REALTIME_SYNC format)
                         if (Array.isArray(c.lessons)) {
                             for (const l of c.lessons) {
                                 if ((l === null || l === void 0 ? void 0 : l.id) && !mergedLessons.has(l.id)) {
@@ -214,29 +484,136 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                                 }
                             }
                         }
+                        if (Array.isArray(c.exams)) {
+                            for (const e of c.exams) {
+                                if ((e === null || e === void 0 ? void 0 : e.id) && !mergedExams.has(e.id)) {
+                                    mergedExams.set(e.id, Object.assign(Object.assign({}, e), { courseId: e.courseId || c.id }));
+                                    if (Array.isArray(e.questions)) {
+                                        for (const q of e.questions) {
+                                            if ((q === null || q === void 0 ? void 0 : q.id) && !mergedQuestions.has(q.id))
+                                                mergedQuestions.set(q.id, Object.assign(Object.assign({}, q), { examId: e.id }));
+                                        }
+                                    }
+                                    if (Array.isArray(e.modules)) {
+                                        for (const m of e.modules) {
+                                            if ((m === null || m === void 0 ? void 0 : m.id) && !mergedModules.has(m.id)) {
+                                                mergedModules.set(m.id, Object.assign(Object.assign({}, m), { examId: e.id }));
+                                            }
+                                            if (Array.isArray(m.subExams)) {
+                                                for (const se of m.subExams) {
+                                                    if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                                                        mergedSubExams.set(se.id, Object.assign(Object.assign({}, se), { moduleId: m.id }));
+                                                }
+                                            }
+                                            if (Array.isArray(m.subModules)) {
+                                                for (const sm of m.subModules) {
+                                                    if ((sm === null || sm === void 0 ? void 0 : sm.id) && !mergedModules.has(sm.id))
+                                                        mergedModules.set(sm.id, Object.assign(Object.assign({}, sm), { examId: e.id, parentModuleId: m.id }));
+                                                    if (Array.isArray(sm.subExams)) {
+                                                        for (const se of sm.subExams) {
+                                                            if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                                                                mergedSubExams.set(se.id, Object.assign(Object.assign({}, se), { moduleId: sm.id }));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 for (const l of lessons) {
-                    if ((l === null || l === void 0 ? void 0 : l.id) && !mergedLessons.has(l.id)) {
+                    if ((l === null || l === void 0 ? void 0 : l.id) && !mergedLessons.has(l.id))
                         mergedLessons.set(l.id, l);
+                }
+                for (const e of exams) {
+                    if ((e === null || e === void 0 ? void 0 : e.id) && !mergedExams.has(e.id)) {
+                        mergedExams.set(e.id, e);
+                        if (Array.isArray(e.questions)) {
+                            for (const q of e.questions) {
+                                if ((q === null || q === void 0 ? void 0 : q.id) && !mergedQuestions.has(q.id))
+                                    mergedQuestions.set(q.id, Object.assign(Object.assign({}, q), { examId: e.id }));
+                            }
+                        }
+                        if (Array.isArray(e.modules)) {
+                            for (const m of e.modules) {
+                                if ((m === null || m === void 0 ? void 0 : m.id) && !mergedModules.has(m.id)) {
+                                    mergedModules.set(m.id, Object.assign(Object.assign({}, m), { examId: e.id }));
+                                }
+                                if (Array.isArray(m.subExams)) {
+                                    for (const se of m.subExams) {
+                                        if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                                            mergedSubExams.set(se.id, Object.assign(Object.assign({}, se), { moduleId: m.id }));
+                                    }
+                                }
+                                if (Array.isArray(m.subModules)) {
+                                    for (const sm of m.subModules) {
+                                        if ((sm === null || sm === void 0 ? void 0 : sm.id) && !mergedModules.has(sm.id))
+                                            mergedModules.set(sm.id, Object.assign(Object.assign({}, sm), { examId: e.id, parentModuleId: m.id }));
+                                        if (Array.isArray(sm.subExams)) {
+                                            for (const se of sm.subExams) {
+                                                if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                                                    mergedSubExams.set(se.id, Object.assign(Object.assign({}, se), { moduleId: sm.id }));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                }
+                for (const m of modules) {
+                    if ((m === null || m === void 0 ? void 0 : m.id) && !mergedModules.has(m.id))
+                        mergedModules.set(m.id, m);
+                    if (Array.isArray(m.subExams)) {
+                        for (const se of m.subExams) {
+                            if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                                mergedSubExams.set(se.id, Object.assign(Object.assign({}, se), { moduleId: m.id }));
+                        }
+                    }
+                    if (Array.isArray(m.subModules)) {
+                        for (const sm of m.subModules) {
+                            if ((sm === null || sm === void 0 ? void 0 : sm.id) && !mergedModules.has(sm.id))
+                                mergedModules.set(sm.id, Object.assign(Object.assign({}, sm), { examId: m.examId, parentModuleId: m.id }));
+                            if (Array.isArray(sm.subExams)) {
+                                for (const se of sm.subExams) {
+                                    if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                                        mergedSubExams.set(se.id, Object.assign(Object.assign({}, se), { moduleId: sm.id }));
+                                }
+                            }
+                        }
+                    }
+                }
+                for (const se of subExams) {
+                    if ((se === null || se === void 0 ? void 0 : se.id) && !mergedSubExams.has(se.id))
+                        mergedSubExams.set(se.id, se);
+                }
+                for (const q of questions) {
+                    if ((q === null || q === void 0 ? void 0 : q.id) && !mergedQuestions.has(q.id))
+                        mergedQuestions.set(q.id, q);
                 }
             }
             catch ( /* skip malformed records */_2) { /* skip malformed records */ }
         }
-        console.log(`☁️ [Cloud Restore] Found ${mergedCourses.size} courses and ${mergedLessons.size} lessons in cloud backup pool`);
+        console.log(`[Cloud Restore] Found ${mergedCourses.size} courses, ${mergedLessons.size} lessons, ${mergedExams.size} exams in cloud backup pool`);
         // 3. Load current primary DB state
-        const [activeCourses, activeLessons] = yield Promise.all([
+        const [activeCourses, activeLessons, activeExams] = yield Promise.all([
             prisma_1.default.course.findMany({ select: { id: true } }),
             prisma_1.default.lesson.findMany({ select: { id: true } }),
+            prisma_1.default.exam.findMany({ select: { id: true } })
         ]);
         const activeCourseIds = new Set(activeCourses.map((c) => c.id));
         const activeLessonIds = new Set(activeLessons.map((l) => l.id));
-        const toDate = (v) => v ? (isNaN(new Date(v).getTime()) ? null : new Date(v)) : null;
+        const activeExamIds = new Set(activeExams.map((e) => e.id));
+        const toDate = (v) => (v ? (isNaN(new Date(v).getTime()) ? null : new Date(v)) : null);
         let restoredCourses = 0;
         let restoredLessons = 0;
+        let restoredExams = 0;
         let skippedCourses = 0;
         let skippedLessons = 0;
+        let skippedExams = 0;
         const details = [];
         // 4. Restore missing courses
         for (const [courseId, c] of mergedCourses) {
@@ -267,8 +644,8 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                 });
                 activeCourseIds.add(courseId);
                 restoredCourses++;
-                details.push(`✅ Course: "${c.title}"`);
-                console.log(`✅ [Cloud Restore] Restored course: "${c.title}" (${courseId})`);
+                details.push(`Course: "${c.title}"`);
+                console.log(`[Cloud Restore] Restored course: "${c.title}" (${courseId})`);
             }
             catch (err) {
                 if (err.code === 'P2002') {
@@ -276,7 +653,7 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                     activeCourseIds.add(courseId);
                 }
                 else {
-                    details.push(`⚠️ Course "${c.title}": ${err.message}`);
+                    details.push(`Course "${c.title}": ${err.message}`);
                     skippedCourses++;
                 }
             }
@@ -334,34 +711,66 @@ const postBackupHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                 });
                 activeLessonIds.add(lessonId);
                 restoredLessons++;
-                details.push(`  📚 Lesson: "${l.title}"`);
-                console.log(`✅ [Cloud Restore] Restored lesson: "${l.title}" → course ${l.courseId}`);
+                details.push(`Lesson: "${l.title}"`);
+                console.log(`[Cloud Restore] Restored lesson: "${l.title}" -> course ${l.courseId}`);
             }
             catch (err) {
                 if (err.code === 'P2002') {
                     skippedLessons++;
                 }
                 else {
-                    details.push(`  ⚠️ Lesson "${l.title}": ${err.message}`);
+                    details.push(`Lesson "${l.title}": ${err.message}`);
                     skippedLessons++;
                 }
             }
         }
+        // 6. Restore missing exams (with modules, sub-exams, and bilingual questions)
+        const backupDataWrapper = {
+            examModule: Array.from(mergedModules.values()),
+            subExam: Array.from(mergedSubExams.values()),
+            question: Array.from(mergedQuestions.values())
+        };
+        for (const [examId, e] of mergedExams) {
+            if (activeExamIds.has(examId)) {
+                skippedExams++;
+                continue;
+            }
+            if (e.courseId && !activeCourseIds.has(e.courseId)) {
+                skippedExams++;
+                continue;
+            }
+            try {
+                yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+                    var _a;
+                    yield restoreExamWithHierarchy(tx, e, backupDataWrapper, (_a = e.courseId) !== null && _a !== void 0 ? _a : null);
+                }), { timeout: 30000 });
+                activeExamIds.add(examId);
+                restoredExams++;
+                details.push(`Exam: "${e.title}"`);
+                console.log(`[Cloud Restore] Restored modular exam: "${e.title}" (${examId})`);
+            }
+            catch (err) {
+                details.push(`Exam "${e.title}": ${err.message}`);
+                skippedExams++;
+            }
+        }
         const summary = {
             success: true,
-            message: `تم استعادة ${restoredCourses} كورس و ${restoredLessons} درس من Cloud Backup إلى قاعدة البيانات الأساسية`,
+            message: `تم استعادة ${restoredCourses} كورس و ${restoredLessons} درس و ${restoredExams} امتحان من Cloud Backup إلى قاعدة البيانات الأساسية`,
             restoredCourses,
             restoredLessons,
+            restoredExams,
             skippedCourses,
             skippedLessons,
+            skippedExams,
             cloudRecordsScanned: result.rows.length,
-            details: details.slice(0, 100) // limit details output
+            details: details.slice(0, 100)
         };
-        console.log(`\n☁️ [Cloud Restore] COMPLETE — Courses: ${restoredCourses} restored, ${skippedCourses} skipped | Lessons: ${restoredLessons} restored, ${skippedLessons} skipped`);
+        console.log(`[Cloud Restore] COMPLETE - Courses: ${restoredCourses} restored, ${skippedCourses} skipped | Lessons: ${restoredLessons} restored, ${skippedLessons} skipped | Exams: ${restoredExams} restored, ${skippedExams} skipped`);
         res.json(summary);
     }
     catch (error) {
-        console.error('❌ Cloud restore error:', error);
+        console.error('Cloud restore error:', error);
         res.status(500).json({ error: 'Failed to restore from cloud backup', details: error.message });
     }
 });
@@ -408,7 +817,7 @@ const getBackupHandler7 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         res.download(filePath, filename);
     }
     catch (error) {
-        console.error('❌ Backup download error:', error);
+        console.error(' Backup download error:', error);
         res.status(500).json({ error: 'Failed to download backup', details: error.message });
     }
 });
@@ -446,7 +855,7 @@ const getBackupHandler8 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         archive.finalize();
     }
     catch (error) {
-        console.error('❌ Download full backup with media error:', error);
+        console.error(' Download full backup with media error:', error);
         if (!res.headersSent)
             res.status(500).json({ error: 'Failed to create full backup zip', details: error.message });
     }
@@ -481,7 +890,7 @@ const getBackupHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, functi
         archive.finalize();
     }
     catch (error) {
-        console.error('❌ Download all backups error:', error);
+        console.error(' Download all backups error:', error);
         res.status(500).json({ error: 'Failed to create zip for all backups', details: error.message });
     }
 });
@@ -492,7 +901,7 @@ const postBackupHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, func
         res.json(result);
     }
     catch (error) {
-        console.error('❌ Manual bundle backups error:', error);
+        console.error(' Manual bundle backups error:', error);
         res.status(500).json({ error: error.message || 'Failed to create manual bundle' });
     }
 });
@@ -556,11 +965,11 @@ const postBackupHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, func
                     extractedMediaCount++;
                 });
                 if (extractedMediaCount > 0) {
-                    console.log(`✅ Extracted ${extractedMediaCount} media files from uploaded backup`);
+                    console.log(` Extracted ${extractedMediaCount} media files from uploaded backup`);
                 }
             }
             catch (err) {
-                console.error('⚠️ Failed to extract media from ZIP:', err.message);
+                console.error('️ Failed to extract media from ZIP:', err.message);
                 if (fs_1.default.existsSync(destPath))
                     fs_1.default.unlinkSync(destPath);
                 return res.status(400).json({ error: 'ZIP backup contains an unsafe or invalid media path' });
@@ -575,7 +984,7 @@ const postBackupHandler11 = (req, res) => __awaiter(void 0, void 0, void 0, func
         });
     }
     catch (error) {
-        console.error('❌ Backup upload error:', error);
+        console.error(' Backup upload error:', error);
         res.status(500).json({ error: 'Failed to upload backup', details: error.message });
     }
 });
@@ -629,7 +1038,7 @@ const deleteBackupHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, fu
         return res.status(404).json({ error: 'Backup not found' });
     }
     catch (error) {
-        console.error('❌ Delete backup error:', error);
+        console.error(' Delete backup error:', error);
         res.status(500).json({ error: 'Failed to delete backup', details: error.message });
     }
 });
@@ -674,15 +1083,16 @@ const postBackupHandler13 = (req, res) => __awaiter(void 0, void 0, void 0, func
             backupData = readLocalBackupFile(filePath, filename);
         }
         const data = (backupData === null || backupData === void 0 ? void 0 : backupData.data) || backupData; // Handle both wrapper structure and plain object
-        if (!Array.isArray(data === null || data === void 0 ? void 0 : data.course) || !Array.isArray(data === null || data === void 0 ? void 0 : data.lesson)) {
-            return res.status(400).json({ error: 'Incomplete backup: course and lesson arrays required' });
+        // v2 backups are validated inside restoreSnapshot using DMMF; v1 legacy backups may lack course/lesson arrays
+        if (!data || typeof data !== 'object') {
+            return res.status(400).json({ error: 'Incomplete backup: no data payload found' });
         }
         yield performBackupAndPruning();
         yield (0, backupSnapshot_1.restoreSnapshot)(prisma_1.default, backupData);
         res.json({ success: true, message: 'Database restored successfully from backup.' });
     }
     catch (error) {
-        console.error('❌ Restore error:', error);
+        console.error(' Restore error:', error);
         res.status(500).json({ error: 'Failed to restore database', details: error.message });
     }
 });
@@ -713,10 +1123,18 @@ const postBackupHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, func
         if (!targetCourse) {
             return res.status(404).json({ error: `Course '${courseId}' not found in this backup file` });
         }
-        // Find lessons for this course
+        // Find lessons and exams for this course
         const backupLessons = (Array.isArray(data.lesson) ? data.lesson : [])
             .filter((l) => l.courseId === courseId);
-        console.log(`[Partial Restore] Found ${backupLessons.length} lessons for course '${targetCourse.title}' in backup ${filename}`);
+        const backupExams = (Array.isArray(data.exam) ? data.exam : [])
+            .filter((e) => e.courseId === courseId);
+        if (Array.isArray(targetCourse.exams)) {
+            for (const ce of targetCourse.exams) {
+                if (!backupExams.some((x) => x.id === ce.id))
+                    backupExams.push(ce);
+            }
+        }
+        console.log(`[Partial Restore] Found ${backupLessons.length} lessons and ${backupExams.length} exams for course '${targetCourse.title}' in backup ${filename}`);
         // Check if course exists in current DB
         const existingCourse = yield prisma_1.default.course.findUnique({ where: { id: courseId } });
         yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
@@ -742,21 +1160,25 @@ const postBackupHandler14 = (req, res) => __awaiter(void 0, void 0, void 0, func
                     skippedCount++;
                 }
             }
+            // Restore course exams with modular hierarchy and bilingual questions
+            for (const exam of backupExams) {
+                yield restoreExamWithHierarchy(tx, exam, data, courseId);
+            }
             console.log(`[Partial Restore] Restored: ${restoredCount}, Skipped (already exist): ${skippedCount}`);
         }), { timeout: 120000 });
         // Return fresh course data
         const freshCourse = yield prisma_1.default.course.findUnique({
             where: { id: courseId },
-            include: { lessons: { orderBy: { order: 'asc' } } }
+            include: { lessons: { orderBy: { order: 'asc' } }, exams: true }
         });
         res.json({
             success: true,
-            message: `Course lessons restored from backup. Backup date: ${backup.timestamp || 'unknown'}`,
+            message: `Course lessons and exams restored from backup. Backup date: ${backup.timestamp || 'unknown'}`,
             course: freshCourse
         });
     }
     catch (error) {
-        console.error('❌ Partial restore error:', error);
+        console.error('Partial restore error:', error);
         res.status(500).json({ error: 'Failed to restore course', details: error.message });
     }
 });
@@ -925,7 +1347,7 @@ const getBackupHandler15 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         res.json({ results, totalCount: results.length });
     }
     catch (error) {
-        console.error('❌ Search lesson error:', error);
+        console.error(' Search lesson error:', error);
         res.status(500).json({ error: 'Failed to search for lesson', details: error.message });
     }
 });
@@ -974,7 +1396,28 @@ const postBackupHandler16 = (req, res) => __awaiter(void 0, void 0, void 0, func
         const courses = Array.isArray(backupData.course) ? backupData.course : [];
         const lessons = Array.isArray(backupData.lesson) ? backupData.lesson : [];
         const exams = Array.isArray(backupData.exam) ? backupData.exam : [];
+        const questions = Array.isArray(backupData.question) ? backupData.question : [];
+        const modules = Array.isArray(backupData.examModule) ? backupData.examModule : [];
+        const subExams = Array.isArray(backupData.subExam) ? backupData.subExam : [];
+        const formatExamLabel = (e) => {
+            const examQuestions = questions.filter((q) => q.examId === e.id);
+            const embeddedQ = Array.isArray(e.questions) ? e.questions : [];
+            const totalQ = Math.max(examQuestions.length, embeddedQ.length);
+            const examModules = modules.filter((m) => m.examId === e.id);
+            const embeddedM = Array.isArray(e.modules) ? e.modules : [];
+            const totalM = Math.max(examModules.length, embeddedM.length);
+            const hasBilingual = [...examQuestions, ...embeddedQ].some((q) => (q === null || q === void 0 ? void 0 : q.textEn) || (q === null || q === void 0 ? void 0 : q.optionsEn));
+            const tags = [];
+            if (totalQ > 0)
+                tags.push(`${totalQ} سؤال`);
+            if (totalM > 0)
+                tags.push(`${totalM} موديول`);
+            if (hasBilingual)
+                tags.push('ثنائي اللغة');
+            return tags.length > 0 ? `${e.title || 'Untitled'} (${tags.join(' - ')})` : (e.title || 'Untitled');
+        };
         const tree = [];
+        const attachedExamIds = new Set();
         for (const c of courses) {
             const courseNode = {
                 id: c.id,
@@ -987,15 +1430,36 @@ const postBackupHandler16 = (req, res) => __awaiter(void 0, void 0, void 0, func
                 courseNode.children.push({ id: l.id, type: 'lesson', title: l.title });
             }
             const courseExams = exams.filter((e) => e.courseId === c.id);
+            if (Array.isArray(c.exams)) {
+                for (const ce of c.exams) {
+                    if (!courseExams.some((x) => x.id === ce.id))
+                        courseExams.push(ce);
+                }
+            }
             for (const e of courseExams) {
-                courseNode.children.push({ id: e.id, type: 'exam', title: e.title });
+                attachedExamIds.add(e.id);
+                courseNode.children.push({ id: e.id, type: 'exam', title: formatExamLabel(e) });
             }
             tree.push(courseNode);
         }
-        // Check for orphaned lessons/exams (just in case)
-        const orphanedLessons = lessons.filter((l) => !courses.find((c) => c.id === l.courseId));
+        const standaloneExams = exams.filter((e) => !attachedExamIds.has(e.id));
+        if (standaloneExams.length > 0) {
+            const standaloneNode = {
+                id: 'standalone_exams',
+                type: 'course',
+                title: 'امتحانات مستقلة ومركزية',
+                children: standaloneExams.map((e) => ({
+                    id: e.id,
+                    type: 'exam',
+                    title: formatExamLabel(e)
+                }))
+            };
+            tree.push(standaloneNode);
+        }
+        const courseIdSet = new Set(courses.map((c) => c.id));
+        const orphanedLessons = lessons.filter((l) => !courseIdSet.has(l.courseId));
         if (orphanedLessons.length > 0) {
-            const orphanNode = { id: 'orphans', type: 'course', title: 'Orphaned Items', children: [] };
+            const orphanNode = { id: 'orphaned_lessons', type: 'course', title: 'دروس منفصلة', children: [] };
             for (const l of orphanedLessons)
                 orphanNode.children.push({ id: l.id, type: 'lesson', title: l.title });
             tree.push(orphanNode);
@@ -1015,7 +1479,6 @@ const postBackupHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, func
             return res.status(400).json({ error: 'No items selected for restore.' });
         }
         let backupData = null;
-        // ... Load backupData (same logic as explore)
         if (source === 'cloud' || (filename && filename.startsWith('السحابة:'))) {
             const { Pool } = require('pg');
             const cloudPool = new Pool({ connectionString: process.env.BACKUP_DB_URL, max: 2, connectionTimeoutMillis: 5000 });
@@ -1051,7 +1514,19 @@ const postBackupHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, func
             return res.status(404).json({ error: 'Backup not found.' });
         const bCourses = Array.isArray(backupData.course) ? backupData.course : [];
         const bLessons = Array.isArray(backupData.lesson) ? backupData.lesson : [];
-        const bExams = Array.isArray(backupData.exam) ? backupData.exam : [];
+        const bExamsMap = new Map();
+        if (Array.isArray(backupData.exam)) {
+            for (const e of backupData.exam)
+                if (e === null || e === void 0 ? void 0 : e.id)
+                    bExamsMap.set(e.id, e);
+        }
+        for (const c of bCourses) {
+            if (Array.isArray(c.exams)) {
+                for (const e of c.exams)
+                    if ((e === null || e === void 0 ? void 0 : e.id) && !bExamsMap.has(e.id))
+                        bExamsMap.set(e.id, Object.assign(Object.assign({}, e), { courseId: e.courseId || c.id }));
+            }
+        }
         const parseSafe = (v) => { if (!v)
             return null; if (typeof v === 'string') {
             try {
@@ -1063,7 +1538,6 @@ const postBackupHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, func
         } return v; };
         const toDate = (v) => v ? (isNaN(new Date(v).getTime()) ? null : new Date(v)) : null;
         yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15;
             for (const sel of selections) {
                 if (sel.type === 'course') {
                     const c = bCourses.find((x) => x.id === sel.id);
@@ -1083,39 +1557,10 @@ const postBackupHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, func
                             create: { id: l.id, courseId: c.id, title: l.title || 'Untitled', domain: l.domain, content: l.content, videoUrl: l.videoUrl, duration: l.duration || 0, summary: l.summary, notes: l.notes, questions: parseSafe(l.questions), assignments: parseSafe(l.assignments), attachments: parseSafe(l.attachments), slides: parseSafe(l.slides), standards: l.standards, indicators: l.indicators, learningOutcomes: l.learningOutcomes, isCentral: l.isCentral || false, isVisible: l.isVisible !== false, publishDate: toDate(l.publishDate), cutOffDate: toDate(l.cutOffDate), order: l.order || 0, createdAt: toDate(l.createdAt) || new Date(), updatedAt: toDate(l.updatedAt) || new Date() }
                         });
                     }
-                    // Restore all its exams
-                    const cExams = bExams.filter((e) => e.courseId === c.id);
+                    // Restore all its exams with complete hierarchy
+                    const cExams = Array.from(bExamsMap.values()).filter((e) => e.courseId === c.id);
                     for (const e of cExams) {
-                        const ePayload = {
-                            title: (_a = e.title) !== null && _a !== void 0 ? _a : 'Untitled',
-                            description: (_b = e.description) !== null && _b !== void 0 ? _b : null,
-                            type: (_c = e.type) !== null && _c !== void 0 ? _c : 'Quiz',
-                            duration: (_d = e.duration) !== null && _d !== void 0 ? _d : 30,
-                            passingScore: (_e = e.passingScore) !== null && _e !== void 0 ? _e : 50,
-                            isCentral: (_f = e.isCentral) !== null && _f !== void 0 ? _f : false,
-                            showAnswers: (_g = e.showAnswers) !== null && _g !== void 0 ? _g : true,
-                            resultVisibility: (_h = e.resultVisibility) !== null && _h !== void 0 ? _h : 'SHOW_SCORE',
-                            password: (_j = e.password) !== null && _j !== void 0 ? _j : null,
-                            startDate: e.startDate ? new Date(e.startDate) : null,
-                            endDate: e.endDate ? new Date(e.endDate) : null,
-                            attemptsAllowed: (_k = e.attemptsAllowed) !== null && _k !== void 0 ? _k : 1,
-                            status: (_l = e.status) !== null && _l !== void 0 ? _l : 'PUBLISHED',
-                            category: (_m = e.category) !== null && _m !== void 0 ? _m : null,
-                            grade: (_o = e.grade) !== null && _o !== void 0 ? _o : null,
-                            grades: (_p = e.grades) !== null && _p !== void 0 ? _p : null,
-                            subjects: (_q = e.subjects) !== null && _q !== void 0 ? _q : null,
-                            schoolId: (_r = e.schoolId) !== null && _r !== void 0 ? _r : null,
-                            courseId: c.id,
-                            skill: (_s = e.skill) !== null && _s !== void 0 ? _s : null,
-                            level: (_t = e.level) !== null && _t !== void 0 ? _t : 'Medium',
-                            createdAt: (_u = toDate(e.createdAt)) !== null && _u !== void 0 ? _u : new Date(),
-                            updatedAt: (_v = toDate(e.updatedAt)) !== null && _v !== void 0 ? _v : new Date()
-                        };
-                        yield tx.exam.upsert({
-                            where: { id: e.id },
-                            update: ePayload,
-                            create: Object.assign({ id: e.id }, ePayload)
-                        });
+                        yield restoreExamWithHierarchy(tx, e, backupData, c.id);
                     }
                 }
                 else if (sel.type === 'lesson') {
@@ -1130,47 +1575,18 @@ const postBackupHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, func
                     });
                 }
                 else if (sel.type === 'exam') {
-                    const e = bExams.find((x) => x.id === sel.id);
+                    const e = bExamsMap.get(sel.id);
                     if (!e)
                         continue;
-                    const targetCourseId = sel.targetCourseId || e.courseId;
-                    const ePayload = {
-                        title: (_w = e.title) !== null && _w !== void 0 ? _w : 'Untitled',
-                        description: (_x = e.description) !== null && _x !== void 0 ? _x : null,
-                        type: (_y = e.type) !== null && _y !== void 0 ? _y : 'Quiz',
-                        duration: (_z = e.duration) !== null && _z !== void 0 ? _z : 30,
-                        passingScore: (_0 = e.passingScore) !== null && _0 !== void 0 ? _0 : 50,
-                        isCentral: (_1 = e.isCentral) !== null && _1 !== void 0 ? _1 : false,
-                        showAnswers: (_2 = e.showAnswers) !== null && _2 !== void 0 ? _2 : true,
-                        resultVisibility: (_3 = e.resultVisibility) !== null && _3 !== void 0 ? _3 : 'SHOW_SCORE',
-                        password: (_4 = e.password) !== null && _4 !== void 0 ? _4 : null,
-                        startDate: e.startDate ? new Date(e.startDate) : null,
-                        endDate: e.endDate ? new Date(e.endDate) : null,
-                        attemptsAllowed: (_5 = e.attemptsAllowed) !== null && _5 !== void 0 ? _5 : 1,
-                        status: (_6 = e.status) !== null && _6 !== void 0 ? _6 : 'PUBLISHED',
-                        category: (_7 = e.category) !== null && _7 !== void 0 ? _7 : null,
-                        grade: (_8 = e.grade) !== null && _8 !== void 0 ? _8 : null,
-                        grades: (_9 = e.grades) !== null && _9 !== void 0 ? _9 : null,
-                        subjects: (_10 = e.subjects) !== null && _10 !== void 0 ? _10 : null,
-                        schoolId: (_11 = e.schoolId) !== null && _11 !== void 0 ? _11 : null,
-                        courseId: targetCourseId,
-                        skill: (_12 = e.skill) !== null && _12 !== void 0 ? _12 : null,
-                        level: (_13 = e.level) !== null && _13 !== void 0 ? _13 : 'Medium',
-                        createdAt: (_14 = toDate(e.createdAt)) !== null && _14 !== void 0 ? _14 : new Date(),
-                        updatedAt: (_15 = toDate(e.updatedAt)) !== null && _15 !== void 0 ? _15 : new Date()
-                    };
-                    yield tx.exam.upsert({
-                        where: { id: e.id },
-                        update: ePayload,
-                        create: Object.assign({ id: e.id }, ePayload)
-                    });
+                    const targetCourseId = sel.targetCourseId !== undefined ? sel.targetCourseId : e.courseId;
+                    yield restoreExamWithHierarchy(tx, e, backupData, targetCourseId);
                 }
             }
-        }), { timeout: 60000 }); // 60s timeout for large restores
+        }), { timeout: 120000 });
         res.json({ success: true, message: 'Selective restore completed successfully.' });
     }
     catch (error) {
-        console.error('❌ Selective restore error:', error);
+        console.error('Selective restore error:', error);
         res.status(500).json({ error: 'Failed to perform selective restore', details: error.message });
     }
 });
@@ -1292,7 +1708,7 @@ const getBackupHandler18 = (req, res) => __awaiter(void 0, void 0, void 0, funct
                 updatedAt: (_8 = toDate(targetLesson.updatedAt)) !== null && _8 !== void 0 ? _8 : new Date(),
             }
         });
-        res.send(`✅ تم إضافة الدرس بنجاح إلى الكورس المطلوب!`);
+        res.send(` تم إضافة الدرس بنجاح إلى الكورس المطلوب!`);
     }
     catch (err) {
         res.status(500).send(`Error: ${err.message}`);
@@ -1308,6 +1724,7 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
         }
         let targetLesson = null;
         let targetCourse = null;
+        let backupDataForLessonRestore = null;
         // A. If source is cloud or filename starts with 'السحابة:'
         if (source === 'cloud' || (filename && filename.startsWith('السحابة:'))) {
             const { Pool } = require('pg');
@@ -1332,6 +1749,7 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
                         if (found) {
                             targetLesson = Object.assign(Object.assign({}, found), { courseId: found.courseId || c.id });
                             targetCourse = c;
+                            backupDataForLessonRestore = data;
                             break;
                         }
                     }
@@ -1341,6 +1759,7 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
                     if (found) {
                         targetLesson = found;
                         targetCourse = courses.find((c) => c.id === found.courseId);
+                        backupDataForLessonRestore = data;
                     }
                 }
                 if (targetLesson)
@@ -1373,6 +1792,7 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
                             if (found) {
                                 targetLesson = found;
                                 targetCourse = courses.find((c) => c.id === found.courseId);
+                                backupDataForLessonRestore = data;
                                 break;
                             }
                         }
@@ -1476,14 +1896,36 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
                     updatedAt: (_16 = toDate(targetLesson.updatedAt)) !== null && _16 !== void 0 ? _16 : new Date(),
                 }
             });
-            // 🔓 Remove from tombstones if previously marked as deleted
+            // Restore ExamModules and SubExams for any exam that belongs to this lesson's course
+            // This covers the case where the lesson's course has exams with modular hierarchy
+            if (targetLesson.courseId && backupDataForLessonRestore) {
+                const courseExams = [];
+                const flatExams = Array.isArray(backupDataForLessonRestore.exam) ? backupDataForLessonRestore.exam : [];
+                for (const e of flatExams) {
+                    if ((e === null || e === void 0 ? void 0 : e.courseId) === targetLesson.courseId)
+                        courseExams.push(e);
+                }
+                const flatCourses = Array.isArray(backupDataForLessonRestore.course) ? backupDataForLessonRestore.course : [];
+                for (const c of flatCourses) {
+                    if ((c === null || c === void 0 ? void 0 : c.id) === targetLesson.courseId && Array.isArray(c.exams)) {
+                        for (const e of c.exams) {
+                            if (!courseExams.some((x) => x.id === e.id))
+                                courseExams.push(e);
+                        }
+                    }
+                }
+                for (const e of courseExams) {
+                    yield restoreExamWithHierarchy(tx, e, backupDataForLessonRestore, targetLesson.courseId);
+                }
+            }
+            //  Remove from tombstones if previously marked as deleted
             const { unmarkLessonDeleted, unmarkCourseDeleted } = yield Promise.resolve().then(() => __importStar(require('../lib/tombstones')));
             unmarkLessonDeleted(lessonId);
             if (targetLesson.courseId)
                 unmarkCourseDeleted(targetLesson.courseId);
         }));
         const freshLesson = yield prisma_1.default.lesson.findUnique({ where: { id: lessonId }, include: { course: true } });
-        console.log(`✅ [Lesson Restore] Restored lesson "${freshLesson === null || freshLesson === void 0 ? void 0 : freshLesson.title}" (${lessonId}) to course "${(_b = freshLesson === null || freshLesson === void 0 ? void 0 : freshLesson.course) === null || _b === void 0 ? void 0 : _b.title}"`);
+        console.log(` [Lesson Restore] Restored lesson "${freshLesson === null || freshLesson === void 0 ? void 0 : freshLesson.title}" (${lessonId}) to course "${(_b = freshLesson === null || freshLesson === void 0 ? void 0 : freshLesson.course) === null || _b === void 0 ? void 0 : _b.title}"`);
         res.json({
             success: true,
             message: `تم استعادة الدرس "${freshLesson === null || freshLesson === void 0 ? void 0 : freshLesson.title}" بنجاح في قاعدة البيانات الحالية.`,
@@ -1491,7 +1933,7 @@ const postBackupHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, func
         });
     }
     catch (error) {
-        console.error('❌ Lesson restore error:', error);
+        console.error(' Lesson restore error:', error);
         res.status(500).json({ error: 'Failed to restore lesson', details: error.message });
     }
 });
@@ -1510,7 +1952,7 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
             if (files.length === 0)
                 return res.status(404).json({ error: 'No backup files found in backups directory' });
             backupPath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, files[0].name);
-            console.log(`📂 [Content Restore] Using largest backup: ${files[0].name} (${(files[0].size / 1024 / 1024).toFixed(1)} MB)`);
+            console.log(` [Content Restore] Using largest backup: ${files[0].name} (${(files[0].size / 1024 / 1024).toFixed(1)} MB)`);
         }
         else if (filename) {
             backupPath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, path_1.default.basename(filename));
@@ -1528,7 +1970,7 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
         if (backupLessons.length === 0) {
             return res.status(400).json({ error: 'No lessons found in backup file' });
         }
-        console.log(`\n🎯 [Content Restore] Processing ${backupLessons.length} lessons from backup...`);
+        console.log(`\n [Content Restore] Processing ${backupLessons.length} lessons from backup...`);
         // Helper: parse JSON field safely
         const parseSafe = (v) => {
             if (!v)
@@ -1561,7 +2003,7 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
                 select: { id: true, title: true, questions: true, assignments: true, slides: true, attachments: true }
             });
             if (!current) {
-                console.log(`  ⚠ Lesson not found in DB: "${bl.title}" (${bl.id})`);
+                console.log(`   Lesson not found in DB: "${bl.title}" (${bl.id})`);
                 notFound++;
                 continue;
             }
@@ -1603,11 +2045,11 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
                 sChanged ? `S: ${currentS.length}→${finalS.length}` : null,
                 attChanged ? `Att: ${currentAtt.length}→${finalAtt.length}` : null,
             ].filter(Boolean).join(' | ');
-            console.log(`  ✅ "${current.title}" [${changes}]`);
+            console.log(`   "${current.title}" [${changes}]`);
             report.push({ lessonId: bl.id, title: current.title, changes });
             updated++;
         }
-        console.log(`\n🎯 [Content Restore] DONE — Updated: ${updated}, Skipped (already ok): ${skipped}, Not found: ${notFound}`);
+        console.log(`\n [Content Restore] DONE — Updated: ${updated}, Skipped (already ok): ${skipped}, Not found: ${notFound}`);
         return res.json({
             success: true,
             message: `تم استعادة محتوى ${updated} درس بنجاح`,
@@ -1619,7 +2061,7 @@ const postBackupHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
         });
     }
     catch (error) {
-        console.error('❌ [Content Restore] Error:', error);
+        console.error(' [Content Restore] Error:', error);
         return res.status(500).json({ error: 'Failed to restore lesson content', details: error.message });
     }
 });
@@ -1651,12 +2093,16 @@ function performBackupAndPruning() {
         const filename = 'backup-full-' + new Date().toISOString().replace(/[:.]/g, '-') + '-' + require('crypto').randomUUID() + '.json';
         const filePath = path_1.default.join(backupSnapshot_1.BACKUPS_DIR, filename);
         const saved = yield (0, backupSnapshot_1.writeFullSnapshot)(prisma_1.default, filePath);
-        // The optional JSONB cloud API needs a complete object; local-only backup stays paginated.
+        // Mirror to Cloud Backup DB (JSONB) if configured
         if (db_backup_1.CLOUD_BACKUP_ENABLED) {
             const payload = JSON.parse(yield fs_1.default.promises.readFile(filePath, 'utf8'));
             const cloud = yield (0, db_backup_2.saveToCloudBackup)(filename.slice(0, -5), 'FULL_SYSTEM', payload);
             if (!cloud)
-                console.warn('[Backup] Local snapshot saved; cloud copy failed.');
+                console.warn('[Backup] Local snapshot saved; cloud DB copy failed.');
+        }
+        // Mirror the raw JSON file to R2/S3 object storage if configured (non-fatal)
+        if ((0, storage_1.isCloudStorageActive)()) {
+            (0, storage_1.persistUpload)(filePath, filename, 'application/json').catch(err => console.warn('[Backup] R2 file mirror failed (local copy kept):', err.message));
         }
         yield (0, backupSnapshot_1.pruneFullSnapshots)();
         return { filename, size: saved.size, createdAt: saved.timestamp };

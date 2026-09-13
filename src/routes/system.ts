@@ -12,8 +12,9 @@ import {
   statsCache, CACHE_TTL, setCache, getStudentGradeAndStage, examMatchesStudent,
   buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
   UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
-  normalizeLegacyCourses
+  normalizeLegacyCourses, persistUpload
 } from '../shared';
+import { translateSingleText, translateBatchTexts } from '../services/translation.service';
 
 declare global {
   namespace Express {
@@ -25,17 +26,18 @@ declare global {
 
 const router = Router();
 
-// --- Extracted from lines 645-649 ---
-router.get('/api/health', async (req: any, res: any) => {
+// ==========================================
+// SYSTEM & HEALTH API
+// ==========================================
+
+router.get('/api/health', async (_req: Request, res: Response) => {
   try {
-    await Promise.race([
-      prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Database health check timed out')), 5_000)),
-    ]);
-    res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
-  } catch {
-    res.status(503).json({
-      status: 'degraded',
+    await prisma.$queryRaw`SELECT 1`;
+    return res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    return res.status(503).json({
+      status: 'error',
+      database: 'disconnected',
       error: 'Database unavailable',
       timestamp: new Date().toISOString(),
     });
@@ -45,7 +47,7 @@ router.get('/api/health', async (req: any, res: any) => {
 // Serve uploaded files as static assets with Cache-Control
 
 router.post('/api/upload', verifyToken, (req: Request, res: Response) => {
-  multerUpload.single('file')(req, res, (err: any) => {
+  multerUpload.single('file')(req, res, async (err: any) => {
     if (err) {
       return res.status(400).json({ error: 'Upload failed', details: err.message });
     }
@@ -53,24 +55,21 @@ router.post('/api/upload', verifyToken, (req: Request, res: Response) => {
       if (!req.file) {
         return res.status(400).json({ error: 'No file provided.' });
       }
-      const fileUrl = `/uploads/${req.file.filename}`;
+      const persisted = await persistUpload(req.file.path, req.file.filename, req.file.mimetype);
       return res.json({
         message: 'File uploaded successfully',
-        url: fileUrl,
+        url: persisted.url,
         filename: req.file.filename,
         originalName: req.file.originalname,
         size: req.file.size,
-        mimetype: req.file.mimetype
+        mimetype: req.file.mimetype,
+        isCloud: persisted.isCloud,
       });
     } catch (innerErr: any) {
       return res.status(500).json({ error: 'Upload processing failed', details: innerErr.message });
     }
   });
 });
-
-// ==========================================
-// 👥 BULK USER IMPORT (Excel → JSON payload)
-// ==========================================
 
 // Protected admin-only migration trigger
 router.post('/api/system/migrate-images-now', verifyToken, checkRole(['SUPER_ADMIN']), (req: any, res: any) => {
@@ -83,7 +82,6 @@ router.post('/api/system/migrate-images-now', verifyToken, checkRole(['SUPER_ADM
   });
 });
 
-// 🔴 DANGER: WIPE ALL DUMMY DATA 🔴
 router.post('/api/system/wipe-all-dummy-data-danger', verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
   try {
     const { confirm, dryRun } = req.body;
@@ -180,6 +178,29 @@ router.post('/api/system/wipe-seeded-dummy-data', verifyToken, checkRole(['SUPER
   } catch (error: any) {
     console.error("Error wiping dummy data:", error);
     res.status(500).json({ error: "Failed to wipe dummy data", details: error.message });
+  }
+});
+
+router.post('/api/translate', verifyToken, async (req: any, res: any) => {
+  try {
+    const { text, texts, from = 'ar', to = 'en' } = req.body;
+    const validFrom = from === 'en' ? 'en' : 'ar';
+    const validTo = to === 'ar' ? 'ar' : 'en';
+
+    if (text !== undefined) {
+      const translated = await translateSingleText(String(text || ''), validFrom, validTo);
+      return res.json({ translatedText: translated });
+    }
+
+    if (Array.isArray(texts)) {
+      const translations = await translateBatchTexts(texts, validFrom, validTo);
+      return res.json({ translations });
+    }
+
+    return res.status(400).json({ error: 'Either "text" or "texts" must be provided.' });
+  } catch (error: any) {
+    console.error('Translation error:', error);
+    return res.status(500).json({ error: 'Translation failed', details: error.message });
   }
 });
 

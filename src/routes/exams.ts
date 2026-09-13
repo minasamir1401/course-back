@@ -31,7 +31,7 @@ declare global {
 
 const router = Router();
 
-const requireManagedExam = async (req: Request, res: Response, next: NextFunction) => {
+export const requireManagedExam = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
@@ -70,7 +70,7 @@ router.get('/api/bank/questions', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL
 router.put('/api/exams/:id', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler5);
 
 // Clean duplicate & empty questions in exam
-router.post('/api/exams/:id/clean-duplicates', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.cleanDuplicatesHandler);
+router.post('/api/exams/:id/clean-duplicates', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.cleanDuplicatesHandler);
 router.post('/api/admin/clean-duplicates', verifyToken, checkRole(['SUPER_ADMIN']), examsController.cleanDuplicatesHandler);
 
 // 4. Get Exam Details

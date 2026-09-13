@@ -23,8 +23,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = exports.isLoginRateLimited = exports.invalidateCache = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = void 0;
-exports.getQuestionCoreSignature = exports.robustNormalizeText = exports.releaseLock = void 0;
+exports.isLoginRateLimited = exports.invalidateCache = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = exports.isCloudStorageActive = exports.deleteStoredFile = exports.persistUpload = void 0;
+exports.getQuestionCoreSignature = exports.robustNormalizeText = exports.releaseLock = exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = void 0;
+exports.mirrorUploadToCloud = mirrorUploadToCloud;
 exports.getYoutubeDuration = getYoutubeDuration;
 exports.getVimeoDuration = getVimeoDuration;
 exports.getVideoDuration = getVideoDuration;
@@ -38,14 +39,16 @@ const crypto_1 = __importDefault(require("crypto"));
 const multer_1 = __importDefault(require("multer"));
 const prisma_1 = __importDefault(require("./lib/prisma"));
 const redis_1 = require("./lib/redis");
+const storage_1 = require("./lib/storage");
+Object.defineProperty(exports, "persistUpload", { enumerable: true, get: function () { return storage_1.persistUpload; } });
+Object.defineProperty(exports, "deleteStoredFile", { enumerable: true, get: function () { return storage_1.deleteStoredFile; } });
+Object.defineProperty(exports, "isCloudStorageActive", { enumerable: true, get: function () { return storage_1.isCloudStorageActive; } });
 if (!process.env.JWT_SECRET) {
-    console.warn('⚠️ WARNING: JWT_SECRET environment variable is missing!');
+    console.warn('[Security] WARNING: JWT_SECRET environment variable is missing!');
 }
 exports.JWT_SECRET = process.env.JWT_SECRET;
 exports.JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || '4h');
-// ==========================================
-// 📁 FILE UPLOAD CONFIGURATION (multer)
-// ==========================================
+// File upload configuration (multer)
 exports.UPLOADS_DIR = path_1.default.join(process.cwd(), 'uploads');
 if (!fs_1.default.existsSync(exports.UPLOADS_DIR))
     fs_1.default.mkdirSync(exports.UPLOADS_DIR, { recursive: true });
@@ -100,6 +103,29 @@ exports.multerUpload = (0, multer_1.default)({
         }
     }
 });
+/**
+ * Express middleware that mirrors a freshly disk-saved multer file to R2/S3 when cloud
+ * storage is active. Must be placed immediately after multerUpload.single/array/fields.
+ * Non-fatal: a cloud failure never blocks the response — the local copy is always kept.
+ */
+function mirrorUploadToCloud(req, _res, next) {
+    if (!(0, storage_1.isCloudStorageActive)())
+        return next();
+    const files = req.file
+        ? [req.file]
+        : req.files
+            ? Array.isArray(req.files)
+                ? req.files
+                : Object.values(req.files).flat()
+            : [];
+    if (files.length === 0)
+        return next();
+    Promise.all(files.map(f => (0, storage_1.persistUpload)(f.path, f.filename, f.mimetype).then(({ url, isCloud }) => {
+        if (isCloud)
+            f.path = url; // let downstream handlers use the cloud URL if needed
+    }))).catch(err => console.warn('[Storage] Cloud mirror failed (local copy kept):', err.message));
+    next();
+}
 exports.ALLOWED_VIDEO_HOSTS = new Set([
     'youtube.com',
     'www.youtube.com',
@@ -121,7 +147,7 @@ exports.loginAttempts.set = function (key, value) {
     }
     return originalLoginAttemptsSet(key, value);
 };
-// ✅ CLUSTER-MODE SYNCHRONIZATION:
+// Cluster-mode synchronization:
 // In PM2 cluster mode (pm2 -i max), Redis acts as the authoritative shared store
 // for rate limiting (loginAttempts) and stats cache (statsCache).
 // When Redis is active, atomic increments and cache invalidations synchronize across workers.
@@ -171,7 +197,7 @@ const extensionFromImageMime = (mimeSubtype) => {
     const normalized = mimeSubtype.toLowerCase();
     if (normalized === 'jpeg' || normalized === 'jpg')
         return 'jpg';
-    // 🔒 SVG intentionally removed: SVG can contain arbitrary JS (XSS vector)
+    // Security note: SVG intentionally removed: SVG can contain arbitrary JS (XSS vector)
     if (normalized === 'png' || normalized === 'webp' || normalized === 'gif')
         return normalized;
     return 'bin'; // Unknown / unsafe types: save as binary (won't be served as image)
@@ -191,11 +217,12 @@ const replaceEmbeddedDataImages = (input) => {
             const destination = path_1.default.join(exports.UPLOADS_DIR, filename);
             if (!fs_1.default.existsSync(destination)) {
                 fs_1.default.writeFileSync(destination, buffer);
+                (0, storage_1.persistUpload)(destination, filename, `image/${ext}`).catch(() => { });
             }
             return `/uploads/${filename}`;
         }
         catch (err) {
-            console.warn(`⚠️ Failed to externalize embedded image: ${err.message}`);
+            console.warn(`Failed to externalize embedded image: ${err.message}`);
             return '';
         }
     });
@@ -461,7 +488,7 @@ function extractAndSaveBase64Images(input) {
     if (!input)
         return input;
     if (typeof input === 'string') {
-        // 🔒 SECURITY: svg+xml intentionally excluded — SVG can contain arbitrary JS (XSS).
+        // Security note: svg+xml intentionally excluded — SVG can contain arbitrary JS (XSS).
         const base64Regex = /data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)/g;
         return input.replace(base64Regex, (_match, mimeType, base64Data) => {
             try {
@@ -472,6 +499,7 @@ function extractAndSaveBase64Images(input) {
                 const filePath = path_1.default.join(exports.UPLOADS_DIR, filename);
                 if (!fs_1.default.existsSync(filePath)) {
                     fs_1.default.writeFileSync(filePath, buffer);
+                    (0, storage_1.persistUpload)(filePath, filename, `image/${ext}`).catch(() => { });
                 }
                 return `/uploads/${filename}`;
             }
@@ -626,7 +654,34 @@ const isAnswerCorrect = (question, selectedAnswer) => {
         return (0, exports.normalizeTrueFalse)(String(studentParsed)) === (0, exports.normalizeTrueFalse)(String(correctParsed));
     }
     if (question.type === 'MULTI_SELECT') {
-        return (0, exports.arraysMatch)((0, exports.parseStringArray)(question.correctAnswer), (0, exports.parseStringArray)(selectedAnswer));
+        const correctArr = (0, exports.parseStringArray)(question.correctAnswer);
+        const studentArr = (0, exports.parseStringArray)(selectedAnswer);
+        if ((0, exports.arraysMatch)(correctArr, studentArr))
+            return true;
+        let optsAr = [];
+        try {
+            optsAr = typeof question.options === 'string' ? JSON.parse(question.options || '[]') : (Array.isArray(question.options) ? question.options : []);
+        }
+        catch (_a) { }
+        let optsEn = [];
+        try {
+            optsEn = typeof question.optionsEn === 'string' ? JSON.parse(question.optionsEn || '[]') : (Array.isArray(question.optionsEn) ? question.optionsEn : []);
+        }
+        catch (_b) { }
+        const resolveOptionIndex = (ans) => {
+            for (let i = 0; i < Math.max(optsAr.length, optsEn.length); i++) {
+                if ((optsAr[i] && (0, exports.isOptionMatch)(ans, optsAr[i], i)) || (optsEn[i] && (0, exports.isOptionMatch)(ans, optsEn[i], i)))
+                    return i;
+            }
+            return -1;
+        };
+        const correctIndices = correctArr.map(resolveOptionIndex).filter(idx => idx !== -1).sort();
+        const studentIndices = studentArr.map(resolveOptionIndex).filter(idx => idx !== -1).sort();
+        if (correctIndices.length > 0 && correctIndices.length === studentIndices.length) {
+            if (correctIndices.every((val, i) => val === studentIndices[i]))
+                return true;
+        }
+        return false;
     }
     if (question.type === 'MEMORY_GAME') {
         try {
@@ -639,7 +694,7 @@ const isAnswerCorrect = (question, selectedAnswer) => {
                 return matchedArr.length > 0;
             return matchedArr.length >= totalPairs;
         }
-        catch (_a) {
+        catch (_c) {
             return false;
         }
     }
@@ -664,7 +719,7 @@ const isAnswerCorrect = (question, selectedAnswer) => {
                 return false;
             return timeKeys.every(k => cleanStr(correctMap[k]) === cleanStr(studentCheckpoints === null || studentCheckpoints === void 0 ? void 0 : studentCheckpoints[k]));
         }
-        catch (_b) {
+        catch (_d) {
             return false;
         }
     }
@@ -674,21 +729,32 @@ const isAnswerCorrect = (question, selectedAnswer) => {
     if (question.type === 'WORD_SEARCH') {
         return (0, exports.arraysMatch)((0, exports.parseStringArray)(question.correctAnswer), (0, exports.parseStringArray)(selectedAnswer));
     }
-    // Handle MCQ or options-based questions
+    // Handle MCQ or options-based questions (with bilingual optionsEn support)
     let optionsArr = [];
     try {
         optionsArr = typeof question.options === 'string'
             ? JSON.parse(question.options || '[]')
             : (Array.isArray(question.options) ? question.options : []);
     }
-    catch (_c) {
+    catch (_e) {
         optionsArr = [];
     }
-    if (Array.isArray(optionsArr) && optionsArr.length > 0) {
-        for (let i = 0; i < optionsArr.length; i++) {
-            const opt = optionsArr[i];
-            const matchesStudent = (0, exports.isOptionMatch)(selectedAnswer, opt, i);
-            const matchesCorrect = (0, exports.isOptionMatch)(question.correctAnswer, opt, i);
+    let optionsEnArr = [];
+    try {
+        optionsEnArr = typeof question.optionsEn === 'string'
+            ? JSON.parse(question.optionsEn || '[]')
+            : (Array.isArray(question.optionsEn) ? question.optionsEn : []);
+    }
+    catch (_f) {
+        optionsEnArr = [];
+    }
+    const maxOptionsCount = Math.max(optionsArr.length, optionsEnArr.length);
+    if (maxOptionsCount > 0) {
+        for (let i = 0; i < maxOptionsCount; i++) {
+            const optAr = optionsArr[i];
+            const optEn = optionsEnArr[i];
+            const matchesStudent = (optAr && (0, exports.isOptionMatch)(selectedAnswer, optAr, i)) || (optEn && (0, exports.isOptionMatch)(selectedAnswer, optEn, i));
+            const matchesCorrect = (optAr && (0, exports.isOptionMatch)(question.correctAnswer, optAr, i)) || (optEn && (0, exports.isOptionMatch)(question.correctAnswer, optEn, i));
             if (matchesStudent && matchesCorrect)
                 return true;
         }
@@ -873,12 +939,6 @@ function ensurePerformanceIndexes() {
                 catch (lockErr) {
                     console.warn(`[DB Index Setup] Advisory lock/cleanup notice: ${lockErr.message}`);
                 }
-                try {
-                    yield prisma_1.default.$executeRawUnsafe('ALTER TABLE "ExamModule" ADD COLUMN IF NOT EXISTS "parentModuleId" TEXT;');
-                }
-                catch (colErr) {
-                    console.warn(`[DB Schema Setup] Notice adding parentModuleId: ${colErr.message}`);
-                }
             }
             const statements = [
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Course_isCentral_grade_idx" ON "Course" ("isCentral", "grade")',
@@ -987,7 +1047,7 @@ exports.setCache = setCache;
 const getCache = (key) => {
     const cached = exports.statsCache.get(key);
     if (cached) {
-        // 🔒 LRU Cache implementation: Move accessed key to the end of the Map
+        // LRU Cache implementation: Move accessed key to the end of the Map
         exports.statsCache.delete(key);
         exports.statsCache.set(key, cached);
         return cached;
@@ -1017,9 +1077,8 @@ exports.getCacheAsync = getCacheAsync;
  */
 const invalidateCache = (key) => __awaiter(void 0, void 0, void 0, function* () {
     exports.statsCache.delete(key);
-    if ((0, redis_1.isRedisActive)()) {
-        yield (0, redis_1.cacheDelete)(`stats:${key}`).catch(() => { });
-    }
+    // cacheDelete also clears the fallback store when Redis is disabled/unavailable.
+    yield (0, redis_1.cacheDelete)(`stats:${key}`).catch(() => { });
 });
 exports.invalidateCache = invalidateCache;
 /**

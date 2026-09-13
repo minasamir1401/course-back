@@ -262,12 +262,13 @@ router.get('/api/skills-hub/clusters/:clusterId/lessons', auth_1.verifyToken, (r
     }
 }));
 // Create a Skill Lesson
-router.post('/api/skills-hub/lessons', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.post(['/api/skills-hub/lessons', '/api/skills-hub/clusters/:clusterId/lessons'], auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { clusterId, name, description, order } = req.body;
-        const missing = (0, shared_1.hasRequiredFields)(req.body, ['clusterId', 'name']);
-        if (missing) {
-            return res.status(400).json({ error: `يرجى إدخال اسم الدرس أو المهارة الفرعية المطلوبة ⚠️ (Missing: ${missing.join(', ')})` });
+        const clusterId = req.body.clusterId || req.params.clusterId;
+        const name = (req.body.name || req.body.title || '').trim();
+        const { description, order } = req.body;
+        if (!clusterId || !name) {
+            return res.status(400).json({ error: 'يرجى إدخال اسم الدرس أو المهارة الفرعية المطلوبة.' });
         }
         const cluster = yield prisma_1.default.skillCluster.findUnique({ where: { id: clusterId } });
         if (!cluster) {
@@ -280,7 +281,7 @@ router.post('/api/skills-hub/lessons', auth_1.verifyToken, (0, auth_1.checkRole)
             data: {
                 clusterId,
                 name,
-                description,
+                description: description || '',
                 order: order !== undefined ? Number(order) : 0
             }
         });
@@ -295,7 +296,11 @@ router.post('/api/skills-hub/lessons', auth_1.verifyToken, (0, auth_1.checkRole)
 router.put('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
-        const { name, description, order } = req.body;
+        const name = (req.body.name || req.body.title || '').trim();
+        let { description, order, metadata } = req.body;
+        if (description === undefined && metadata !== undefined) {
+            description = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
+        }
         const existingLesson = yield prisma_1.default.skillLesson.findUnique({
             where: { id },
             include: { cluster: true }
@@ -309,8 +314,8 @@ router.put('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.checkRo
         const lesson = yield prisma_1.default.skillLesson.update({
             where: { id },
             data: {
-                name,
-                description,
+                name: name || existingLesson.name,
+                description: description !== undefined ? description : existingLesson.description,
                 order: order !== undefined ? Number(order) : existingLesson.order
             }
         });
@@ -399,7 +404,7 @@ router.get('/api/skills-hub/activities/:id', auth_1.verifyToken, (req, res) => _
 // Create an Interactive Activity
 router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { lessonId, title, type, options, correctAnswer, points, xpPoints, difficulty, dok, estimatedTime, standard, indicator, learningOutcome, skill, hint, tip, explanation, keyInsight } = req.body;
+        const { lessonId, title, titleEn, questionText, questionTextEn, type, options, optionsEn, correctAnswer, correctAnswerEn, points, xpPoints, difficulty, dok, estimatedTime, standard, indicator, learningOutcome, skill, hint, hintEn, tip, tipEn, explanation, explanationEn, keyInsight, keyInsightEn } = req.body;
         const missing = (0, shared_1.hasRequiredFields)(req.body, ['lessonId', 'title', 'type', 'options', 'correctAnswer']);
         if (missing) {
             const fieldMap = {
@@ -410,7 +415,7 @@ router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRo
                 lessonId: 'الدرس (Lesson ID)'
             };
             const translatedMissing = missing.map(m => fieldMap[m] || m).join('، ');
-            return res.status(400).json({ error: `يرجى إكمال الحقول المطلوبة لحفظ السؤال ⚠️: ${translatedMissing}` });
+            return res.status(400).json({ error: `يرجى إكمال الحقول المطلوبة لحفظ السؤال: ${translatedMissing}` });
         }
         const lesson = yield prisma_1.default.skillLesson.findUnique({
             where: { id: lessonId },
@@ -426,9 +431,14 @@ router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRo
             data: {
                 lessonId,
                 title,
+                titleEn: titleEn || null,
+                questionText: questionText || null,
+                questionTextEn: questionTextEn || null,
                 type,
                 options: typeof options === 'string' ? options : JSON.stringify(options),
+                optionsEn: optionsEn !== undefined ? (typeof optionsEn === 'string' ? optionsEn : JSON.stringify(optionsEn)) : null,
                 correctAnswer: typeof correctAnswer === 'string' ? correctAnswer : JSON.stringify(correctAnswer),
+                correctAnswerEn: correctAnswerEn !== undefined ? (typeof correctAnswerEn === 'string' ? correctAnswerEn : JSON.stringify(correctAnswerEn)) : null,
                 points: points !== undefined ? Number(points) : 10,
                 xpPoints: xpPoints !== undefined ? Number(xpPoints) : 10,
                 difficulty: difficulty || 'Medium',
@@ -439,9 +449,13 @@ router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRo
                 learningOutcome: learningOutcome || null,
                 skill: skill || null,
                 hint: hint || null,
+                hintEn: hintEn || null,
                 tip: tip || null,
+                tipEn: tipEn || null,
                 explanation: explanation || null,
-                keyInsight: keyInsight || null
+                explanationEn: explanationEn || null,
+                keyInsight: keyInsight || null,
+                keyInsightEn: keyInsightEn || null
             }
         });
         res.json({ message: 'Interactive Activity created successfully', activity });
@@ -455,7 +469,7 @@ router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRo
 router.put('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
-        const { title, type, options, correctAnswer, points, xpPoints, difficulty, dok, estimatedTime, standard, indicator, learningOutcome, skill, hint, tip, explanation, keyInsight } = req.body;
+        const { title, titleEn, questionText, questionTextEn, type, options, optionsEn, correctAnswer, correctAnswerEn, points, xpPoints, difficulty, dok, estimatedTime, standard, indicator, learningOutcome, skill, hint, hintEn, tip, tipEn, explanation, explanationEn, keyInsight, keyInsightEn } = req.body;
         const existingActivity = yield prisma_1.default.interactiveActivity.findUnique({
             where: { id },
             include: { lesson: { include: { cluster: true } } }
@@ -470,9 +484,14 @@ router.put('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.chec
             where: { id },
             data: {
                 title: title !== undefined ? title : existingActivity.title,
+                titleEn: titleEn !== undefined ? titleEn : existingActivity.titleEn,
+                questionText: questionText !== undefined ? questionText : existingActivity.questionText,
+                questionTextEn: questionTextEn !== undefined ? questionTextEn : existingActivity.questionTextEn,
                 type: type !== undefined ? type : existingActivity.type,
                 options: options !== undefined ? (typeof options === 'string' ? options : JSON.stringify(options)) : existingActivity.options,
+                optionsEn: optionsEn !== undefined ? (typeof optionsEn === 'string' ? optionsEn : JSON.stringify(optionsEn)) : existingActivity.optionsEn,
                 correctAnswer: correctAnswer !== undefined ? (typeof correctAnswer === 'string' ? correctAnswer : JSON.stringify(correctAnswer)) : existingActivity.correctAnswer,
+                correctAnswerEn: correctAnswerEn !== undefined ? (typeof correctAnswerEn === 'string' ? correctAnswerEn : JSON.stringify(correctAnswerEn)) : existingActivity.correctAnswerEn,
                 points: points !== undefined ? Number(points) : existingActivity.points,
                 xpPoints: xpPoints !== undefined ? Number(xpPoints) : existingActivity.xpPoints,
                 difficulty: difficulty !== undefined ? difficulty : existingActivity.difficulty,
@@ -483,9 +502,13 @@ router.put('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.chec
                 learningOutcome: learningOutcome !== undefined ? learningOutcome : existingActivity.learningOutcome,
                 skill: skill !== undefined ? skill : existingActivity.skill,
                 hint: hint !== undefined ? hint : existingActivity.hint,
+                hintEn: hintEn !== undefined ? hintEn : existingActivity.hintEn,
                 tip: tip !== undefined ? tip : existingActivity.tip,
+                tipEn: tipEn !== undefined ? tipEn : existingActivity.tipEn,
                 explanation: explanation !== undefined ? explanation : existingActivity.explanation,
-                keyInsight: keyInsight !== undefined ? keyInsight : existingActivity.keyInsight
+                explanationEn: explanationEn !== undefined ? explanationEn : existingActivity.explanationEn,
+                keyInsight: keyInsight !== undefined ? keyInsight : existingActivity.keyInsight,
+                keyInsightEn: keyInsightEn !== undefined ? keyInsightEn : existingActivity.keyInsightEn
             }
         });
         res.json({ message: 'Interactive Activity updated successfully', activity });

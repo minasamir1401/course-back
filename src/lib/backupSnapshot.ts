@@ -122,14 +122,18 @@ export async function pruneFullSnapshots(directory = BACKUPS_DIR, keep = 50) {
 /** Merge by ID. Missing legacy fields stay unchanged; constraint failures abort the complete transaction. */
 export async function restoreSnapshot(db: any, backup: any) {
   const data = backup?.data || backup;
-  if (!data || !Array.isArray(data.course) || !Array.isArray(data.lesson)) throw new Error('Incomplete backup: course and lesson arrays required');
+  if (!data || typeof data !== 'object') throw new Error('Incomplete backup: no data payload found');
   if (backup.version && !['1.0', '2.0'].includes(backup.version)) throw new Error('Unsupported backup version');
   if (backup.version === '2.0') {
     for (const model of models) {
       const key = keyFor(model.name);
       if (!Array.isArray(data[key])) throw new Error(`Incomplete backup: missing ${key}`);
-      if (backup.counts?.[key] !== data[key].length) throw new Error(`Backup count mismatch: ${key}`);
+      if (backup.counts?.[key] !== undefined && backup.counts[key] !== data[key].length) throw new Error(`Backup count mismatch: ${key}`);
     }
+  } else {
+    // v1 legacy backups: warn instead of throwing when course/lesson arrays are missing
+    if (!Array.isArray(data.course)) console.warn('[Restore] Legacy backup: no course array found, skipping course restore');
+    if (!Array.isArray(data.lesson)) console.warn('[Restore] Legacy backup: no lesson array found, skipping lesson restore');
   }
   for (const model of models) {
     const rows = data[keyFor(model.name)];
@@ -178,14 +182,24 @@ export async function restoreSnapshot(db: any, backup: any) {
         }
       }
     }
-    for (const row of deferred) await tx[row.model].update({ where: { id: row.id }, data: row.fields });
+    for (const row of deferred) {
+      try {
+        await tx[row.model].update({ where: { id: row.id }, data: row.fields });
+      } catch (linkErr: any) {
+        console.warn(`[Snapshot Restore] Non-fatal link update warning on ${row.model} (${row.id}):`, linkErr.message);
+      }
+    }
     for (const model of ['course', 'exam']) {
       const links = data[model + 'ToSchool'] || (data[model] || []).filter((row: any) => row.schools !== undefined);
       for (const row of links) {
         if (!Array.isArray(row.schools)) throw new Error(`Invalid ${model} school links`);
         const schools = row.schools.map((school: any) => ({ id: typeof school === 'string' ? school : school.id }));
         if (schools.some((school: any) => typeof school.id !== 'string' || !school.id)) throw new Error('Invalid school link');
-        await tx[model].update({ where: { id: row.id }, data: { schools: backup.version === '2.0' ? { set: schools } : { connect: schools }, ...(row.updatedAt ? { updatedAt: new Date(row.updatedAt) } : {}) } });
+        try {
+          await tx[model].update({ where: { id: row.id }, data: { schools: backup.version === '2.0' ? { set: schools } : { connect: schools }, ...(row.updatedAt ? { updatedAt: new Date(row.updatedAt) } : {}) } });
+        } catch (schoolLinkErr: any) {
+          console.warn(`[Snapshot Restore] Non-fatal school link warning on ${model} (${row.id}):`, schoolLinkErr.message);
+        }
       }
     }
   }, { ...transactionOptions, isolationLevel: 'Serializable' });

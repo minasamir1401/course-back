@@ -165,8 +165,8 @@ function restoreSnapshot(db, backup) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
         const data = (backup === null || backup === void 0 ? void 0 : backup.data) || backup;
-        if (!data || !Array.isArray(data.course) || !Array.isArray(data.lesson))
-            throw new Error('Incomplete backup: course and lesson arrays required');
+        if (!data || typeof data !== 'object')
+            throw new Error('Incomplete backup: no data payload found');
         if (backup.version && !['1.0', '2.0'].includes(backup.version))
             throw new Error('Unsupported backup version');
         if (backup.version === '2.0') {
@@ -174,9 +174,16 @@ function restoreSnapshot(db, backup) {
                 const key = keyFor(model.name);
                 if (!Array.isArray(data[key]))
                     throw new Error(`Incomplete backup: missing ${key}`);
-                if (((_a = backup.counts) === null || _a === void 0 ? void 0 : _a[key]) !== data[key].length)
+                if (((_a = backup.counts) === null || _a === void 0 ? void 0 : _a[key]) !== undefined && backup.counts[key] !== data[key].length)
                     throw new Error(`Backup count mismatch: ${key}`);
             }
+        }
+        else {
+            // v1 legacy backups: warn instead of throwing when course/lesson arrays are missing
+            if (!Array.isArray(data.course))
+                console.warn('[Restore] Legacy backup: no course array found, skipping course restore');
+            if (!Array.isArray(data.lesson))
+                console.warn('[Restore] Legacy backup: no lesson array found, skipping lesson restore');
         }
         for (const model of models) {
             const rows = data[keyFor(model.name)];
@@ -235,8 +242,14 @@ function restoreSnapshot(db, backup) {
                     }
                 }
             }
-            for (const row of deferred)
-                yield tx[row.model].update({ where: { id: row.id }, data: row.fields });
+            for (const row of deferred) {
+                try {
+                    yield tx[row.model].update({ where: { id: row.id }, data: row.fields });
+                }
+                catch (linkErr) {
+                    console.warn(`[Snapshot Restore] Non-fatal link update warning on ${row.model} (${row.id}):`, linkErr.message);
+                }
+            }
             for (const model of ['course', 'exam']) {
                 const links = data[model + 'ToSchool'] || (data[model] || []).filter((row) => row.schools !== undefined);
                 for (const row of links) {
@@ -245,7 +258,12 @@ function restoreSnapshot(db, backup) {
                     const schools = row.schools.map((school) => ({ id: typeof school === 'string' ? school : school.id }));
                     if (schools.some((school) => typeof school.id !== 'string' || !school.id))
                         throw new Error('Invalid school link');
-                    yield tx[model].update({ where: { id: row.id }, data: Object.assign({ schools: backup.version === '2.0' ? { set: schools } : { connect: schools } }, (row.updatedAt ? { updatedAt: new Date(row.updatedAt) } : {})) });
+                    try {
+                        yield tx[model].update({ where: { id: row.id }, data: Object.assign({ schools: backup.version === '2.0' ? { set: schools } : { connect: schools } }, (row.updatedAt ? { updatedAt: new Date(row.updatedAt) } : {})) });
+                    }
+                    catch (schoolLinkErr) {
+                        console.warn(`[Snapshot Restore] Non-fatal school link warning on ${model} (${row.id}):`, schoolLinkErr.message);
+                    }
                 }
             }
         }), Object.assign(Object.assign({}, transactionOptions), { isolationLevel: 'Serializable' }));

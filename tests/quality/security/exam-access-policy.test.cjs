@@ -24,6 +24,13 @@ describe('exam management access policy (IDOR & Multi-tenant isolation)', () => 
     schools: [{ id: 'school-a' }, { id: 'school-b' }],
   };
 
+  const schoolAExam = {
+    isCentral: false,
+    schoolId: 'school-a',
+    creatorId: 'admin-a',
+    schools: [{ id: 'school-a' }],
+  };
+
   test('does not allow a school administrator to modify another school\'s exam', () => {
     expect(canManageExamRecord(
       { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' },
@@ -79,7 +86,7 @@ describe('exam management access policy (IDOR & Multi-tenant isolation)', () => 
   test('allows a teacher assigned to the exam course to manage its non-central exam', () => {
     expect(canManageExamRecord(
       { id: 'teacher-a', role: 'TEACHER', schoolId: 'school-a' },
-      { ...foreignExam, courseId: 'course-a' },
+      { ...schoolAExam, courseId: 'course-a' },
       true,
     )).toBe(true);
   });
@@ -87,7 +94,7 @@ describe('exam management access policy (IDOR & Multi-tenant isolation)', () => 
   test('rejects teacher if not assigned to the exam course', () => {
     expect(canManageExamRecord(
       { id: 'teacher-a', role: 'TEACHER', schoolId: 'school-a' },
-      { ...foreignExam, courseId: 'course-a' },
+      { ...schoolAExam, courseId: 'course-a' },
       false,
     )).toBe(false);
   });

@@ -108,13 +108,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate Limiting
+// Rate Limiting - protect against abuse without blocking internal proxies or dev traffic
+const isLoopbackIp = (ip?: string) => {
+  if (!ip) return false;
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip.includes('127.0.0.1');
+};
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5000,
+  max: process.env.NODE_ENV === 'production' ? 15000 : 100000,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    if (process.env.NODE_ENV !== 'production') return true;
+    const ip = req.ip || req.socket.remoteAddress || '';
+    if (isLoopbackIp(ip)) return true;
+    return false;
+  }
 });
 app.use('/api', apiLimiter);
 

@@ -337,9 +337,10 @@ router.get('/api/student/xp-summary', auth_1.verifyToken, (0, auth_1.checkRole)(
             where: { id: userId },
             select: { id: true, name: true, xp: true }
         });
-        const histories = yield prisma_1.default.xPHistory.findMany({
-            where: { userId }
+        const groupedHistory = yield prisma_1.default.xPHistory.groupBy({
+            by: ['sourceType', 'sourceId'], where: { userId }, _sum: { xp: true }
         });
+        const histories = groupedHistory.map(row => (Object.assign(Object.assign({}, row), { xp: row._sum.xp || 0 })));
         const lessonIds = Array.from(new Set(histories.filter(h => h.sourceType.startsWith('LESSON_')).map(h => h.sourceId)));
         const lessons = yield prisma_1.default.lesson.findMany({
             where: { id: { in: lessonIds } },

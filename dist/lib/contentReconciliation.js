@@ -37,12 +37,14 @@ const canonicalize = (value) => {
 const canonicalContent = (value) => JSON.stringify(canonicalize(value));
 exports.canonicalContent = canonicalContent;
 const buildQuestionFingerprint = (question) => {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     return (0, exports.canonicalContent)({
         text: (_a = question === null || question === void 0 ? void 0 : question.text) !== null && _a !== void 0 ? _a : '',
-        type: (_b = question === null || question === void 0 ? void 0 : question.type) !== null && _b !== void 0 ? _b : 'MCQ',
-        options: (_c = question === null || question === void 0 ? void 0 : question.options) !== null && _c !== void 0 ? _c : [],
-        correctAnswer: (_e = (_d = question === null || question === void 0 ? void 0 : question.correctAnswer) !== null && _d !== void 0 ? _d : question === null || question === void 0 ? void 0 : question.correctAnswers) !== null && _e !== void 0 ? _e : '',
+        textEn: (_b = question === null || question === void 0 ? void 0 : question.textEn) !== null && _b !== void 0 ? _b : '',
+        type: (_c = question === null || question === void 0 ? void 0 : question.type) !== null && _c !== void 0 ? _c : 'MCQ',
+        options: (_d = question === null || question === void 0 ? void 0 : question.options) !== null && _d !== void 0 ? _d : [],
+        optionsEn: (_e = question === null || question === void 0 ? void 0 : question.optionsEn) !== null && _e !== void 0 ? _e : [],
+        correctAnswer: (_g = (_f = question === null || question === void 0 ? void 0 : question.correctAnswer) !== null && _f !== void 0 ? _f : question === null || question === void 0 ? void 0 : question.correctAnswers) !== null && _g !== void 0 ? _g : '',
     });
 };
 exports.buildQuestionFingerprint = buildQuestionFingerprint;
@@ -100,7 +102,9 @@ exports.sortPersistedOrder = sortPersistedOrder;
 const extractText = (fingerprint) => {
     try {
         const parsed = JSON.parse(fingerprint);
-        return typeof (parsed === null || parsed === void 0 ? void 0 : parsed.text) === 'string' ? parsed.text.trim() : '';
+        const text = typeof (parsed === null || parsed === void 0 ? void 0 : parsed.text) === 'string' ? parsed.text.trim() : '';
+        const textEn = typeof (parsed === null || parsed === void 0 ? void 0 : parsed.textEn) === 'string' ? parsed.textEn.trim() : '';
+        return text || textEn;
     }
     catch (_a) {
         return '';

@@ -49,16 +49,16 @@ if (S3_BUCKET && S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY) {
             },
             forcePathStyle: true, // Needed for MinIO and R2 compatibility
         });
-        console.log(`✅ [Storage] S3/R2 Object Storage client initialized for bucket "${S3_BUCKET}".`);
+        console.log(`[Storage] S3/R2 Object Storage client initialized for bucket "${S3_BUCKET}".`);
     }
     catch (err) {
-        console.warn('⚠️ [Storage] Failed to initialize S3 client, falling back to local disk:', err.message);
+        console.warn('[Storage] Failed to initialize S3 client, falling back to local disk:', err.message);
         s3Client = null;
     }
 }
 else {
     if (process.env.NODE_ENV === 'production' && process.env.NODE_APP_INSTANCE === '0') {
-        console.log('ℹ️ [Storage] Running on local disk storage (uploads/). Set S3_BUCKET/R2_BUCKET to use Cloudflare R2.');
+        console.log('[Storage] Running on local disk storage (uploads/). Set S3_BUCKET/R2_BUCKET to use Cloudflare R2.');
     }
 }
 const isCloudStorageActive = () => s3Client !== null && Boolean(S3_BUCKET);
@@ -88,7 +88,7 @@ function persistUpload(localFilePath, filename, mimeType) {
                 return { url: publicUrl, isCloud: true };
             }
             catch (err) {
-                console.warn(`⚠️ [Storage] Cloud upload failed for ${filename}, retaining local copy:`, err.message);
+                console.warn(`[Storage] Cloud upload failed for ${filename}, retaining local copy:`, err.message);
                 // Fallback to local
             }
         }
@@ -122,7 +122,7 @@ function deleteStoredFile(fileUrlOrName) {
                 yield s3Client.send(command);
             }
             catch (err) {
-                console.warn(`⚠️ [Storage] Failed to delete cloud file ${filename}:`, err.message);
+                console.warn(`[Storage] Failed to delete cloud file ${filename}:`, err.message);
             }
         }
     });
