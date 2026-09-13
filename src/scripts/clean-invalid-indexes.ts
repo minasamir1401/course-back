@@ -2,11 +2,11 @@ import prisma from '../lib/prisma';
 import { ensurePerformanceIndexes } from '../shared';
 
 async function main() {
-  console.log('🔍 Checking for invalid indexes in PostgreSQL...');
+  console.log('[DB-Maintenance] Checking for invalid indexes in PostgreSQL...');
   const isPostgres = process.env.DATABASE_URL?.startsWith('postgres') || process.env.DATABASE_URL?.startsWith('postgresql');
 
   if (!isPostgres) {
-    console.log('ℹ️ Not a PostgreSQL database, skipping invalid index inspection.');
+    console.log('[DB-Maintenance] Not a PostgreSQL database, skipping invalid index inspection.');
     return;
   }
 
@@ -23,24 +23,24 @@ async function main() {
     `);
 
     if (!Array.isArray(invalidIndexes) || invalidIndexes.length === 0) {
-      console.log('✅ No invalid indexes found. All indexes are valid.');
+      console.log('[DB-Maintenance] All database indexes are valid.');
     } else {
-      console.log(`⚠️ Found ${invalidIndexes.length} invalid index(es):`);
+      console.log(`[DB-Maintenance] Found ${invalidIndexes.length} invalid index(es):`);
       for (const row of invalidIndexes) {
         console.log(`  - ${row.index_name} on table ${row.table_name}`);
         try {
-          console.log(`  🗑️ Dropping invalid index "${row.index_name}"...`);
+          console.log(`  Dropping invalid index "${row.index_name}"...`);
           await prisma.$executeRawUnsafe(`DROP INDEX CONCURRENTLY IF EXISTS "${row.index_name}"`);
-          console.log(`  ✅ Successfully dropped "${row.index_name}".`);
+          console.log(`  Successfully dropped "${row.index_name}".`);
         } catch (dropErr: any) {
-          console.error(`  ❌ Failed to drop "${row.index_name}":`, dropErr.message);
+          console.error(`  Failed to drop "${row.index_name}":`, dropErr.message);
         }
       }
     }
 
     // Clean orphan/dangling foreign keys in Question table to ensure total DB integrity
     try {
-      console.log('🧹 Cleaning dangling Question foreign keys (modules/subExams)...');
+      console.log('[DB-Maintenance] Cleaning dangling Question foreign keys (modules/subExams)...');
       const orphanModulesResult: any = await prisma.$executeRawUnsafe(`
         UPDATE "Question" 
         SET "moduleId" = NULL 
@@ -48,7 +48,7 @@ async function main() {
           AND "moduleId" NOT IN (SELECT "id" FROM "ExamModule");
       `);
       if (orphanModulesResult > 0) {
-        console.log(`  ✅ Cleaned ${orphanModulesResult} question(s) with dangling moduleId.`);
+        console.log(`  Cleaned ${orphanModulesResult} question(s) with dangling moduleId.`);
       }
 
       const orphanSubExamsResult: any = await prisma.$executeRawUnsafe(`
@@ -58,19 +58,45 @@ async function main() {
           AND "subExamId" NOT IN (SELECT "id" FROM "SubExam");
       `);
       if (orphanSubExamsResult > 0) {
-        console.log(`  ✅ Cleaned ${orphanSubExamsResult} question(s) with dangling subExamId.`);
+        console.log(`  Cleaned ${orphanSubExamsResult} question(s) with dangling subExamId.`);
       }
     } catch (fkErr: any) {
-      console.warn(`  ⚠️ Notice during orphan foreign key cleanup: ${fkErr.message}`);
+      console.warn(`  Notice during orphan foreign key cleanup: ${fkErr.message}`);
     }
 
-    console.log('🛠️ Rebuilding performance indexes cleanly...');
-    // Clear NODE_APP_INSTANCE for this standalone maintenance script so it runs
+    // Ensure recently added schema columns exist in PostgreSQL
+    console.log('[DB-Maintenance] Ensuring all schema columns exist in database...');
+    const schemaColumns = [
+      'ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS "textEn" TEXT',
+      'ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS "optionsEn" TEXT',
+      'ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS "explanationEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "titleEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "questionText" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "questionTextEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "optionsEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "correctAnswerEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "hintEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "tipEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "explanationEn" TEXT',
+      'ALTER TABLE "InteractiveActivity" ADD COLUMN IF NOT EXISTS "keyInsightEn" TEXT',
+      'ALTER TABLE "ExamModule" ADD COLUMN IF NOT EXISTS "parentModuleId" TEXT'
+    ];
+
+    for (const sql of schemaColumns) {
+      try {
+        await prisma.$executeRawUnsafe(sql);
+      } catch (colErr: any) {
+        console.warn(`  Notice during schema column reconciliation: ${colErr.message}`);
+      }
+    }
+    console.log('[DB-Maintenance] Schema column reconciliation completed.');
+
+    console.log('[DB-Maintenance] Rebuilding performance indexes cleanly...');
     delete process.env.NODE_APP_INSTANCE;
     await ensurePerformanceIndexes();
-    console.log('✅ Database maintenance completed successfully.');
+    console.log('[DB-Maintenance] Database maintenance completed successfully.');
   } catch (error: any) {
-    console.error('❌ Error during index maintenance:', error);
+    console.error('[DB-Maintenance] Error during index maintenance:', error);
   } finally {
     await prisma.$disconnect();
   }
