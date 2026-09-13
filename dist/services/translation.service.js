@@ -130,7 +130,7 @@ function translateBatchTexts(texts_1) {
     return __awaiter(this, arguments, void 0, function* (texts, from = 'ar', to = 'en') {
         if (!Array.isArray(texts) || texts.length === 0)
             return [];
-        const BATCH_SIZE = 8;
+        const BATCH_SIZE = 16;
         const results = new Array(texts.length);
         for (let i = 0; i < texts.length; i += BATCH_SIZE) {
             const slice = texts.slice(i, i + BATCH_SIZE);

@@ -127,7 +127,7 @@ export async function translateBatchTexts(
 ): Promise<string[]> {
   if (!Array.isArray(texts) || texts.length === 0) return [];
 
-  const BATCH_SIZE = 8;
+  const BATCH_SIZE = 16;
   const results: string[] = new Array(texts.length);
 
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
