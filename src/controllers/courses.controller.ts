@@ -1873,8 +1873,8 @@ export const getCourseHandler29 = async (req: any, res: any) => {
 export const getCourseHandler30 = async (req: any, res: any) => {
   try {
     const courseId = req.params.id;
-    const summaryOnly = req.query.summary === "true" && ["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"].includes(req.user.role);
-    const includeSlideCounts = summaryOnly && req.query.includeSlideCounts === "true";
+    const summaryOnly = req.query.summary === "true" || (req.user.role === "STUDENT" && req.query.includeContent !== "true");
+    const includeSlideCounts = (summaryOnly && req.query.includeSlideCounts === "true") || req.user.role === "STUDENT";
     const countsOnly = includeSlideCounts && req.query.countsOnly === "true";
     const course = await prisma.course.findFirst({
       where: { id: courseId, deletedAt: null },
@@ -1884,16 +1884,25 @@ export const getCourseHandler30 = async (req: any, res: any) => {
           orderBy: [{ order: "asc" }, { createdAt: "asc" }],
           select: summaryOnly
             ? {
-                // Keep the course editor list fast: lesson content is fetched on edit.
+                // Keep the course editor and student view fast: lesson content is fetched on demand
                 id: true,
                 courseId: true,
                 title: true,
+                domain: true,
+                summary: true,
                 isVisible: true,
                 publishDate: true,
                 cutOffDate: true,
                 order: true,
+                duration: true,
                 createdAt: true,
                 updatedAt: true,
+                progresses:
+                  req.user.role === "SUPER_ADMIN"
+                    ? false
+                    : {
+                        where: { userId: req.user.id },
+                      },
               }
             : {
                 id: true,
@@ -2009,27 +2018,37 @@ export const getCourseHandler30 = async (req: any, res: any) => {
     }
 
     const slidesCountByLessonId = new Map<string, number>();
+    const questionsCountByLessonId = new Map<string, number>();
     if (includeSlideCounts && course.lessons.length > 0) {
-      const slideCounts = await prisma.$queryRaw<Array<{ id: string; slidesCount: number }>>`
+      const counts = await prisma.$queryRaw<Array<{ id: string; slidesCount: number; questionsCount: number }>>`
         SELECT
           "id",
           CASE
             WHEN jsonb_typeof(COALESCE("slides", '[]'::jsonb)) = 'array'
               THEN jsonb_array_length("slides")
             ELSE 0
-          END AS "slidesCount"
+          END AS "slidesCount",
+          CASE
+            WHEN jsonb_typeof(COALESCE("questions", '[]'::jsonb)) = 'array'
+              THEN jsonb_array_length("questions")
+            ELSE 0
+          END AS "questionsCount"
         FROM "Lesson"
         WHERE "courseId" = ${courseId} AND "deletedAt" IS NULL
       `;
-      slideCounts.forEach(({ id, slidesCount }) => {
+      counts.forEach(({ id, slidesCount, questionsCount }) => {
         slidesCountByLessonId.set(id, Number(slidesCount) || 0);
+        questionsCountByLessonId.set(id, Number(questionsCount) || 0);
       });
     }
 
     const responseLessons = summaryOnly
       ? course.lessons.map((lesson: any) => ({
           ...lesson,
-          ...(includeSlideCounts ? { slidesCount: slidesCountByLessonId.get(lesson.id) || 0 } : {}),
+          ...(includeSlideCounts ? {
+            slidesCount: slidesCountByLessonId.get(lesson.id) || 0,
+            questionsCount: questionsCountByLessonId.get(lesson.id) || 0,
+          } : {}),
         }))
       : course.lessons;
 
