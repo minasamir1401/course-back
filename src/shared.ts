@@ -570,6 +570,23 @@ export const stripHtmlAndNormalize = (str: any) => {
     .toLowerCase();
 };
 
+export const normalizeArabicLetters = (str: string) => {
+  if (!str) return '';
+  return str
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/[\u064B-\u065F\u0670]/g, '');
+};
+
+export const stripOptionPrefix = (str: string) => {
+  if (!str) return '';
+  return str
+    .replace(/^\((?:[a-zA-Z\u0621-\u064A0-9])\)\s*/, '')
+    .replace(/^[a-zA-Z\u0621-\u064A0-9]\s*[\.\:\-\)]\s*/, '')
+    .trim();
+};
+
 export const isOptionMatch = (targetVal: any, optText: string, optIndex: number = -1) => {
   if (targetVal === null || targetVal === undefined || optText === null || optText === undefined) return false;
   const rawTarget = String(targetVal).trim();
@@ -580,6 +597,20 @@ export const isOptionMatch = (targetVal: any, optText: string, optIndex: number 
 
   // 1. Direct exact normalized string match
   if (normTarget === normOpt) return true;
+
+  // 1b. Arabic letter normalization match
+  const arNormTarget = normalizeArabicLetters(normTarget);
+  const arNormOpt = normalizeArabicLetters(normOpt);
+  if (arNormTarget === arNormOpt) return true;
+
+  // 1c. Match after stripping option prefix like "A.", "B:", "أ)", "1 - "
+  const strippedTarget = stripOptionPrefix(normTarget);
+  const strippedOpt = stripOptionPrefix(normOpt);
+  if (strippedTarget && strippedOpt && strippedTarget === strippedOpt) return true;
+
+  const strippedArTarget = stripOptionPrefix(arNormTarget);
+  const strippedArOpt = stripOptionPrefix(arNormOpt);
+  if (strippedArTarget && strippedArOpt && strippedArTarget === strippedArOpt) return true;
 
   // 2. True / False / Correct / Incorrect normalization check
   const tfTarget = normalizeTrueFalse(rawTarget);
@@ -593,9 +624,22 @@ export const isOptionMatch = (targetVal: any, optText: string, optIndex: number 
   // 3. Option letter/index check (e.g. target is "A", "B", "C", "D" or "0", "1", "2", "3" or "أ", "ب", "ج", "د")
   if (optIndex >= 0) {
     const letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-    const arLetters = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح'];
-    const targetClean = rawTarget.toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, '');
-    if (targetClean === letters[optIndex] || targetClean === arLetters[optIndex] || targetClean === String(optIndex)) return true;
+    const arLetters = ['ا', 'ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح'];
+    const targetClean = normalizeArabicLetters(rawTarget.toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, ''));
+    if (
+      targetClean === letters[optIndex] ||
+      targetClean === arLetters[optIndex] ||
+      targetClean === String(optIndex) ||
+      targetClean === String(optIndex + 1)
+    ) return true;
+
+    const optClean = normalizeArabicLetters(normOpt.toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, ''));
+    if (
+      optClean === letters[optIndex] ||
+      optClean === arLetters[optIndex] ||
+      optClean === String(optIndex) ||
+      optClean === String(optIndex + 1)
+    ) return true;
   }
 
   // 4. Multi-word string containment (only for long strings with multiple words)
@@ -725,7 +769,9 @@ export const isAnswerCorrect = (question: any, selectedAnswer: any) => {
       const optAr = optionsArr[i];
       const optEn = optionsEnArr[i];
       const matchesStudent = (optAr && isOptionMatch(selectedAnswer, optAr, i)) || (optEn && isOptionMatch(selectedAnswer, optEn, i));
-      const matchesCorrect = (optAr && isOptionMatch(question.correctAnswer, optAr, i)) || (optEn && isOptionMatch(question.correctAnswer, optEn, i));
+      const matchesCorrect = (optAr && isOptionMatch(question.correctAnswer, optAr, i)) ||
+        (optEn && isOptionMatch(question.correctAnswer, optEn, i)) ||
+        (question.correctAnswerEn && ((optAr && isOptionMatch(question.correctAnswerEn, optAr, i)) || (optEn && isOptionMatch(question.correctAnswerEn, optEn, i))));
       if (matchesStudent && matchesCorrect) return true;
     }
   }
@@ -743,7 +789,18 @@ export const isAnswerCorrect = (question: any, selectedAnswer: any) => {
     return correctKeys.every(k => cleanStr(correctParsed[k]) === cleanStr(studentParsed[k]));
   }
 
-  return cleanStr(selectedAnswer) === cleanStr(question.correctAnswer) || stripHtmlAndNormalize(selectedAnswer) === stripHtmlAndNormalize(question.correctAnswer);
+  const normStudent = stripHtmlAndNormalize(selectedAnswer);
+  const normCorrect = stripHtmlAndNormalize(question.correctAnswer);
+  const normCorrectEn = question.correctAnswerEn ? stripHtmlAndNormalize(question.correctAnswerEn) : '';
+
+  if (cleanStr(selectedAnswer) === cleanStr(question.correctAnswer) || normStudent === normCorrect) return true;
+  if (normalizeArabicLetters(normStudent) === normalizeArabicLetters(normCorrect)) return true;
+
+  if (question.correctAnswerEn) {
+    if (cleanStr(selectedAnswer) === cleanStr(question.correctAnswerEn) || normStudent === normCorrectEn) return true;
+  }
+
+  return false;
 };
 
 export const GRADE_STAGE_MAP: Record<string, string> = {
