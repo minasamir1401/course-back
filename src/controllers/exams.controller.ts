@@ -2221,20 +2221,39 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
           options = [];
         }
 
+        let optionsEn: any[] = [];
+        try {
+          optionsEn = typeof ans.question.optionsEn === 'string' ? JSON.parse(ans.question.optionsEn || '[]') : (Array.isArray(ans.question.optionsEn) ? ans.question.optionsEn : []);
+        } catch { optionsEn = []; }
+
+        // Re-evaluate isCorrect dynamically to fix stale DB values from old grading bugs
+        const dynamicIsCorrect = ans.isCorrect || isAnswerCorrect(ans.question, ans.selectedAnswer);
+
         const baseAnswer = {
           id: ans.id,
           selectedAnswer: ans.selectedAnswer,
-          isCorrect: ans.isCorrect,
+          isCorrect: dynamicIsCorrect,
           question: {
             text: ans.question.text,
+            textEn: ans.question.textEn || null,
+            type: ans.question.type,
+            label: (ans.question as any).label || null,
             options,
+            optionsEn,
             points: ans.question.points,
             explanation: (policy === 'SHOW_ANSWERS' || policy === 'SHOW_ALL') ? ans.question.explanation : null
           }
         };
 
         if (policy === 'SHOW_ANSWERS' || policy === 'SHOW_ALL') {
-          return { ...baseAnswer, question: { ...baseAnswer.question, correctAnswer: ans.question.correctAnswer } };
+          return {
+            ...baseAnswer,
+            question: {
+              ...baseAnswer.question,
+              correctAnswer: ans.question.correctAnswer,
+              correctAnswerEn: (ans.question as any).correctAnswerEn || null,
+            }
+          };
         }
 
         if (policy === 'SHOW_MARK_ONLY') {

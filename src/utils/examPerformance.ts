@@ -1,3 +1,5 @@
+import { isAnswerCorrect } from '../shared';
+
 export function changedQuestionFields(existing: Record<string, any>, incoming: Record<string, any>) {
   return Object.fromEntries(Object.entries(incoming).filter(([key, value]) => value !== undefined && value !== existing[key]));
 }
@@ -11,7 +13,17 @@ export function calculateSubmissionStats(questions: any[], answers: any[], first
   const byId = new Map(questions.map(q => [q.id, q]));
   const answeredIds = new Set(answers.map(a => a.questionId));
   const relevant = questions.filter(q => answeredIds.has(q.id));
-  const ordered = [...answers].sort((a, b) => (byId.get(a.questionId)?.order ?? 0) - (byId.get(b.questionId)?.order ?? 0));
+
+  // Re-evaluate isCorrect dynamically so stale DB values from old grading bugs don't skew the score
+  const reEvaluated = answers.map(answer => {
+    const question = byId.get(answer.questionId);
+    if (!question) return answer;
+    // If already correct, keep it. If not, try re-grading with current logic.
+    const isCorrect = answer.isCorrect || isAnswerCorrect(question, answer.selectedAnswer);
+    return { ...answer, isCorrect };
+  });
+
+  const ordered = [...reEvaluated].sort((a, b) => (byId.get(a.questionId)?.order ?? 0) - (byId.get(b.questionId)?.order ?? 0));
   let earnedXP = 0, dynamicTotalScore = 0, streak = 0, bonus = 0;
   let hasFive = false, hasTen = false;
   for (const answer of ordered) {
@@ -27,5 +39,5 @@ export function calculateSubmissionStats(questions: any[], answers: any[], first
   }
   return { earnedXP: earnedXP + (firstAttempt ? bonus : 0), dynamicTotalScore,
     totalPoints: relevant.reduce((sum, q) => sum + (Number(q.points) || 0), 0),
-    correctAnswers: answers.filter(a => a.isCorrect).length, totalQuestions: relevant.length };
+    correctAnswers: reEvaluated.filter(a => a.isCorrect).length, totalQuestions: relevant.length };
 }
