@@ -37,11 +37,14 @@ async function collectUsedFilenames(): Promise<Set<string>> {
   const users = await prisma.user.findMany({ select: { avatar: true } });
   users.forEach(u => extractFilenames(u.avatar).forEach(f => used.add(f)));
 
-  const questions = await prisma.question.findMany({ select: { imageUrl: true, text: true, explanation: true } });
+  const questions = await prisma.question.findMany({ select: { imageUrl: true, text: true, textEn: true, explanation: true, options: true, optionsEn: true } });
   questions.forEach(q => {
     extractFilenames(q.imageUrl).forEach(f => used.add(f));
     extractFilenames(q.text).forEach(f => used.add(f));
+    extractFilenames(q.textEn).forEach(f => used.add(f));
     extractFilenames(q.explanation).forEach(f => used.add(f));
+    try { extractFromJSON(JSON.parse(q.options || '{}')).forEach(f => used.add(f)); } catch {}
+    try { extractFromJSON(JSON.parse(q.optionsEn || '{}')).forEach(f => used.add(f)); } catch {}
   });
 
   const lessons = await prisma.lesson.findMany({
