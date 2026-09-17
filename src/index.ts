@@ -25,7 +25,7 @@ if (process.env.SENTRY_DSN) {
 }
 
 import {
-  allowedOrigins, isOriginAllowed, ensurePerformanceIndexes, normalizeLegacyCourses,
+  allowedOrigins, isOriginAllowed, normalizeLegacyCourses,
   pushDiagnosticLog as pushLogShared, DiagnosticLogLevel
 } from './shared';
 
@@ -621,19 +621,16 @@ const startServer = async () => {
     }, 30_000); // 30 seconds delay — safely after healthcheck passes
   });
 
-  // In PM2 cluster mode, only Worker #0 runs startup DDL and data initialization
+  // In PM2 cluster mode, only Worker #0 runs startup data initialization.
+  // Schema/index changes are owned by Prisma migrations before PM2 starts.
   const isPrimaryWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
 
   if (isPrimaryWorker) {
-    ensurePerformanceIndexes()
-      .then(() => console.log('✅ Performance indexes are ready'))
-      .catch((error: any) => console.error('⚠️ Performance index setup failed:', error.message));
-
     initializeStartupData()
       .then(() => console.log('✅ Startup data initialized'))
       .catch((error: any) => console.error('⚠️ Startup data initialization failed:', error.message));
   } else {
-    console.log(`[Startup] PM2 worker #${process.env.NODE_APP_INSTANCE} online — deferred tasks & DDL handled by worker #0.`);
+    console.log(`[Startup] PM2 worker #${process.env.NODE_APP_INSTANCE} online — deferred tasks handled by worker #0.`);
   }
 };
 

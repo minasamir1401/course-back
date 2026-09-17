@@ -728,13 +728,32 @@ router.get('/api/skills-hub/progress', auth_1.verifyToken, (req, res) => __await
             include: {
                 skills: {
                     include: {
-                        activities: true
+                        activities: {
+                            select: {
+                                id: true,
+                                title: true,
+                                type: true,
+                                difficulty: true,
+                                dok: true,
+                                points: true,
+                                estimatedTime: true,
+                                standard: true,
+                                indicator: true,
+                                learningOutcome: true,
+                            }
+                        }
                     }
                 }
             }
         });
         const attempts = yield prisma_1.default.activityAttempt.findMany({
-            where: { userId: targetUserId }
+            where: { userId: targetUserId },
+            select: {
+                activityId: true,
+                stars: true,
+                score: true,
+                isCorrect: true,
+            }
         });
         const bestAttemptsMap = new Map();
         attempts.forEach(att => {

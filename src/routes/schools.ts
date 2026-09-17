@@ -817,7 +817,6 @@ router.post('/api/admin/impersonate/:id', verifyToken, checkRole(['SUPER_ADMIN']
 
     res.json({
       message: `Impersonating ${user.name}`,
-      token,
       user: {
         id: user.id,
         name: user.name,

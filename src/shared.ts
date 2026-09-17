@@ -629,16 +629,7 @@ export const isOptionMatch = (targetVal: any, optText: string, optIndex: number 
     if (
       targetClean === letters[optIndex] ||
       targetClean === arLetters[optIndex] ||
-      targetClean === String(optIndex) ||
-      targetClean === String(optIndex + 1)
-    ) return true;
-
-    const optClean = normalizeArabicLetters(normOpt.toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, ''));
-    if (
-      optClean === letters[optIndex] ||
-      optClean === arLetters[optIndex] ||
-      optClean === String(optIndex) ||
-      optClean === String(optIndex + 1)
+      targetClean === String(optIndex)
     ) return true;
   }
 
@@ -799,6 +790,9 @@ export const isAnswerCorrect = (question: any, selectedAnswer: any) => {
   if (question.correctAnswerEn) {
     if (cleanStr(selectedAnswer) === cleanStr(question.correctAnswerEn) || normStudent === normCorrectEn) return true;
   }
+
+  if (isOptionMatch(question.correctAnswer, selectedAnswer, -1)) return true;
+  if (question.correctAnswerEn && isOptionMatch(question.correctAnswerEn, selectedAnswer, -1)) return true;
 
   return false;
 };

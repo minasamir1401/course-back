@@ -625,18 +625,16 @@ const startServer = () => __awaiter(void 0, void 0, void 0, function* () {
             console.log('✅ [Deferred Startup] All background tasks launched.');
         }, 30000); // 30 seconds delay — safely after healthcheck passes
     });
-    // In PM2 cluster mode, only Worker #0 runs startup DDL and data initialization
+    // In PM2 cluster mode, only Worker #0 runs startup data initialization.
+    // Schema/index changes are owned by Prisma migrations before PM2 starts.
     const isPrimaryWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
     if (isPrimaryWorker) {
-        (0, shared_1.ensurePerformanceIndexes)()
-            .then(() => console.log('✅ Performance indexes are ready'))
-            .catch((error) => console.error('⚠️ Performance index setup failed:', error.message));
         initializeStartupData()
             .then(() => console.log('✅ Startup data initialized'))
             .catch((error) => console.error('⚠️ Startup data initialization failed:', error.message));
     }
     else {
-        console.log(`[Startup] PM2 worker #${process.env.NODE_APP_INSTANCE} online — deferred tasks & DDL handled by worker #0.`);
+        console.log(`[Startup] PM2 worker #${process.env.NODE_APP_INSTANCE} online — deferred tasks handled by worker #0.`);
     }
 });
 exports.startServer = startServer;

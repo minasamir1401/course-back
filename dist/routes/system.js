@@ -153,16 +153,28 @@ router.post('/api/system/wipe-seeded-dummy-data', auth_1.verifyToken, (0, auth_1
         res.status(500).json({ error: "Failed to wipe dummy data", details: error.message });
     }
 }));
-router.post('/api/translate', auth_1.verifyToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { text, texts, from = 'ar', to = 'en' } = req.body;
         const validFrom = from === 'en' ? 'en' : 'ar';
         const validTo = to === 'ar' ? 'ar' : 'en';
         if (text !== undefined) {
-            const translated = yield (0, translation_service_1.translateSingleText)(String(text || ''), validFrom, validTo);
+            const strText = String(text || '');
+            if (strText.length > 5000) {
+                return res.status(400).json({ error: 'Text exceeds maximum length of 5000 characters.' });
+            }
+            const translated = yield (0, translation_service_1.translateSingleText)(strText, validFrom, validTo);
             return res.json({ translatedText: translated });
         }
         if (Array.isArray(texts)) {
+            if (texts.length > 50) {
+                return res.status(400).json({ error: 'Batch translation limited to 50 items per request.' });
+            }
+            for (const item of texts) {
+                if (typeof item === 'string' && item.length > 5000) {
+                    return res.status(400).json({ error: 'Individual text item exceeds maximum length of 5000 characters.' });
+                }
+            }
             const translations = yield (0, translation_service_1.translateBatchTexts)(texts, validFrom, validTo);
             return res.json({ translations });
         }

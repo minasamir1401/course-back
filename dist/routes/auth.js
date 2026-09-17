@@ -145,8 +145,7 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         yield (0, shared_1.clearLoginAttempts)(ip);
         // Generate token payload: user_id, role, school_id, grade
         const token = jsonwebtoken_1.default.sign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
-        // Set httpOnly cookie — protected from XSS. SameSite=None for cross-subdomain (api.klevro.com ← front.klevro.com).
-        // The JSON token is kept for backward compatibility during the transition period.
+        // Set the session only in an httpOnly cookie so browser JavaScript can never read the JWT.
         const cookieMaxAge = 8 * 60 * 60 * 1000; // 8 hours in ms
         res.cookie('auth_token', token, {
             httpOnly: true,
@@ -162,7 +161,7 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         }
         res.json({
             message: 'Login successful',
-            token,
+            expiresAt: Date.now() + cookieMaxAge,
             user: {
                 id: user.id,
                 name: user.name,
@@ -206,7 +205,7 @@ router.post('/api/auth/refresh-token', auth_1.verifyToken, (req, res) => __await
             path: '/'
         });
         res.json({
-            token: newToken,
+            refreshed: true,
             expiresAt,
             user: {
                 id: user.id,

@@ -757,7 +757,6 @@ router.post('/api/admin/impersonate/:id', auth_1.verifyToken, (0, auth_1.checkRo
         });
         res.json({
             message: `Impersonating ${user.name}`,
-            token,
             user: {
                 id: user.id,
                 name: user.name,

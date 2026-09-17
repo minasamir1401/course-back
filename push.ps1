@@ -39,8 +39,10 @@ git push course-front frontend-only:main --force
 Write-Host "`n6. Pushing backend to course-back (https://github.com/minasamir1401/course-back)..." -ForegroundColor White
 git push course-back backend-only:main --force
 
-# 7. Push Full Monorepo
+# 7. Push Full Monorepo and Subtree Branches to Origin
 Write-Host "`n7. Pushing full monorepo to origin (https://github.com/EduTrackPlatform/Edu-Track-Platform)..." -ForegroundColor White
 git push origin main
+git push origin frontend-only:frontend --force
+git push origin backend-only:backend --force
 
 Write-Host "`n[SUCCESS] Successfully pushed all changes to all 3 repositories!`n" -ForegroundColor Green

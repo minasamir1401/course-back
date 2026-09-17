@@ -173,8 +173,7 @@ router.post('/api/auth/login', async (req: any, res: any) => {
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    // Set httpOnly cookie — protected from XSS. SameSite=None for cross-subdomain (api.klevro.com ← front.klevro.com).
-    // The JSON token is kept for backward compatibility during the transition period.
+    // Set the session only in an httpOnly cookie so browser JavaScript can never read the JWT.
     const cookieMaxAge = 8 * 60 * 60 * 1000; // 8 hours in ms
     res.cookie('auth_token', token, {
       httpOnly: true,
@@ -192,7 +191,7 @@ router.post('/api/auth/login', async (req: any, res: any) => {
 
     res.json({
       message: 'Login successful',
-      token,
+      expiresAt: Date.now() + cookieMaxAge,
       user: {
         id: user.id,
         name: user.name,
@@ -244,7 +243,7 @@ router.post('/api/auth/refresh-token', verifyToken, async (req: any, res: any) =
     });
 
     res.json({
-      token: newToken,
+      refreshed: true,
       expiresAt,
       user: {
         id: user.id,

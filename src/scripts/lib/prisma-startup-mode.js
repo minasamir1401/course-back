@@ -23,6 +23,39 @@ function resolvePrismaStartupMode(input) {
   };
 }
 
+function resolveUntrackedDatabaseAction(input) {
+  const hasBaselineMigration = Boolean(input?.hasBaselineMigration);
+  const applicationTableCount = Number(input?.applicationTableCount || 0);
+  const schemaMatches = input?.schemaMatches;
+
+  if (hasBaselineMigration) {
+    return {
+      action: 'deploy',
+      reason: 'The bundled baseline is already recorded in Prisma migration history.',
+    };
+  }
+
+  if (applicationTableCount === 0) {
+    return {
+      action: 'deploy',
+      reason: 'The database is empty; the baseline migration can create the schema.',
+    };
+  }
+
+  if (schemaMatches === true) {
+    return {
+      action: 'resolve-baseline',
+      reason: 'The existing unmanaged database matches the Prisma schema exactly.',
+    };
+  }
+
+  return {
+    action: 'abort',
+    reason: 'The existing unmanaged database differs from the Prisma schema; refusing to mark the baseline as applied.',
+  };
+}
+
 module.exports = {
   resolvePrismaStartupMode,
+  resolveUntrackedDatabaseAction,
 };

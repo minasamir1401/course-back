@@ -646,22 +646,17 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
     if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
       return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
     }
-    // Removing an unsaved draft row is allowed.
-    // Persisted questions with existing student answers cannot be deleted to preserve grade integrity.
+    // Removing an unsaved draft row is a client-only operation. Every persisted
+    // question deletion is reserved for SUPER_ADMIN, regardless of ownership or answers.
     const requestedDeletes = (deletedQuestionIds || []).filter((value: unknown): value is string => typeof value === 'string');
     if (requestedDeletes.length > 0 && (req as any).user.role !== 'SUPER_ADMIN') {
       const persistedDeletes = await prisma.question.count({
         where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
       });
       if (persistedDeletes > 0) {
-        const answersCount = await prisma.studentAnswer.count({
-          where: { questionId: { in: requestedDeletes } }
+        return res.status(403).json({
+          error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.'
         });
-        if (answersCount > 0) {
-          return res.status(403).json({
-            error: 'لا يمكن حذف أسئلة تم تسجيل إجابات للطلاب عليها للحفاظ على سلامة درجات الطلاب. Questions with student answers cannot be deleted.'
-          });
-        }
       }
     }
 
@@ -1100,7 +1095,9 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             continue;
           }
           const newExplanation = formatExplanation(q);
-          const newExplanationEn = q.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(q.explanationEn)) : null;
+          const newExplanationEn = q.explanationEn !== undefined
+            ? (q.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(q.explanationEn)) : null)
+            : undefined;
 
           const cleanModuleId = q.moduleId ? sanitizeHtml(String(q.moduleId).trim()) : null;
           const cleanSubExamId = q.subExamId ? sanitizeHtml(String(q.subExamId).trim()) : null;
@@ -1229,8 +1226,8 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
           await tx.question.createMany({ data: pendingQuestions.slice(offset, offset + 250) });
         }
 
-        // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI
-        // and verified against student submission protection above.
+        // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
+        // The authorization guard above reserves every persisted deletion for SUPER_ADMIN.
         if (explicitDeletedIds.size) {
           await tx.question.updateMany({
             where: { id: { in: Array.from(explicitDeletedIds) }, examId: id },
@@ -2198,6 +2195,46 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
       return calculateSubmissionStats(relevantQuestions, targetAnswers, isFirstAttemptForThisSubmission);
     };
 
+    const gradedAnswers = submission.answers.map(ans => {
+      let options = [];
+      try {
+        options = typeof ans.question.options === 'string' ? JSON.parse(ans.question.options) : ans.question.options;
+      } catch (e) {
+        options = [];
+      }
+
+      let optionsEn: any[] = [];
+      try {
+        optionsEn = typeof ans.question.optionsEn === 'string' ? JSON.parse(ans.question.optionsEn || '[]') : (Array.isArray(ans.question.optionsEn) ? ans.question.optionsEn : []);
+      } catch { optionsEn = []; }
+
+      const dynamicIsCorrect = ans.isCorrect || isAnswerCorrect(ans.question, ans.selectedAnswer);
+
+      return {
+        ...ans,
+        isCorrect: dynamicIsCorrect,
+        question: {
+          ...ans.question,
+          options,
+          optionsEn,
+          explanationEn: ans.question.explanationEn || null
+        }
+      };
+    });
+
+    const submissionXpStats = await buildSubmissionXpStats(submission, gradedAnswers);
+    const dynamicPercentage = submissionXpStats.totalPoints > 0 ? (submissionXpStats.dynamicTotalScore / submissionXpStats.totalPoints) * 100 : 0;
+
+    if (typeof (prisma as any)?.examSubmission?.update === 'function' && (Math.abs(dynamicPercentage - (submission.percentage || 0)) > 0.01 || Math.abs(submissionXpStats.dynamicTotalScore - submission.totalScore) > 0.01)) {
+      (prisma.examSubmission as any).update({
+        where: { id: submission.id },
+        data: {
+          totalScore: submissionXpStats.dynamicTotalScore,
+          percentage: dynamicPercentage
+        }
+      }).catch(() => {});
+    }
+
     // Apply Result Policy for Students
     if ((req as any).user.role === 'STUDENT') {
       const policy = submission.exam.resultVisibility;
@@ -2213,35 +2250,34 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
         });
       }
 
-      const sanitizedAnswers = submission.answers.map(ans => {
-        let options = [];
-        try {
-          options = typeof ans.question.options === 'string' ? JSON.parse(ans.question.options) : ans.question.options;
-        } catch (e) {
-          options = [];
-        }
-
-        let optionsEn: any[] = [];
-        try {
-          optionsEn = typeof ans.question.optionsEn === 'string' ? JSON.parse(ans.question.optionsEn || '[]') : (Array.isArray(ans.question.optionsEn) ? ans.question.optionsEn : []);
-        } catch { optionsEn = []; }
-
-        // Re-evaluate isCorrect dynamically to fix stale DB values from old grading bugs
-        const dynamicIsCorrect = ans.isCorrect || isAnswerCorrect(ans.question, ans.selectedAnswer);
-
+      const sanitizedAnswers = gradedAnswers.map(ans => {
         const baseAnswer = {
           id: ans.id,
           selectedAnswer: ans.selectedAnswer,
-          isCorrect: dynamicIsCorrect,
+          isCorrect: ans.isCorrect,
           question: {
+            id: ans.question.id,
             text: ans.question.text,
             textEn: ans.question.textEn || null,
             type: ans.question.type,
             label: (ans.question as any).label || null,
-            options,
-            optionsEn,
+            imageUrl: ans.question.imageUrl || null,
+            domain: ans.question.domain || null,
+            standard: ans.question.standard || null,
+            indicator: ans.question.indicator || null,
+            learningOutcome: ans.question.learningOutcome || null,
+            skill: ans.question.skill || null,
+            subskill: ans.question.subskill || null,
+            microSkill: ans.question.microSkill || null,
+            dok: ans.question.dok || null,
+            level: ans.question.level || null,
+            cognitive: ans.question.cognitive || null,
+            errorPattern: ans.question.errorPattern || null,
+            options: ans.question.options,
+            optionsEn: ans.question.optionsEn,
             points: ans.question.points,
-            explanation: (policy === 'SHOW_ANSWERS' || policy === 'SHOW_ALL') ? ans.question.explanation : null
+            explanation: (policy === 'SHOW_ANSWERS' || policy === 'SHOW_ALL') ? ans.question.explanation : null,
+            explanationEn: (policy === 'SHOW_ANSWERS' || policy === 'SHOW_ALL') ? (ans.question.explanationEn || null) : null
           }
         };
 
@@ -2260,10 +2296,9 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
           return baseAnswer;
         }
 
-        return { id: ans.id }; // For SHOW_SCORE, we don't return answers
+        return { id: ans.id };
       });
 
-      const submissionXpStats = await buildSubmissionXpStats(submission, submission.answers);
       const safeExam = { ...submission.exam } as any;
       safeExam.totalPoints = submissionXpStats.totalPoints;
 
@@ -2274,8 +2309,6 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
       }
 
       delete safeExam.questions;
-
-      const dynamicPercentage = submissionXpStats.totalPoints > 0 ? (submissionXpStats.dynamicTotalScore / submissionXpStats.totalPoints) * 100 : 0;
 
       return res.json({
         ...submission,
@@ -2291,18 +2324,6 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
     }
 
     // Admins see everything
-    const parsedAnswers = submission.answers.map(ans => {
-      let options = [];
-      try {
-        options = typeof ans.question.options === 'string' ? JSON.parse(ans.question.options) : ans.question.options;
-      } catch (e) {
-        options = [];
-      }
-      return { ...ans, question: { ...ans.question, options } };
-    });
-
-    const submissionXpStats = await buildSubmissionXpStats(submission, submission.answers);
-
     if (subExamDetails) {
       (submission as any).exam.title = subExamDetails.title || (submission as any).exam.title;
       (submission as any).exam.passingScore = resolvePassingScore(
@@ -2313,14 +2334,12 @@ export const getExamHandler14 = async (req: Request, res: Response) => {
     }
     (submission as any).exam.totalPoints = submissionXpStats.totalPoints;
 
-    const dynamicPercentage = submissionXpStats.totalPoints > 0 ? (submissionXpStats.dynamicTotalScore / submissionXpStats.totalPoints) * 100 : 0;
-
     res.json({
       ...submission,
       subExam: subExamDetails,
       totalScore: submissionXpStats.dynamicTotalScore,
       percentage: dynamicPercentage,
-      answers: parsedAnswers,
+      answers: gradedAnswers,
       earnedXP: submissionXpStats.earnedXP,
       correctAnswers: submissionXpStats.correctAnswers,
       totalQuestions: submissionXpStats.totalQuestions,
@@ -3725,12 +3744,17 @@ export function formatExplanation(q: any): string | null {
   if (!q) return null;
   // 1. Check structured sections array — takes highest priority
   if (q.sections && Array.isArray(q.sections)) {
-    const validSections = q.sections.filter((s: any) => s && (String(s.content || s.text || '').trim() !== ''));
+    const validSections = q.sections.filter((s: any) => s && (
+      String(s.content || s.text || '').trim() !== '' ||
+      String(s.contentEn || s.textEn || '').trim() !== ''
+    ));
     if (validSections.length > 0) {
       const sanitizedValid = validSections.map((s: any) => ({
         ...s,
         content: s.content ? sanitizeHtml(s.content) : s.content,
         text: s.text ? sanitizeHtml(s.text) : s.text,
+        contentEn: s.contentEn ? sanitizeHtml(s.contentEn) : s.contentEn,
+        textEn: s.textEn ? sanitizeHtml(s.textEn) : s.textEn,
       }));
       return extractAndSaveBase64Images(JSON.stringify(sanitizedValid));
     } else {
@@ -3756,13 +3780,18 @@ export function formatExplanation(q: any): string | null {
     try {
       const parsed = JSON.parse(trimmed);
       if (Array.isArray(parsed)) {
-        const valid = parsed.filter((s: any) => s && String(s.content || s.text || '').trim() !== '');
+        const valid = parsed.filter((s: any) => s && (
+          String(s.content || s.text || '').trim() !== '' ||
+          String(s.contentEn || s.textEn || '').trim() !== ''
+        ));
         if (valid.length === 0) return null;
         // sanitize each text/content field within array items
         const sanitizedValid = valid.map((s: any) => ({
           ...s,
           content: s.content ? sanitizeHtml(s.content) : s.content,
           text: s.text ? sanitizeHtml(s.text) : s.text,
+          contentEn: s.contentEn ? sanitizeHtml(s.contentEn) : s.contentEn,
+          textEn: s.textEn ? sanitizeHtml(s.textEn) : s.textEn,
         }));
         return extractAndSaveBase64Images(JSON.stringify(sanitizedValid));
       }

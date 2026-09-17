@@ -79,11 +79,20 @@ function collectUsedFilenames() {
         courses.forEach(c => extractFilenames(c.coverImage).forEach(f => used.add(f)));
         const users = yield prisma.user.findMany({ select: { avatar: true } });
         users.forEach(u => extractFilenames(u.avatar).forEach(f => used.add(f)));
-        const questions = yield prisma.question.findMany({ select: { imageUrl: true, text: true, explanation: true } });
+        const questions = yield prisma.question.findMany({ select: { imageUrl: true, text: true, textEn: true, explanation: true, options: true, optionsEn: true } });
         questions.forEach(q => {
             extractFilenames(q.imageUrl).forEach(f => used.add(f));
             extractFilenames(q.text).forEach(f => used.add(f));
+            extractFilenames(q.textEn).forEach(f => used.add(f));
             extractFilenames(q.explanation).forEach(f => used.add(f));
+            try {
+                extractFromJSON(JSON.parse(q.options || '{}')).forEach(f => used.add(f));
+            }
+            catch (_a) { }
+            try {
+                extractFromJSON(JSON.parse(q.optionsEn || '{}')).forEach(f => used.add(f));
+            }
+            catch (_b) { }
         });
         const lessons = yield prisma.lesson.findMany({
             select: { content: true, notes: true, summary: true, slides: true, questions: true, attachments: true, assignments: true }

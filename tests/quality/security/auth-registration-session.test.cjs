@@ -102,7 +102,19 @@ describe('public registration authorization', () => {
   test('existing administrator-created teachers can still log in', async () => {
     const res = await route('post', '/api/auth/login', request({ body: { username: 'test-user', password: 'correct-password' } }));
     expect(res.statusCode).toBe(200);
-    expect(jwt.verify(res.body.token, process.env.JWT_SECRET)).toMatchObject({ id: 'user-1', role: 'TEACHER' });
+    expect(res.body.token).toBeUndefined();
+    expect(res.body.expiresAt).toEqual(expect.any(Number));
+    expect(jwt.verify(res.cookies.auth_token, process.env.JWT_SECRET)).toMatchObject({ id: 'user-1', role: 'TEACHER' });
+  });
+
+  test('refresh rotates only the httpOnly cookie and never exposes the JWT in JSON', async () => {
+    const res = await route('post', '/api/auth/refresh-token', request({
+      headers: { authorization: `Bearer ${token()}` },
+    }));
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ refreshed: true, expiresAt: expect.any(Number) });
+    expect(res.body.token).toBeUndefined();
+    expect(jwt.verify(res.cookies.auth_token, process.env.JWT_SECRET).id).toBe('user-1');
   });
 });
 
@@ -286,6 +298,7 @@ describe('password verification in development', () => {
   test('still accepts the actual password in development', async () => {
     const res = await route('post', '/api/auth/login', request({ body: { username: 'test-user', password: 'correct-password' } }));
     expect(res.statusCode).toBe(200);
-    expect(jwt.verify(res.body.token, process.env.JWT_SECRET).id).toBe('user-1');
+    expect(res.body.token).toBeUndefined();
+    expect(jwt.verify(res.cookies.auth_token, process.env.JWT_SECRET).id).toBe('user-1');
   });
 });

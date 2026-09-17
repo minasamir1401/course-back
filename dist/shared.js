@@ -23,8 +23,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isLoginRateLimited = exports.invalidateCache = exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = exports.isCloudStorageActive = exports.deleteStoredFile = exports.persistUpload = void 0;
-exports.getQuestionCoreSignature = exports.robustNormalizeText = exports.releaseLock = exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = void 0;
+exports.getCacheAsync = exports.getCache = exports.setCache = exports.CACHE_TTL = exports.statsCache = exports.buildStudentCourseWhere = exports.examMatchesStudent = exports.getStudentGradeAndStage = exports.GRADE_TRANSLATION_MAP = exports.GRADE_STAGE_MAP = exports.isAnswerCorrect = exports.isOptionMatch = exports.stripOptionPrefix = exports.normalizeArabicLetters = exports.stripHtmlAndNormalize = exports.normalizeTrueFalse = exports.arraysMatch = exports.parseStringArray = exports.hasRequiredFields = exports.sanitizeExam = exports.sanitizeUser = exports.userSafeSelect = exports.ALL_ROLES = exports.SCHOOL_MANAGED_ROLES = exports.pushDiagnosticLog = exports.serializeLogPart = exports.diagnosticLogs = exports.DIAGNOSTIC_LOG_LIMIT = exports.isAllowedVideoUrl = exports.isSafeVimeoUrl = exports.isSafeYoutubeUrl = exports.sanitizeDeep = exports.sanitizeHtml = exports.externalizeEmbeddedDataImages = exports.replaceEmbeddedDataImages = exports.isOriginAllowed = exports.allowedOrigins = exports.buildAllowedOrigins = exports.loginAttempts = exports.LOGIN_MAX_ATTEMPTS = exports.LOGIN_WINDOW_MS = exports.ALLOWED_VIDEO_HOSTS = exports.multerUpload = exports.ALLOWED_MIME_TYPES = exports.UPLOADS_DIR = exports.JWT_EXPIRES_IN = exports.JWT_SECRET = exports.isCloudStorageActive = exports.deleteStoredFile = exports.persistUpload = void 0;
+exports.getQuestionCoreSignature = exports.robustNormalizeText = exports.releaseLock = exports.acquireLock = exports.clearLoginAttempts = exports.recordFailedLogin = exports.isLoginRateLimited = exports.invalidateCache = void 0;
 exports.mirrorUploadToCloud = mirrorUploadToCloud;
 exports.getYoutubeDuration = getYoutubeDuration;
 exports.getVimeoDuration = getVimeoDuration;
@@ -589,6 +589,25 @@ const stripHtmlAndNormalize = (str) => {
         .toLowerCase();
 };
 exports.stripHtmlAndNormalize = stripHtmlAndNormalize;
+const normalizeArabicLetters = (str) => {
+    if (!str)
+        return '';
+    return str
+        .replace(/[أإآٱ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/[\u064B-\u065F\u0670]/g, '');
+};
+exports.normalizeArabicLetters = normalizeArabicLetters;
+const stripOptionPrefix = (str) => {
+    if (!str)
+        return '';
+    return str
+        .replace(/^\((?:[a-zA-Z\u0621-\u064A0-9])\)\s*/, '')
+        .replace(/^[a-zA-Z\u0621-\u064A0-9]\s*[\.\:\-\)]\s*/, '')
+        .trim();
+};
+exports.stripOptionPrefix = stripOptionPrefix;
 const isOptionMatch = (targetVal, optText, optIndex = -1) => {
     if (targetVal === null || targetVal === undefined || optText === null || optText === undefined)
         return false;
@@ -600,6 +619,20 @@ const isOptionMatch = (targetVal, optText, optIndex = -1) => {
     // 1. Direct exact normalized string match
     if (normTarget === normOpt)
         return true;
+    // 1b. Arabic letter normalization match
+    const arNormTarget = (0, exports.normalizeArabicLetters)(normTarget);
+    const arNormOpt = (0, exports.normalizeArabicLetters)(normOpt);
+    if (arNormTarget === arNormOpt)
+        return true;
+    // 1c. Match after stripping option prefix like "A.", "B:", "أ)", "1 - "
+    const strippedTarget = (0, exports.stripOptionPrefix)(normTarget);
+    const strippedOpt = (0, exports.stripOptionPrefix)(normOpt);
+    if (strippedTarget && strippedOpt && strippedTarget === strippedOpt)
+        return true;
+    const strippedArTarget = (0, exports.stripOptionPrefix)(arNormTarget);
+    const strippedArOpt = (0, exports.stripOptionPrefix)(arNormOpt);
+    if (strippedArTarget && strippedArOpt && strippedArTarget === strippedArOpt)
+        return true;
     // 2. True / False / Correct / Incorrect normalization check
     const tfTarget = (0, exports.normalizeTrueFalse)(rawTarget);
     const tfOpt = (0, exports.normalizeTrueFalse)(optText);
@@ -610,9 +643,11 @@ const isOptionMatch = (targetVal, optText, optIndex = -1) => {
     // 3. Option letter/index check (e.g. target is "A", "B", "C", "D" or "0", "1", "2", "3" or "أ", "ب", "ج", "د")
     if (optIndex >= 0) {
         const letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-        const arLetters = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح'];
-        const targetClean = rawTarget.toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, '');
-        if (targetClean === letters[optIndex] || targetClean === arLetters[optIndex] || targetClean === String(optIndex))
+        const arLetters = ['ا', 'ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح'];
+        const targetClean = (0, exports.normalizeArabicLetters)(rawTarget.toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, ''));
+        if (targetClean === letters[optIndex] ||
+            targetClean === arLetters[optIndex] ||
+            targetClean === String(optIndex))
             return true;
     }
     // 4. Multi-word string containment (only for long strings with multiple words)
@@ -754,7 +789,9 @@ const isAnswerCorrect = (question, selectedAnswer) => {
             const optAr = optionsArr[i];
             const optEn = optionsEnArr[i];
             const matchesStudent = (optAr && (0, exports.isOptionMatch)(selectedAnswer, optAr, i)) || (optEn && (0, exports.isOptionMatch)(selectedAnswer, optEn, i));
-            const matchesCorrect = (optAr && (0, exports.isOptionMatch)(question.correctAnswer, optAr, i)) || (optEn && (0, exports.isOptionMatch)(question.correctAnswer, optEn, i));
+            const matchesCorrect = (optAr && (0, exports.isOptionMatch)(question.correctAnswer, optAr, i)) ||
+                (optEn && (0, exports.isOptionMatch)(question.correctAnswer, optEn, i)) ||
+                (question.correctAnswerEn && ((optAr && (0, exports.isOptionMatch)(question.correctAnswerEn, optAr, i)) || (optEn && (0, exports.isOptionMatch)(question.correctAnswerEn, optEn, i))));
             if (matchesStudent && matchesCorrect)
                 return true;
         }
@@ -771,7 +808,22 @@ const isAnswerCorrect = (question, selectedAnswer) => {
             return false;
         return correctKeys.every(k => cleanStr(correctParsed[k]) === cleanStr(studentParsed[k]));
     }
-    return cleanStr(selectedAnswer) === cleanStr(question.correctAnswer) || (0, exports.stripHtmlAndNormalize)(selectedAnswer) === (0, exports.stripHtmlAndNormalize)(question.correctAnswer);
+    const normStudent = (0, exports.stripHtmlAndNormalize)(selectedAnswer);
+    const normCorrect = (0, exports.stripHtmlAndNormalize)(question.correctAnswer);
+    const normCorrectEn = question.correctAnswerEn ? (0, exports.stripHtmlAndNormalize)(question.correctAnswerEn) : '';
+    if (cleanStr(selectedAnswer) === cleanStr(question.correctAnswer) || normStudent === normCorrect)
+        return true;
+    if ((0, exports.normalizeArabicLetters)(normStudent) === (0, exports.normalizeArabicLetters)(normCorrect))
+        return true;
+    if (question.correctAnswerEn) {
+        if (cleanStr(selectedAnswer) === cleanStr(question.correctAnswerEn) || normStudent === normCorrectEn)
+            return true;
+    }
+    if ((0, exports.isOptionMatch)(question.correctAnswer, selectedAnswer, -1))
+        return true;
+    if (question.correctAnswerEn && (0, exports.isOptionMatch)(question.correctAnswerEn, selectedAnswer, -1))
+        return true;
+    return false;
 };
 exports.isAnswerCorrect = isAnswerCorrect;
 exports.GRADE_STAGE_MAP = {
