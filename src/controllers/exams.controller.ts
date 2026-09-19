@@ -357,6 +357,8 @@ export const postExamHandler2 = async (req: Request, res: Response) => {
             estimatedTime: q.estimatedTime ? sanitizeHtml(q.estimatedTime) : null,
             explanation: formatExplanation(q),
             explanationEn: q.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(q.explanationEn)) : null,
+            hint: q.hint ? sanitizeHtml(q.hint) : null,
+            hintEn: q.hintEn ? sanitizeHtml(q.hintEn) : null,
             imageUrl: q.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(q.imageUrl)) : null,
             moduleId: resolvedModuleId,
             subExamId: q.subExamId
@@ -1136,6 +1138,8 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             estimatedTime: q.estimatedTime !== undefined ? (q.estimatedTime ? sanitizeHtml(q.estimatedTime) : null) : undefined,
             explanation: newExplanation,
             explanationEn: newExplanationEn,
+            hint: q.hint !== undefined ? (q.hint ? sanitizeHtml(q.hint) : null) : undefined,
+            hintEn: q.hintEn !== undefined ? (q.hintEn ? sanitizeHtml(q.hintEn) : null) : undefined,
             imageUrl: q.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(q.imageUrl)) : null,
             //  FK-SAFE: strictly ensure moduleId and subExamId exist in DB or fallback to null (avoids P2003 / Question_moduleId_fkey)
             moduleId: resolvedModuleId,
@@ -1584,11 +1588,20 @@ export const getExamQuestionsHandler = async (req: Request, res: Response) => {
           optionsEn = q.optionsEn;
         }
       }
+      let sections: any[] = [];
+      if (q.explanation) {
+        try {
+          const parsed = JSON.parse(q.explanation);
+          if (Array.isArray(parsed)) {
+            sections = role === 'STUDENT' ? parsed.filter((s: any) => s && s.type === 'HINT') : parsed;
+          }
+        } catch {}
+      }
       if (role === 'STUDENT') {
         const { correctAnswer, explanation, explanationEn, ...rest } = q;
-        return { ...rest, options, optionsEn };
+        return { ...rest, options, optionsEn, sections };
       }
-      return { ...q, options, optionsEn };
+      return { ...q, options, optionsEn, sections };
     });
 
     res.json({ questions: parsedQuestions });
@@ -1695,7 +1708,20 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
             optionsEn = q.optionsEn;
           }
         }
-        return { ...q, options, optionsEn };
+        let sections: any[] = [];
+        if (q.explanation) {
+          try {
+            const parsed = JSON.parse(q.explanation);
+            if (Array.isArray(parsed)) {
+              sections = role === 'STUDENT' ? parsed.filter((s: any) => s && s.type === 'HINT') : parsed;
+            }
+          } catch {}
+        }
+        if (role === 'STUDENT') {
+          const { correctAnswer, explanation, explanationEn, ...rest } = q;
+          return { ...rest, options, optionsEn, sections };
+        }
+        return { ...q, options, optionsEn, sections };
       });
     }
 
@@ -3325,6 +3351,8 @@ export const getExamHandler31 = async (req: Request, res: Response) => {
         estimatedTime: question.estimatedTime,
         explanation: question.explanation,
         explanationEn: question.explanationEn,
+        hint: question.hint,
+        hintEn: question.hintEn,
         imageUrl: question.imageUrl,
         order: question.order,
       })),
@@ -3409,6 +3437,8 @@ export const postExamHandler32 = async (req: Request, res: Response) => {
             estimatedTime: question.estimatedTime ? sanitizeHtml(question.estimatedTime) : null,
             explanation: formatExplanation(question),
             explanationEn: question.explanationEn ? extractAndSaveBase64Images(sanitizeHtml(question.explanationEn)) : null,
+            hint: question.hint ? sanitizeHtml(question.hint) : null,
+            hintEn: question.hintEn ? sanitizeHtml(question.hintEn) : null,
             imageUrl: question.imageUrl ? extractAndSaveBase64Images(sanitizeHtml(question.imageUrl)) : null,
             order: question.order !== undefined ? parseInt(question.order) : index,
           }
@@ -3645,6 +3675,107 @@ export const postExamHandler25 = async (req: Request, res: Response) => {
   }
 };
 
+export const postMoveSingleQuestionHandler = async (req: Request, res: Response) => {
+  try {
+    const { id, questionId } = req.params;
+    const { targetExamId, targetModuleId, targetSubExamId } = req.body;
+
+    if (!targetExamId) {
+      return res.status(400).json({ error: 'targetExamId is required' });
+    }
+
+    const sourceExam = await prisma.exam.findUnique({
+      where: { id },
+      include: { schools: { select: { id: true } } }
+    });
+    if (!sourceExam) {
+      return res.status(404).json({ error: 'Source exam not found' });
+    }
+
+    if (!await canManageExam((req as any).user, sourceExam)) {
+      return res.status(403).json({ error: 'Access denied: You do not have permission to move questions from this exam.' });
+    }
+
+    const question = await prisma.question.findFirst({
+      where: { id: questionId, examId: id, deletedAt: null }
+    });
+    if (!question) {
+      return res.status(404).json({ error: 'Question not found in source exam' });
+    }
+
+    const targetExam = await prisma.exam.findUnique({
+      where: { id: targetExamId },
+      include: { schools: { select: { id: true } } }
+    });
+    if (!targetExam) {
+      return res.status(404).json({ error: 'Target exam not found' });
+    }
+
+    if (!await canManageExam((req as any).user, targetExam)) {
+      return res.status(403).json({ error: 'Access denied: You do not have permission to move content into this exam.' });
+    }
+
+    let finalModuleId = targetModuleId || null;
+    let finalSubExamId = targetSubExamId || null;
+
+    if (finalModuleId) {
+      const moduleExists = await prisma.examModule.findFirst({
+        where: { id: finalModuleId, examId: targetExamId }
+      });
+      if (!moduleExists) {
+        return res.status(400).json({ error: 'Target module not found in target exam' });
+      }
+    }
+
+    if (finalSubExamId) {
+      const subExamExists = await prisma.subExam.findFirst({
+        where: {
+          id: finalSubExamId,
+          ...(finalModuleId ? { moduleId: finalModuleId } : { module: { examId: targetExamId } })
+        }
+      });
+      if (!subExamExists) {
+        return res.status(400).json({ error: 'Target sub-exam not found in target exam or module' });
+      }
+      if (!finalModuleId) {
+        finalModuleId = subExamExists.moduleId;
+      }
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const lastQuestion = await tx.question.findFirst({
+        where: {
+          examId: targetExamId,
+          moduleId: finalModuleId,
+          subExamId: finalSubExamId,
+          deletedAt: null
+        },
+        orderBy: { order: 'desc' },
+        select: { order: true }
+      });
+      const newOrder = (lastQuestion?.order ?? -1) + 1;
+
+      return tx.question.update({
+        where: { id: questionId },
+        data: {
+          examId: targetExamId,
+          moduleId: finalModuleId,
+          subExamId: finalSubExamId,
+          order: newOrder
+        }
+      });
+    });
+
+    res.json({
+      success: true,
+      message: 'Question moved successfully',
+      question: result
+    });
+  } catch (error: any) {
+    console.error('Error moving single question:', error);
+    res.status(500).json({ error: error?.message || 'Failed to move question' });
+  }
+};
 
 export const postExamHandler26 = async (req: Request, res: Response) => {
   try {

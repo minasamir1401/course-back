@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS "hint" TEXT;
+ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS "hintEn" TEXT;

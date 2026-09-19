@@ -236,6 +236,8 @@ CREATE TABLE "Question" (
     "estimatedTime" TEXT,
     "explanation" TEXT,
     "explanationEn" TEXT,
+    "hint" TEXT,
+    "hintEn" TEXT,
     "imageUrl" TEXT,
     "order" INTEGER NOT NULL DEFAULT 0,
     "deletedAt" TIMESTAMP(3),

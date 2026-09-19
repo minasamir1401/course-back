@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 const QUESTION_FIELDS = ['text', 'textEn', 'type', 'options', 'optionsEn', 'correctAnswer', 'points', 'xpPoints', 'skill',
   'learningOutcome', 'indicator', 'videoUrl', 'level', 'dok', 'cognitive', 'course', 'section', 'domain',
   'standard', 'subskill', 'microSkill', 'gradeTarget', 'errorPattern', 'estimatedTime', 'explanation', 'explanationEn',
-  'imageUrl', 'moduleId', 'subExamId', 'order'] as const;
+  'hint', 'hintEn', 'imageUrl', 'moduleId', 'subExamId', 'order'] as const;
 export async function persistQuestionUpdates(tx: any, examId: string, updates: Array<{ id: string; data: Record<string, any> }>) {
   if (!updates.length) return;
   const columns = Prisma.raw(QUESTION_FIELDS.map(field => `"${field}"`).join(', '));

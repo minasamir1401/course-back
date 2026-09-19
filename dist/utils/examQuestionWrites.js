@@ -15,7 +15,7 @@ const client_1 = require("@prisma/client");
 const QUESTION_FIELDS = ['text', 'textEn', 'type', 'options', 'optionsEn', 'correctAnswer', 'points', 'xpPoints', 'skill',
     'learningOutcome', 'indicator', 'videoUrl', 'level', 'dok', 'cognitive', 'course', 'section', 'domain',
     'standard', 'subskill', 'microSkill', 'gradeTarget', 'errorPattern', 'estimatedTime', 'explanation', 'explanationEn',
-    'imageUrl', 'moduleId', 'subExamId', 'order'];
+    'hint', 'hintEn', 'imageUrl', 'moduleId', 'subExamId', 'order'];
 function persistQuestionUpdates(tx, examId, updates) {
     return __awaiter(this, void 0, void 0, function* () {
         if (!updates.length)

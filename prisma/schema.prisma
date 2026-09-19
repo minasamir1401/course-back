@@ -329,6 +329,8 @@ model Question {
   estimatedTime   String?
   explanation     String?
   explanationEn   String?
+  hint            String?
+  hintEn          String?
   imageUrl        String?
   order           Int             @default(0)
   deletedAt       DateTime?

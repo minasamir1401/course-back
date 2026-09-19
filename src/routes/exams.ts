@@ -144,6 +144,7 @@ router.delete('/api/exam-folders/:id', verifyToken, checkRole(['SUPER_ADMIN']), 
 router.post('/api/exams/:id/move-standalone-questions', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.postExamHandler25);
 
 router.post('/api/exams/:id/move-to-module', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.postExamHandler26);
+router.post('/api/exams/:id/questions/:questionId/move', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.postMoveSingleQuestionHandler);
 
 
 
