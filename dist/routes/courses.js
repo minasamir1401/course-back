@@ -86,9 +86,9 @@ router.patch("/api/lessons/:id/attachments", auth_1.verifyToken, (0, auth_1.chec
 //    This is the ONLY endpoint that deletes lessons.
 //    The course-update endpoint (PUT) will NEVER delete lessons automatically.
 // ════════════════════════════════════════════════════════════════════
-router.delete("/api/lessons/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.deleteCourseHandler21);
+router.delete("/api/lessons/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"]), coursesController.deleteCourseHandler21);
 // Delete Course
-router.delete("/api/school/courses/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN"]), coursesController.deleteCourseHandler22);
+router.delete("/api/school/courses/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN", "SCHOOL_ADMIN"]), coursesController.deleteCourseHandler22);
 // ════════════════════════════════════════════════════════════════════
 // ♻️ RESTORE FROM TRASH (The Nile) & TRASH LIST
 // ════════════════════════════════════════════════════════════════════

@@ -60,6 +60,7 @@ exports.postCourseHandler32 = exports.getCourseHandler31 = exports.getCourseHand
 exports.previewDeduplication = previewDeduplication;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
+const systemSettings_service_1 = require("../services/systemSettings.service");
 const shared_1 = require("../shared");
 const db_backup_1 = require("../lib/db-backup");
 const trashDeleteHelper_1 = require("../services/trashDeleteHelper");
@@ -1111,6 +1112,14 @@ const deleteCourseHandler21 = (req, res) => __awaiter(void 0, void 0, void 0, fu
         });
         if (!lesson)
             return res.status(404).json({ error: "Lesson not found" });
+        if (req.user.role !== "SUPER_ADMIN") {
+            const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+            if (!allowed) {
+                return res.status(403).json({
+                    error: "حذف المحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.",
+                });
+            }
+        }
         if (req.user.role === "SCHOOL_ADMIN" &&
             ((_a = lesson.course) === null || _a === void 0 ? void 0 : _a.schoolId) !== req.user.schoolId) {
             return res
@@ -1160,6 +1169,14 @@ const deleteCourseHandler22 = (req, res) => __awaiter(void 0, void 0, void 0, fu
             return res.json({
                 message: "Ghost course cleared from cloud cache successfully",
             });
+        }
+        if (req.user.role !== "SUPER_ADMIN") {
+            const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+            if (!allowed) {
+                return res.status(403).json({
+                    error: "حذف المحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.",
+                });
+            }
         }
         if (req.user.role === "SCHOOL_ADMIN" &&
             existingCourse.schoolId !== req.user.schoolId) {

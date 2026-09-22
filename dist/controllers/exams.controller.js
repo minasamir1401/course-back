@@ -37,6 +37,7 @@ const examErrorLog_1 = require("../utils/examErrorLog");
 const examDeletionPolicy_1 = require("../utils/examDeletionPolicy");
 const examPassingScore_1 = require("../utils/examPassingScore");
 const examAccessPolicy_1 = require("../utils/examAccessPolicy");
+const systemSettings_service_1 = require("../services/systemSettings.service");
 const shared_1 = require("../shared");
 const normalizeBackendDok = (raw) => {
     if (!raw)
@@ -599,17 +600,18 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
             return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
         }
-        // Removing an unsaved draft row is a client-only operation. Every persisted
-        // question deletion is reserved for SUPER_ADMIN, regardless of ownership or answers.
         const requestedDeletes = (deletedQuestionIds || []).filter((value) => typeof value === 'string');
         if (requestedDeletes.length > 0 && req.user.role !== 'SUPER_ADMIN') {
-            const persistedDeletes = yield prisma_1.default.question.count({
-                where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
-            });
-            if (persistedDeletes > 0) {
-                return res.status(403).json({
-                    error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.'
+            const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+            if (!allowed) {
+                const persistedDeletes = yield prisma_1.default.question.count({
+                    where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
                 });
+                if (persistedDeletes > 0) {
+                    return res.status(403).json({
+                        error: 'حذف الأسئلة والمحتوى معطّل حالياً من قِبل الإدارة العامة. Content and question deletion is currently disabled by Super Admin.'
+                    });
+                }
             }
         }
         const updateData = {
@@ -1195,6 +1197,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
 });
 exports.putExamHandler5 = putExamHandler5;
 const deleteExamHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id } = req.params;
         const exam = yield prisma_1.default.exam.findUnique({
@@ -1203,6 +1206,15 @@ const deleteExamHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         });
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
+        // Global deletion policy check
+        if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'SUPER_ADMIN') {
+            const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+            if (!allowed) {
+                return res.status(403).json({
+                    error: 'حذف المحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.'
+                });
+            }
+        }
         // Authorization check
         if (req.user.role === 'SCHOOL_ADMIN' && exam.schoolId !== req.user.schoolId) {
             return res.status(403).json({ error: 'Access denied: You can only delete exams belonging to your school.' });
@@ -2308,7 +2320,10 @@ const deleteExamHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, func
     try {
         const { id, moduleId } = req.params;
         if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'SUPER_ADMIN') {
-            return res.status(403).json({ error: 'Access denied: Only Super Admin can delete modules.' });
+            const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+            if (!allowed) {
+                return res.status(403).json({ error: 'حذف الموديولات والمحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.' });
+            }
         }
         const exam = yield prisma_1.default.exam.findUnique({ where: { id }, include: { schools: { select: { id: true } } } });
         if (!exam)
@@ -2496,7 +2511,10 @@ const deleteExamHandler30 = (req, res) => __awaiter(void 0, void 0, void 0, func
     try {
         const { id, moduleId, subExamId } = req.params;
         if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'SUPER_ADMIN') {
-            return res.status(403).json({ error: 'Access denied: Only Super Admin can delete exams.' });
+            const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+            if (!allowed) {
+                return res.status(403).json({ error: 'حذف الاختبارات والمحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.' });
+            }
         }
         const parent = yield prisma_1.default.examModule.findFirst({ where: { id: moduleId, examId: id }, select: { id: true } });
         if (!parent)

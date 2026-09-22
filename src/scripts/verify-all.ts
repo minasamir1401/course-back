@@ -1,5 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
+// @ts-ignore
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import fs from 'fs';
@@ -103,7 +104,7 @@ async function runVerification() {
     let testSchool = await prisma.school.findFirst();
     if (!testSchool) {
       testSchool = await prisma.school.create({
-        data: { name: 'Test School', nameEn: 'Test School', subdomain: 'test-school-verify' }
+        data: { name: 'Test School', subdomain: 'test-school-verify' }
       });
     }
     schoolAdminUser = await prisma.user.create({
@@ -268,7 +269,7 @@ async function runVerification() {
   const testExam = await prisma.exam.create({
     data: {
       title: 'Deletion Policy Test Exam',
-      school: { connect: { id: schoolAdminUser.schoolId } },
+      school: { connect: { id: schoolAdminUser.schoolId! } },
       creator: { connect: { id: schoolAdminUser.id } },
       grade: 'GRADE_1',
       passingScore: 50,
@@ -310,7 +311,7 @@ async function runVerification() {
   const testCourse = await prisma.course.create({
     data: {
       title: 'Deletion Policy Test Course',
-      school: { connect: { id: schoolAdminUser.schoolId } },
+      school: { connect: { id: schoolAdminUser.schoolId! } },
       creator: { connect: { id: schoolAdminUser.id } },
       subject: 'MATH',
       grade: 'GRADE_1',

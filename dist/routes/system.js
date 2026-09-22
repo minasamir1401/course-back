@@ -17,6 +17,7 @@ const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
 const shared_1 = require("../shared");
 const translation_service_1 = require("../services/translation.service");
+const systemSettings_service_1 = require("../services/systemSettings.service");
 const router = (0, express_1.Router)();
 // ==========================================
 // SYSTEM & HEALTH API
@@ -33,6 +34,29 @@ router.get('/api/health', (_req, res) => __awaiter(void 0, void 0, void 0, funct
             error: 'Database unavailable',
             timestamp: new Date().toISOString(),
         });
+    }
+}));
+// Settings: Content & Questions Deletion Policy
+router.get('/api/system/settings/deletion-policy', auth_1.verifyToken, (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const allowContentDeletion = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+        return res.json({ allowContentDeletion });
+    }
+    catch (error) {
+        return res.status(500).json({ error: 'Failed to retrieve deletion policy', details: error.message });
+    }
+}));
+router.put('/api/system/settings/deletion-policy', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { allowContentDeletion } = req.body;
+        if (typeof allowContentDeletion !== 'boolean') {
+            return res.status(400).json({ error: 'allowContentDeletion must be a boolean.' });
+        }
+        const updated = yield (0, systemSettings_service_1.setContentDeletionAllowed)(allowContentDeletion);
+        return res.json({ success: true, allowContentDeletion: updated });
+    }
+    catch (error) {
+        return res.status(500).json({ error: 'Failed to update deletion policy', details: error.message });
     }
 }));
 // Serve uploaded files as static assets with Cache-Control
