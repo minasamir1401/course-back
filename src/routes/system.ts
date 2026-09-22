@@ -15,6 +15,7 @@ import {
   normalizeLegacyCourses, persistUpload
 } from '../shared';
 import { translateSingleText, translateBatchTexts } from '../services/translation.service';
+import { isContentDeletionAllowed, setContentDeletionAllowed } from '../services/systemSettings.service';
 
 declare global {
   namespace Express {
@@ -41,6 +42,29 @@ router.get('/api/health', async (_req: Request, res: Response) => {
       error: 'Database unavailable',
       timestamp: new Date().toISOString(),
     });
+  }
+});
+
+// Settings: Content & Questions Deletion Policy
+router.get('/api/system/settings/deletion-policy', verifyToken, async (_req: Request, res: Response) => {
+  try {
+    const allowContentDeletion = await isContentDeletionAllowed();
+    return res.json({ allowContentDeletion });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Failed to retrieve deletion policy', details: error.message });
+  }
+});
+
+router.put('/api/system/settings/deletion-policy', verifyToken, checkRole(['SUPER_ADMIN']), async (req: Request, res: Response) => {
+  try {
+    const { allowContentDeletion } = req.body;
+    if (typeof allowContentDeletion !== 'boolean') {
+      return res.status(400).json({ error: 'allowContentDeletion must be a boolean.' });
+    }
+    const updated = await setContentDeletionAllowed(allowContentDeletion);
+    return res.json({ success: true, allowContentDeletion: updated });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Failed to update deletion policy', details: error.message });
   }
 });
 

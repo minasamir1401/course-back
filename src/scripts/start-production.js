@@ -122,6 +122,15 @@ async function reconcileCriticalSchema() {
     await client.query('CREATE INDEX IF NOT EXISTS "SubExam_moduleId_order_idx" ON "SubExam"("moduleId", "order");');
     await client.query('DROP INDEX IF EXISTS "SubExam_moduleId_idx";');
 
+    // 4. SystemSetting table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "SystemSetting" (
+        "key" TEXT PRIMARY KEY,
+        "value" TEXT NOT NULL,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     console.log('[startup] Critical schema elements reconciled successfully.');
   } catch (err) {
     console.warn('[startup] Non-fatal schema reconciliation notice:', err.message || err);

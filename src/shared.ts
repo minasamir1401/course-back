@@ -37,8 +37,9 @@ export const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 export const ALLOWED_MIME_TYPES = new Set([
-  // Images (raster only for XSS prevention)
-  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  // Images (raster and modern mobile formats)
+  'image/jpeg', 'image/jpg', 'image/png', 'image/x-png', 'image/webp', 'image/gif',
+  'image/heic', 'image/heif', 'image/avif', 'image/bmp', 'image/pjpeg',
   // Documents & Data
   'application/pdf',
   'application/json',
@@ -59,7 +60,11 @@ const multerStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {
     const mimeMap: Record<string, string> = {
-      'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+      'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/pjpeg': '.jpg',
+      'image/png': '.png', 'image/x-png': '.png',
+      'image/webp': '.webp', 'image/gif': '.gif',
+      'image/heic': '.heic', 'image/heif': '.heif', 'image/avif': '.avif',
+      'image/bmp': '.bmp',
       'application/pdf': '.pdf', 'application/json': '.json', 'text/csv': '.csv',
       'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
       'application/vnd.ms-powerpoint': '.ppt',
@@ -70,7 +75,8 @@ const multerStorage = multer.diskStorage({
       'application/zip': '.zip', 'application/x-zip-compressed': '.zip',
       'video/mp4': '.mp4', 'video/webm': '.webm', 'video/ogg': '.ogg'
     };
-    const ext = mimeMap[file.mimetype] || path.extname(file.originalname).toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase().trim();
+    const ext = mimeMap[mime] || path.extname(file.originalname).toLowerCase();
     const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}${ext}`;
     cb(null, uniqueName);
   }
@@ -81,7 +87,8 @@ export const multerUpload = multer({
   // 150 MB max limit prevents heap memory exhaustion (OOM) and protects VPS disk space
   limits: { fileSize: 150 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    const mime = (file.mimetype || '').toLowerCase().trim();
+    if (ALLOWED_MIME_TYPES.has(mime)) {
       cb(null, true);
     } else {
       cb(new Error(`File type not allowed: ${file.mimetype}`));

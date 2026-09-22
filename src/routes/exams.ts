@@ -74,7 +74,7 @@ router.post('/api/exams/:id/clean-duplicates', verifyToken, checkRole(['SUPER_AD
 router.post('/api/admin/clean-duplicates', verifyToken, checkRole(['SUPER_ADMIN']), examsController.cleanDuplicatesHandler);
 
 // 4. Get Exam Details
-router.delete('/api/exams/:id', verifyToken, checkRole(['SUPER_ADMIN']), examsController.deleteExamHandler6);
+router.delete('/api/exams/:id', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), examsController.deleteExamHandler6);
 
 // Restore Exam
 router.post('/api/admin/exams/:id/restore', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN']), examsController.postExamHandler7);
@@ -118,11 +118,11 @@ router.post('/api/exams/:id/modules', verifyToken, checkRole(['SUPER_ADMIN', 'SC
 
 router.put('/api/exams/:id/modules/:moduleId', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler19);
 
-router.delete('/api/exams/:id/modules/:moduleId', verifyToken, checkRole(['SUPER_ADMIN']), requireManagedExam, examsController.deleteExamHandler20);
+router.delete('/api/exams/:id/modules/:moduleId', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.deleteExamHandler20);
 router.post('/api/exams/:id/modules/:moduleId/exams', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postExamHandler28);
 router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/collect-questions', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postExamHandler33);
 router.put('/api/exams/:id/modules/:moduleId/exams/:subExamId', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.putExamHandler29);
-router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', verifyToken, checkRole(['SUPER_ADMIN']), requireManagedExam, examsController.deleteExamHandler30);
+router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.deleteExamHandler30);
 router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/move', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveSubExamHandler);
 router.post('/api/exams/:id/modules/:moduleId/exams/move-all', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveAllSubExamsHandler);
 router.post('/api/exams/:id/modules/:moduleId/move-module', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveModuleHandler);

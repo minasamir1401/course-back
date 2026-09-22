@@ -230,7 +230,7 @@ router.patch(
 router.delete(
   "/api/lessons/:id",
   verifyToken,
-  checkRole(["SUPER_ADMIN"]),
+  checkRole(["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"]),
   coursesController.deleteCourseHandler21,
 );
 
@@ -238,7 +238,7 @@ router.delete(
 router.delete(
   "/api/school/courses/:id",
   verifyToken,
-  checkRole(["SUPER_ADMIN"]),
+  checkRole(["SUPER_ADMIN", "SCHOOL_ADMIN"]),
   coursesController.deleteCourseHandler22,
 );
 

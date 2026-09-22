@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../lib/prisma";
 import { verifyToken, checkRole, checkSchoolAccess } from "../middleware/auth";
+import { isContentDeletionAllowed } from "../services/systemSettings.service";
 import {
   JWT_SECRET,
   JWT_EXPIRES_IN,
@@ -1237,6 +1238,15 @@ export const deleteCourseHandler21 = async (req: any, res: any) => {
       });
       if (!lesson) return res.status(404).json({ error: "Lesson not found" });
 
+      if (req.user.role !== "SUPER_ADMIN") {
+        const allowed = await isContentDeletionAllowed();
+        if (!allowed) {
+          return res.status(403).json({
+            error: "حذف المحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.",
+          });
+        }
+      }
+
       if (
         req.user.role === "SCHOOL_ADMIN" &&
         lesson.course?.schoolId !== req.user.schoolId
@@ -1297,6 +1307,15 @@ export const deleteCourseHandler22 = async (req: any, res: any) => {
         return res.json({
           message: "Ghost course cleared from cloud cache successfully",
         });
+      }
+
+      if (req.user.role !== "SUPER_ADMIN") {
+        const allowed = await isContentDeletionAllowed();
+        if (!allowed) {
+          return res.status(403).json({
+            error: "حذف المحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.",
+          });
+        }
       }
 
       if (

@@ -622,3 +622,9 @@ model SubExam {
   
   @@index([moduleId, order])
 }
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

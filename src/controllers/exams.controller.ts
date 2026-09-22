@@ -19,6 +19,7 @@ import { logExamRequestError } from '../utils/examErrorLog';
 import { resolveExplicitExamDeletions } from '../utils/examDeletionPolicy';
 import { resolvePassingScore } from '../utils/examPassingScore';
 import { canManageExamRecord, resolveExamSchoolUpdate } from '../utils/examAccessPolicy';
+import { isContentDeletionAllowed } from '../services/systemSettings.service';
 import {
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields,
   isAnswerCorrect, sanitizeDeep, sanitizeUser, sanitizeExam, multerUpload,
@@ -648,17 +649,18 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
     if (deletedQuestionIds !== undefined && !Array.isArray(deletedQuestionIds)) {
       return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
     }
-    // Removing an unsaved draft row is a client-only operation. Every persisted
-    // question deletion is reserved for SUPER_ADMIN, regardless of ownership or answers.
     const requestedDeletes = (deletedQuestionIds || []).filter((value: unknown): value is string => typeof value === 'string');
     if (requestedDeletes.length > 0 && (req as any).user.role !== 'SUPER_ADMIN') {
-      const persistedDeletes = await prisma.question.count({
-        where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
-      });
-      if (persistedDeletes > 0) {
-        return res.status(403).json({
-          error: 'حذف الأسئلة المحفوظة متاح للسوبر أدمن فقط. Only Super Admin can delete saved questions.'
+      const allowed = await isContentDeletionAllowed();
+      if (!allowed) {
+        const persistedDeletes = await prisma.question.count({
+          where: { examId: id, id: { in: requestedDeletes }, deletedAt: null }
         });
+        if (persistedDeletes > 0) {
+          return res.status(403).json({
+            error: 'حذف الأسئلة والمحتوى معطّل حالياً من قِبل الإدارة العامة. Content and question deletion is currently disabled by Super Admin.'
+          });
+        }
       }
     }
 
@@ -1317,6 +1319,16 @@ export const deleteExamHandler6 = async (req: Request, res: Response) => {
     });
 
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
+
+    // Global deletion policy check
+    if ((req as any).user?.role !== 'SUPER_ADMIN') {
+      const allowed = await isContentDeletionAllowed();
+      if (!allowed) {
+        return res.status(403).json({
+          error: 'حذف المحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.'
+        });
+      }
+    }
 
     // Authorization check
     if ((req as any).user.role === 'SCHOOL_ADMIN' && exam.schoolId !== (req as any).user.schoolId) {
@@ -2539,7 +2551,10 @@ export const deleteExamHandler20 = async (req: Request, res: Response) => {
     const { id, moduleId } = req.params;
 
     if ((req as any).user?.role !== 'SUPER_ADMIN') {
-      return res.status(403).json({ error: 'Access denied: Only Super Admin can delete modules.' });
+      const allowed = await isContentDeletionAllowed();
+      if (!allowed) {
+        return res.status(403).json({ error: 'حذف الموديولات والمحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.' });
+      }
     }
 
     const exam = await prisma.exam.findUnique({ where: { id }, include: { schools: { select: { id: true } } } });
@@ -2726,7 +2741,10 @@ export const deleteExamHandler30 = async (req: Request, res: Response) => {
     const { id, moduleId, subExamId } = req.params;
 
     if ((req as any).user?.role !== 'SUPER_ADMIN') {
-      return res.status(403).json({ error: 'Access denied: Only Super Admin can delete exams.' });
+      const allowed = await isContentDeletionAllowed();
+      if (!allowed) {
+        return res.status(403).json({ error: 'حذف الاختبارات والمحتوى معطّل حالياً من قِبل الإدارة العامة. Content deletion is currently disabled by Super Admin.' });
+      }
     }
 
     const parent = await prisma.examModule.findFirst({ where: { id: moduleId, examId: id }, select: { id: true } });
