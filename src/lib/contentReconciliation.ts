@@ -110,6 +110,19 @@ const extractText = (fingerprint: string): string => {
   }
 };
 
+const extractOptions = (fingerprint: string): string => {
+  try {
+    const parsed = JSON.parse(fingerprint);
+    const opts = parsed?.options || parsed?.optionsEn;
+    if (Array.isArray(opts)) {
+      return opts.map((o: any) => String(o || '').trim().toLowerCase()).sort().join('|');
+    }
+    return typeof opts === 'string' ? opts.trim().toLowerCase() : '';
+  } catch {
+    return '';
+  }
+};
+
 export const pickReconciliationCandidate = (
   existing: ReconciliationCandidate[],
   incomingOrder: number,
@@ -127,10 +140,19 @@ export const pickReconciliationCandidate = (
   // 1.5 Match by core signature (handles HTML tag differences, question number prefixes)
   const incomingText = extractText(incomingFingerprint);
   const incomingSig = getQuestionCoreSignature(incomingText);
+  const incomingOpts = extractOptions(incomingFingerprint);
   if (incomingSig && incomingSig.length >= 5) {
     const sigMatch = available.find((item) => {
-      const itemSig = getQuestionCoreSignature(extractText(item.fingerprint));
-      return itemSig === incomingSig || robustNormalizeText(extractText(item.fingerprint)) === robustNormalizeText(incomingText);
+      const itemText = extractText(item.fingerprint);
+      const itemSig = getQuestionCoreSignature(itemText);
+      const isTextMatch = itemSig === incomingSig || robustNormalizeText(itemText) === robustNormalizeText(incomingText);
+      if (!isTextMatch) return false;
+
+      const itemOpts = extractOptions(item.fingerprint);
+      if (incomingOpts && itemOpts && incomingOpts !== itemOpts) {
+        return false;
+      }
+      return true;
     });
     if (sigMatch) return sigMatch;
   }

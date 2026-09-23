@@ -8,6 +8,12 @@ import type { Request, Response, NextFunction } from 'express';
 const models = Prisma.dmmf.datamodel.models;
 const delegate = (name: string) => name[0].toLowerCase() + name.slice(1);
 const keyFor = (name: string) => name === 'XPHistory' ? 'xpHistory' : delegate(name);
+const getPkField = (model: any): string => {
+  const pk = model.fields?.find((f: any) => f.isId);
+  if (pk) return pk.name;
+  if (model.primaryKey?.fields?.length) return model.primaryKey.fields[0];
+  return 'id';
+};
 const transactionOptions = { isolationLevel: 'RepeatableRead', maxWait: 30000, timeout: 300000 };
 export const BACKUPS_DIR = path.resolve(process.env.BACKUPS_DIR || path.join(process.cwd(), 'private', 'backups'));
 
@@ -51,21 +57,22 @@ async function visitSnapshot(db: any, consume: (key: string, rows: any[], first:
     for (const model of models) {
       const key = keyFor(model.name);
       counts[key] = 0;
+      const pkField = getPkField(model);
       let cursor: string | undefined;
       let first = true;
       do {
         // Explicit filter defeats the application client's default soft-delete scope.
         const where = model.fields.some(f => f.name === 'deletedAt') ? { deletedAt: {} } : undefined;
         const rows = await tx[delegate(model.name)].findMany({
-          take: 250, orderBy: { id: 'asc' }, where,
-          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+          take: 250, orderBy: { [pkField]: 'asc' }, where,
+          ...(cursor ? { cursor: { [pkField]: cursor }, skip: 1 } : {}),
           ...(['Course', 'Exam'].includes(model.name) ? { include: { schools: { select: { id: true } } } } : {})
         });
         await consume(key, rows, first);
         first = false;
         counts[key] += rows.length;
         if (rows.length < 250) break;
-        cursor = rows[rows.length - 1].id;
+        cursor = rows[rows.length - 1][pkField];
       } while (true);
     }
   }, transactionOptions);
@@ -127,7 +134,13 @@ export async function restoreSnapshot(db: any, backup: any) {
   if (backup.version === '2.0') {
     for (const model of models) {
       const key = keyFor(model.name);
-      if (!Array.isArray(data[key])) throw new Error(`Incomplete backup: missing ${key}`);
+      if (!Array.isArray(data[key])) {
+        if (model.name === 'SystemSetting') {
+          data[key] = [];
+        } else {
+          throw new Error(`Incomplete backup: missing ${key}`);
+        }
+      }
       if (backup.counts?.[key] !== undefined && backup.counts[key] !== data[key].length) throw new Error(`Backup count mismatch: ${key}`);
     }
   } else {
@@ -138,10 +151,12 @@ export async function restoreSnapshot(db: any, backup: any) {
   for (const model of models) {
     const rows = data[keyFor(model.name)];
     if (rows !== undefined && !Array.isArray(rows)) throw new Error(`Invalid collection ${model.name}`);
+    const pkField = getPkField(model);
     const ids = new Set();
     for (const row of rows || []) {
-      if (!row || typeof row.id !== 'string' || !row.id || ids.has(row.id)) throw new Error(`Invalid or duplicate ${model.name} ID`);
-      ids.add(row.id);
+      const rowId = row?.[pkField];
+      if (!row || typeof rowId !== 'string' || !rowId || ids.has(rowId)) throw new Error(`Invalid or duplicate ${model.name} ID`);
+      ids.add(rowId);
     }
   }
   // Only required foreign keys determine initial order. All nullable links are applied after every row exists.
@@ -154,13 +169,15 @@ export async function restoreSnapshot(db: any, backup: any) {
     ordered.push(remaining.splice(index, 1)[0]);
   }
   await db.$transaction(async (tx: any) => {
-    const deferred: { model: string; id: string; fields: any }[] = [];
+    const deferred: { model: string; pkField: string; id: string; fields: any }[] = [];
     for (const model of ordered) {
+      const pkField = getPkField(model);
       const nullableFKs = new Set(model.fields.filter(f => f.kind === 'object' && !f.isRequired).flatMap(f => f.relationFromFields || []));
       for (const row of data[keyFor(model.name)] || []) {
+        const rowId = row[pkField];
         const payload: any = {};
         const links: any = {};
-        for (const field of model.fields.filter(f => f.kind !== 'object' && f.name !== 'id')) {
+        for (const field of model.fields.filter(f => f.kind !== 'object' && f.name !== pkField)) {
           if (row[field.name] === undefined) continue;
           let value = row[field.name];
           if (field.type === 'DateTime' && value !== null) {
@@ -172,19 +189,23 @@ export async function restoreSnapshot(db: any, backup: any) {
           else payload[field.name] = value;
         }
         if (model.name === 'User' && !payload.password) {
-          const existing = await tx.user.findUnique({ where: { id: row.id } });
+          const existing = await tx.user.findUnique({ where: { id: rowId } });
           if (!existing) throw new Error('Incomplete legacy user: password missing; cannot recreate account');
         }
-        await tx[delegate(model.name)].upsert({ where: { id: row.id }, create: { id: row.id, ...payload }, update: payload });
+        await tx[delegate(model.name)].upsert({
+          where: { [pkField]: rowId },
+          create: { [pkField]: rowId, ...payload },
+          update: payload
+        });
         if (Object.keys(links).length) {
           if (payload.updatedAt !== undefined) links.updatedAt = payload.updatedAt;
-          deferred.push({ model: delegate(model.name), id: row.id, fields: links });
+          deferred.push({ model: delegate(model.name), pkField, id: rowId, fields: links });
         }
       }
     }
     for (const row of deferred) {
       try {
-        await tx[row.model].update({ where: { id: row.id }, data: row.fields });
+        await tx[row.model].update({ where: { [row.pkField]: row.id }, data: row.fields });
       } catch (linkErr: any) {
         console.warn(`[Snapshot Restore] Non-fatal link update warning on ${row.model} (${row.id}):`, linkErr.message);
       }

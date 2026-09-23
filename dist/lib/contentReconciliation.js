@@ -110,6 +110,19 @@ const extractText = (fingerprint) => {
         return '';
     }
 };
+const extractOptions = (fingerprint) => {
+    try {
+        const parsed = JSON.parse(fingerprint);
+        const opts = (parsed === null || parsed === void 0 ? void 0 : parsed.options) || (parsed === null || parsed === void 0 ? void 0 : parsed.optionsEn);
+        if (Array.isArray(opts)) {
+            return opts.map((o) => String(o || '').trim().toLowerCase()).sort().join('|');
+        }
+        return typeof opts === 'string' ? opts.trim().toLowerCase() : '';
+    }
+    catch (_a) {
+        return '';
+    }
+};
 const pickReconciliationCandidate = (existing, incomingOrder, incomingFingerprint, reservedIds, usedIds, allowOrderFallback = false) => {
     const available = existing.filter((item) => !reservedIds.has(item.id) && !usedIds.has(item.id));
     // 1. Exact fingerprint match (always safe)
@@ -119,10 +132,19 @@ const pickReconciliationCandidate = (existing, incomingOrder, incomingFingerprin
     // 1.5 Match by core signature (handles HTML tag differences, question number prefixes)
     const incomingText = extractText(incomingFingerprint);
     const incomingSig = (0, shared_1.getQuestionCoreSignature)(incomingText);
+    const incomingOpts = extractOptions(incomingFingerprint);
     if (incomingSig && incomingSig.length >= 5) {
         const sigMatch = available.find((item) => {
-            const itemSig = (0, shared_1.getQuestionCoreSignature)(extractText(item.fingerprint));
-            return itemSig === incomingSig || (0, shared_1.robustNormalizeText)(extractText(item.fingerprint)) === (0, shared_1.robustNormalizeText)(incomingText);
+            const itemText = extractText(item.fingerprint);
+            const itemSig = (0, shared_1.getQuestionCoreSignature)(itemText);
+            const isTextMatch = itemSig === incomingSig || (0, shared_1.robustNormalizeText)(itemText) === (0, shared_1.robustNormalizeText)(incomingText);
+            if (!isTextMatch)
+                return false;
+            const itemOpts = extractOptions(item.fingerprint);
+            if (incomingOpts && itemOpts && incomingOpts !== itemOpts) {
+                return false;
+            }
+            return true;
         });
         if (sigMatch)
             return sigMatch;

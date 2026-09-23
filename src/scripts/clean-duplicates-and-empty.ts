@@ -25,14 +25,10 @@ export function normalizeQuestionText(text: string | null | undefined): string {
 export function getQuestionCoreSignature(text: string | null | undefined, optionsRaw?: string | null | undefined): string {
   const clean = normalizeQuestionText(text);
   const alphaCore = clean.replace(/[^a-z0-9\u0600-\u06FF]/gi, '');
-  if (alphaCore.length >= 15) {
-    // 35 chars of alphanumeric text is overwhelmingly unique and ignores end-of-string differences
-    return `core:${alphaCore.substring(0, 35)}`;
-  }
-  if (clean.length > 0) {
-    return `text:${clean}`;
-  }
-  return '';
+  const optPart = normalizeOptions(optionsRaw);
+  const base = alphaCore.length >= 5 ? alphaCore : clean;
+  if (!base) return '';
+  return optPart ? `core:${base}::opt:${optPart}` : `core:${base}`;
 }
 
 export function normalizeOptions(optionsRaw: string | null | undefined): string {

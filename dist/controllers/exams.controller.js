@@ -1094,11 +1094,14 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                         // This handles autosave races and prefix variations (e.g. Question 1 (College Board):)
                         const incomingSig = (0, shared_1.getQuestionCoreSignature)(qData.text);
                         const incomingTextNorm = (0, shared_1.robustNormalizeText)(qData.text);
+                        const incomingOptionsNorm = typeof qData.options === 'string' ? qData.options : JSON.stringify(qData.options || []);
                         const textDuplicateId = (incomingSig.length >= 5 || incomingTextNorm.length > 5)
                             ? (_d = existingQuestionsWithExp.find((eq) => !usedExistingIds.has(eq.id) &&
                                 !explicitDeletedIds.has(eq.id) &&
                                 ((incomingSig.length >= 5 && (0, shared_1.getQuestionCoreSignature)(eq.text) === incomingSig) ||
-                                    (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm))) === null || _d === void 0 ? void 0 : _d.id
+                                    (0, shared_1.robustNormalizeText)(eq.text) === incomingTextNorm) &&
+                                (!eq.imageUrl || !qData.imageUrl || eq.imageUrl === qData.imageUrl) &&
+                                (!eq.options || !incomingOptionsNorm || eq.options === incomingOptionsNorm))) === null || _d === void 0 ? void 0 : _d.id
                             : undefined;
                         if (textDuplicateId) {
                             console.warn(`[Exam Update] Prevented duplicate question creation – updating existing row instead: ${textDuplicateId}`);

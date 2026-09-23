@@ -8,11 +8,17 @@ const { Prisma } = require('@prisma/client');
 const source = path.resolve(__dirname, '../../../src/lib/backupSnapshot.ts');
 const api = require('fs').existsSync(source) ? require(source) : {};
 const models = Prisma.dmmf.datamodel.models;
+const getPk = m => m.fields.find(f => f.isId)?.name || 'id';
 function database(seed = {}) {
-  const tables = Object.fromEntries(models.map(m => [m.name[0].toLowerCase() + m.name.slice(1), new Map((seed[m.name[0].toLowerCase() + m.name.slice(1)] || []).map(r => [r.id, structuredClone(r)]))]));
+  const tables = Object.fromEntries(models.map(m => {
+    const pk = getPk(m);
+    const key = m.name[0].toLowerCase() + m.name.slice(1);
+    return [key, new Map((seed[key] || []).map(r => [r[pk] || r.id, structuredClone(r)]))];
+  }));
   let txActive = false;
   const tx = {};
   for (const m of models) {
+    const pk = getPk(m);
     const key = m.name[0].toLowerCase() + m.name.slice(1);
     const validate = row => {
       for (const rel of m.fields.filter(f => f.kind === 'object' && f.relationFromFields?.length)) {
@@ -20,21 +26,27 @@ function database(seed = {}) {
         if (value != null && !tables[rel.type[0].toLowerCase() + rel.type.slice(1)].has(value)) throw Error(`Missing parent ${rel.type}/${value} for ${m.name}`);
       }
     };
-    tx[key] = { findUnique: async ({where}) => tables[key].get(where.id),
+    tx[key] = { findUnique: async ({where}) => tables[key].get(where[pk] || where.id),
       findMany: async args => {
         if (!txActive) throw Error('Read outside snapshot');
         if (!args?.take || args.take > 500) throw Error('Unbounded read');
         if (m.fields.some(f => f.name === 'deletedAt') && args.where?.deletedAt === undefined) throw Error('Soft deletes excluded');
-        let rows = [...tables[key].values()].sort((a,b) => a.id.localeCompare(b.id));
-        if (args.cursor) rows = rows.slice(rows.findIndex(r => r.id === args.cursor.id) + 1);
+        if (args.orderBy?.[pk] === undefined) throw Error(`Missing orderBy on ${pk}`);
+        let rows = [...tables[key].values()].sort((a,b) => String(a[pk] || a.id).localeCompare(String(b[pk] || b.id)));
+        if (args.cursor) {
+          const cursorVal = args.cursor[pk] || args.cursor.id;
+          rows = rows.slice(rows.findIndex(r => (r[pk] || r.id) === cursorVal) + 1);
+        }
         return rows.slice(0, args.take).map(r => structuredClone(r));
       },
       upsert: async ({where,create,update}) => {
-        const row = {...(tables[key].get(where.id) || create), ...update};
-        validate(row); tables[key].set(where.id,row); return row;
+        const id = where[pk] || where.id;
+        const row = {...(tables[key].get(id) || create), ...update};
+        validate(row); tables[key].set(id,row); return row;
       },
       update: async ({where,data}) => {
-        const row = {...tables[key].get(where.id),...data}; validate(row); tables[key].set(where.id,row); return row;
+        const id = where[pk] || where.id;
+        const row = {...tables[key].get(id),...data}; validate(row); tables[key].set(id,row); return row;
       }
     };
   }
@@ -56,7 +68,8 @@ const fixture = {
   question:[{id:'q',examId:'e',moduleId:'a-child',subExamId:'sub',text:'Question',options:'[]',correctAnswer:'1',xpPoints:21,indicator:'kept'}],
   examSubmission:[{id:'es',examId:'e',subExamId:'sub',userId:'child',totalScore:1}],
   studentAnswer:[{id:'sa',submissionId:'es',questionId:'q',userId:'child',selectedAnswer:'1',isCorrect:true}],
-  deletedTombstone:[{id:'dt',entityType:'lesson',entityId:'deleted',deletedAt:'2025-01-01T00:00:00Z'}]
+  deletedTombstone:[{id:'dt',entityType:'lesson',entityId:'deleted',deletedAt:'2025-01-01T00:00:00Z'}],
+  systemSetting:[{key:'allow_content_deletion',value:'false'}]
 };
 let dir;
 beforeEach(async () => {dir=await fs.mkdtemp(path.join(os.tmpdir(),'backup-test-'));});
@@ -71,6 +84,8 @@ test('full snapshot streams every schema model and restores parent cycles and al
   expect(payload.data.examFolder).toHaveLength(1);
   expect(payload.data.user[0].password).toBe('hash');
   expect(payload.data.course[0].deletedAt).toBe('2025-01-01T00:00:00Z');
+  expect(payload.data.systemSetting).toHaveLength(1);
+  expect(payload.data.systemSetting[0].key).toBe('allow_content_deletion');
   const target=database();
   await api.restoreSnapshot(target,payload);
   expect(target.tables.question.get('q')).toMatchObject({moduleId:'a-child',subExamId:'sub',xpPoints:21,indicator:'kept'});
@@ -78,6 +93,7 @@ test('full snapshot streams every schema model and restores parent cycles and al
   expect(target.tables.examModule.get('a-child').parentModuleId).toBe('z-parent');
   expect(target.tables.studentAnswer.size).toBe(1);
   expect(target.tables.course.get('c').schools).toEqual({set:[{id:'s'}]});
+  expect(target.tables.systemSetting.get('allow_content_deletion')).toMatchObject({key:'allow_content_deletion',value:'false'});
 });
 test('read failure leaves no published snapshot or temporary file', async () => {
   expect(typeof api.writeFullSnapshot).toBe('function');

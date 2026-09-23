@@ -1201,13 +1201,16 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
             // This handles autosave races and prefix variations (e.g. Question 1 (College Board):)
             const incomingSig = getQuestionCoreSignature(qData.text);
             const incomingTextNorm = robustNormalizeText(qData.text);
+            const incomingOptionsNorm = typeof qData.options === 'string' ? qData.options : JSON.stringify(qData.options || []);
             const textDuplicateId = (incomingSig.length >= 5 || incomingTextNorm.length > 5)
               ? existingQuestionsWithExp.find(
                 (eq) =>
                   !usedExistingIds.has(eq.id) &&
                   !explicitDeletedIds.has(eq.id) &&
                   ((incomingSig.length >= 5 && getQuestionCoreSignature(eq.text) === incomingSig) ||
-                   robustNormalizeText(eq.text) === incomingTextNorm),
+                   robustNormalizeText(eq.text) === incomingTextNorm) &&
+                  (!eq.imageUrl || !qData.imageUrl || eq.imageUrl === qData.imageUrl) &&
+                  (!eq.options || !incomingOptionsNorm || eq.options === incomingOptionsNorm),
               )?.id
               : undefined;
 

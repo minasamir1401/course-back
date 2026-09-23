@@ -1231,6 +1231,6 @@ export const robustNormalizeText = (t: string | null | undefined): string => {
 export const getQuestionCoreSignature = (t: string | null | undefined): string => {
   const norm = robustNormalizeText(t);
   const alpha = norm.replace(/[^a-z0-9\u0600-\u06FF]/gi, '');
-  return alpha.length >= 15 ? alpha.substring(0, 35) : norm;
+  return alpha.length >= 5 ? alpha : norm;
 };
 
