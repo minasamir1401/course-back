@@ -13,6 +13,9 @@ import {
   checkRateLimit,
   resetRateLimit,
   isRedisActive,
+  getSharedLoginAttempts,
+  recordSharedLoginFailure,
+  clearSharedLoginAttempts,
 } from './lib/redis';
 import {
   persistUpload,
@@ -1121,26 +1124,19 @@ export const invalidateCache = async (key: string): Promise<void> => {
  * Uses Redis as the single source of truth when active to prevent cross-worker bypass in PM2.
  */
 export const isLoginRateLimited = async (ip: string): Promise<{ isLimited: boolean; remainingMinutes: number }> => {
-  const redisKey = `ratelimit:login:${ip}`;
+  const redisKey = `ratelimit:login:v2:${ip}`;
   const now = Date.now();
 
-  // 1. Check Redis first as authoritative shared store across cluster workers
-  if (isRedisActive()) {
-    try {
-      const redisStatus = await cacheGetJSON<{ count: number; firstAttemptAt: number }>(redisKey);
-      if (redisStatus) {
-        if (redisStatus.count >= LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < LOGIN_WINDOW_MS)) {
-          const remainingMs = LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
-          return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
-        }
-        return { isLimited: false, remainingMinutes: 0 };
-      }
-    } catch {
-      // Fallback to local memory on Redis error
-    }
+  if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+    const { count, remainingMs } = await getSharedLoginAttempts(redisKey);
+    return { isLimited: count >= LOGIN_MAX_ATTEMPTS, remainingMinutes: Math.ceil(remainingMs / 60000) };
   }
 
-  // 2. Fallback to local memory
+  if (process.env.NODE_ENV === 'production' && process.env.NODE_APP_INSTANCE !== undefined && process.env.LOGIN_RATE_LIMIT_SINGLE_WORKER !== '1') {
+    throw new Error('Shared login rate limit is unavailable');
+  }
+
+  // Local counting is safe only for a single worker.
   const localAttempt = loginAttempts.get(ip);
   if (localAttempt && localAttempt.count >= LOGIN_MAX_ATTEMPTS && (now - localAttempt.firstAttemptAt < LOGIN_WINDOW_MS)) {
     const remainingMs = LOGIN_WINDOW_MS - (now - localAttempt.firstAttemptAt);
@@ -1152,30 +1148,18 @@ export const isLoginRateLimited = async (ip: string): Promise<{ isLimited: boole
 
 export const recordFailedLogin = async (ip: string): Promise<void> => {
   const now = Date.now();
-  const redisKey = `ratelimit:login:${ip}`;
+  const redisKey = `ratelimit:login:v2:${ip}`;
 
-  // 1. If Redis is active, atomically synchronize across PM2 workers
-  if (isRedisActive()) {
-    try {
-      const redisStatus = await cacheGetJSON<{ count: number; firstAttemptAt: number }>(redisKey);
-      let newCount = 1;
-      let firstAttemptAt = now;
-
-      if (redisStatus && now - redisStatus.firstAttemptAt <= LOGIN_WINDOW_MS) {
-        newCount = redisStatus.count + 1;
-        firstAttemptAt = redisStatus.firstAttemptAt;
-      }
-
-      const windowSecs = Math.floor(LOGIN_WINDOW_MS / 1000);
-      await cacheSetJSON(redisKey, { count: newCount, firstAttemptAt }, windowSecs);
-      loginAttempts.set(ip, { count: newCount, firstAttemptAt });
-      return;
-    } catch {
-      // Fallback to local memory on Redis error
-    }
+  if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+    await recordSharedLoginFailure(redisKey, LOGIN_WINDOW_MS);
+    return;
   }
 
-  // 2. Fallback to local memory
+  if (process.env.NODE_ENV === 'production' && process.env.NODE_APP_INSTANCE !== undefined && process.env.LOGIN_RATE_LIMIT_SINGLE_WORKER !== '1') {
+    throw new Error('Shared login rate limit is unavailable');
+  }
+
+  // Single-worker fallback.
   const localAttempt = loginAttempts.get(ip);
   let newCount = 1;
   let firstAttemptAt = now;
@@ -1189,8 +1173,8 @@ export const recordFailedLogin = async (ip: string): Promise<void> => {
 
 export const clearLoginAttempts = async (ip: string): Promise<void> => {
   loginAttempts.delete(ip);
-  if (isRedisActive()) {
-    await cacheDelete(`ratelimit:login:${ip}`).catch(() => {});
+  if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+    await clearSharedLoginAttempts(`ratelimit:login:v2:${ip}`);
   }
 };
 

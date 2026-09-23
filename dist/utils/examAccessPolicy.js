@@ -25,8 +25,6 @@ const canManageExamRecord = (user, exam, hasTeacherCourseAccess) => {
         return true;
     if (exam.isCentral)
         return false;
-    if (exam.creatorId && exam.creatorId === user.id)
-        return true;
     const belongsToSchool = Boolean(user.schoolId && (exam.schoolId === user.schoolId ||
         (exam.schools || []).some((school) => school.id === user.schoolId)));
     if (!belongsToSchool)
@@ -34,7 +32,7 @@ const canManageExamRecord = (user, exam, hasTeacherCourseAccess) => {
     if (user.role === 'SCHOOL_ADMIN')
         return true;
     if (user.role === 'TEACHER') {
-        return Boolean(hasTeacherCourseAccess);
+        return Boolean((exam.creatorId && exam.creatorId === user.id) || hasTeacherCourseAccess);
     }
     return false;
 };

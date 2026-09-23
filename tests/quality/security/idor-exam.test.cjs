@@ -275,8 +275,11 @@ describe('IDOR & multi-tenant isolation with real seeded fixtures', () => {
     test('teacher without course assignment cannot access or mutate foreign exam', () => {
       expect(canManageExamRecord(teacherA, schoolBExam, false)).toBe(false);
 
-      const ownExam = { ...schoolBExam, creatorId: 'teacher-a' };
-      expect(canManageExamRecord(teacherA, ownExam, false)).toBe(true);
+      const foreignExamCreatedBeforeTransfer = { ...schoolBExam, creatorId: 'teacher-a' };
+      expect(canManageExamRecord(teacherA, foreignExamCreatedBeforeTransfer, false)).toBe(false);
+
+      const ownSchoolExam = { ...schoolAExam, creatorId: 'teacher-a' };
+      expect(canManageExamRecord(teacherA, ownSchoolExam, false)).toBe(true);
     });
 
     test('super administrator retains global administrative access across all schools', () => {

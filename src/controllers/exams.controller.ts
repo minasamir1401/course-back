@@ -1334,8 +1334,8 @@ export const deleteExamHandler6 = async (req: Request, res: Response) => {
     }
 
     // Authorization check
-    if ((req as any).user.role === 'SCHOOL_ADMIN' && exam.schoolId !== (req as any).user.schoolId) {
-      return res.status(403).json({ error: 'Access denied: You can only delete exams belonging to your school.' });
+    if (!await canManageExam((req as any).user, exam)) {
+      return res.status(403).json({ error: 'Access denied: You do not have permission to delete this exam.' });
     }
 
     await prisma.exam.update({
@@ -1345,7 +1345,7 @@ export const deleteExamHandler6 = async (req: Request, res: Response) => {
 
     res.json({ message: 'Exam deleted successfully' });
   } catch (error) {
-    console.error(' Delete error:', error);
+    console.error('[Exam Delete Error]', error);
     res.status(500).json({ error: 'Error deleting exam' });
   }
 };

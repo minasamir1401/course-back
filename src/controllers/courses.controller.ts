@@ -1247,19 +1247,32 @@ export const deleteCourseHandler21 = async (req: any, res: any) => {
         }
       }
 
-      if (
-        req.user.role === "SCHOOL_ADMIN" &&
-        lesson.course?.schoolId !== req.user.schoolId
-      ) {
-        return res
-          .status(403)
-          .json({
-            error:
-              "Access denied: You can only delete lessons belonging to your school.",
+      if (req.user.role === "SCHOOL_ADMIN") {
+        if (!lesson.course?.schoolId || lesson.course.schoolId !== req.user.schoolId) {
+          return res.status(403).json({
+            error: "Access denied: You can only delete lessons belonging to your school.",
           });
+        }
       }
 
-      // ♻️ Soft Delete: move to trash instead of hard delete to preserve student data
+      if (req.user.role === "TEACHER") {
+        if (!lesson.courseId || !lesson.course?.schoolId || lesson.course.schoolId !== req.user.schoolId) {
+          return res.status(403).json({
+            error: "Access denied: You can only delete lessons belonging to your school.",
+          });
+        }
+        const teacherCourse = await prisma.teacherCourse.findFirst({
+          where: { teacherId: req.user.id, courseId: lesson.courseId },
+          select: { id: true },
+        });
+        if (!teacherCourse) {
+          return res.status(403).json({
+            error: "Access denied: You are not assigned to this course.",
+          });
+        }
+      }
+
+      // Soft Delete: move to trash instead of hard delete to preserve student data
       await prisma.lesson.update({
         where: { id },
         data: { deletedAt: new Date() },
@@ -1270,7 +1283,7 @@ export const deleteCourseHandler21 = async (req: any, res: any) => {
       await recordDeletedLesson(id, lesson.title);
 
       console.log(
-        `🗑️  [Lesson Delete] SUPER_ADMIN manually deleted lesson "${lesson.title}" (${id}) from course ${lesson.courseId}`,
+        `[Lesson Delete] User ${req.user?.id} (${req.user?.role}) manually deleted lesson "${lesson.title}" (${id}) from course ${lesson.courseId}`,
       );
 
       // Sync course to cloud after manual deletion

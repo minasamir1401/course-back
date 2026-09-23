@@ -13,6 +13,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isRedisActive = void 0;
+exports.getSharedLoginAttempts = getSharedLoginAttempts;
+exports.recordSharedLoginFailure = recordSharedLoginFailure;
+exports.clearSharedLoginAttempts = clearSharedLoginAttempts;
 exports.cacheGet = cacheGet;
 exports.cacheSet = cacheSet;
 exports.cacheDelete = cacheDelete;
@@ -93,6 +96,47 @@ else {
 }
 const isRedisActive = () => isRedisConnected && redisClient !== null;
 exports.isRedisActive = isRedisActive;
+// Login lockout must never silently fall back to a per-worker Map in a cluster.
+// Keep the increment and initial expiry in one Redis operation.
+function getSharedLoginAttempts(key) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!isRedisConnected || !redisClient)
+            throw new Error('Shared login rate limit is unavailable');
+        try {
+            const result = yield redisClient.multi().get(key).pttl(key).exec();
+            if (!result || result.some(([error]) => error))
+                throw new Error('Redis read failed');
+            return { count: Number(result[0][1] || 0), remainingMs: Math.max(0, Number(result[1][1])) };
+        }
+        catch (_a) {
+            throw new Error('Shared login rate limit is unavailable');
+        }
+    });
+}
+function recordSharedLoginFailure(key, windowMs) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!isRedisConnected || !redisClient)
+            throw new Error('Shared login rate limit is unavailable');
+        try {
+            yield redisClient.eval("local count = redis.call('INCR', KEYS[1]); if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]); end; return count", 1, key, String(windowMs));
+        }
+        catch (_a) {
+            throw new Error('Shared login rate limit is unavailable');
+        }
+    });
+}
+function clearSharedLoginAttempts(key) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!isRedisConnected || !redisClient)
+            throw new Error('Shared login rate limit is unavailable');
+        try {
+            yield redisClient.del(key);
+        }
+        catch (_a) {
+            throw new Error('Shared login rate limit is unavailable');
+        }
+    });
+}
 /**
  * Get string value from Redis or local memory store
  */

@@ -1098,7 +1098,7 @@ const patchCourseHandler20 = (req, res) => __awaiter(void 0, void 0, void 0, fun
 });
 exports.patchCourseHandler20 = patchCourseHandler20;
 const deleteCourseHandler21 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
+    var _a, _b, _c, _d;
     try {
         const { id } = req.params;
         const lesson = yield prisma_1.default.lesson.findUnique({
@@ -1120,15 +1120,30 @@ const deleteCourseHandler21 = (req, res) => __awaiter(void 0, void 0, void 0, fu
                 });
             }
         }
-        if (req.user.role === "SCHOOL_ADMIN" &&
-            ((_a = lesson.course) === null || _a === void 0 ? void 0 : _a.schoolId) !== req.user.schoolId) {
-            return res
-                .status(403)
-                .json({
-                error: "Access denied: You can only delete lessons belonging to your school.",
-            });
+        if (req.user.role === "SCHOOL_ADMIN") {
+            if (!((_a = lesson.course) === null || _a === void 0 ? void 0 : _a.schoolId) || lesson.course.schoolId !== req.user.schoolId) {
+                return res.status(403).json({
+                    error: "Access denied: You can only delete lessons belonging to your school.",
+                });
+            }
         }
-        // ♻️ Soft Delete: move to trash instead of hard delete to preserve student data
+        if (req.user.role === "TEACHER") {
+            if (!lesson.courseId || !((_b = lesson.course) === null || _b === void 0 ? void 0 : _b.schoolId) || lesson.course.schoolId !== req.user.schoolId) {
+                return res.status(403).json({
+                    error: "Access denied: You can only delete lessons belonging to your school.",
+                });
+            }
+            const teacherCourse = yield prisma_1.default.teacherCourse.findFirst({
+                where: { teacherId: req.user.id, courseId: lesson.courseId },
+                select: { id: true },
+            });
+            if (!teacherCourse) {
+                return res.status(403).json({
+                    error: "Access denied: You are not assigned to this course.",
+                });
+            }
+        }
+        // Soft Delete: move to trash instead of hard delete to preserve student data
         yield prisma_1.default.lesson.update({
             where: { id },
             data: { deletedAt: new Date() },
@@ -1136,7 +1151,7 @@ const deleteCourseHandler21 = (req, res) => __awaiter(void 0, void 0, void 0, fu
         // We no longer need tombstones for soft-deleted items, but keeping it for legacy support
         const { recordDeletedLesson } = yield Promise.resolve().then(() => __importStar(require("../lib/tombstones")));
         yield recordDeletedLesson(id, lesson.title);
-        console.log(`🗑️  [Lesson Delete] SUPER_ADMIN manually deleted lesson "${lesson.title}" (${id}) from course ${lesson.courseId}`);
+        console.log(`[Lesson Delete] User ${(_c = req.user) === null || _c === void 0 ? void 0 : _c.id} (${(_d = req.user) === null || _d === void 0 ? void 0 : _d.role}) manually deleted lesson "${lesson.title}" (${id}) from course ${lesson.courseId}`);
         // Sync course to cloud after manual deletion
         if (lesson.courseId) {
             const { syncCourseToCloud } = yield Promise.resolve().then(() => __importStar(require("../lib/db-backup")));

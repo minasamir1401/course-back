@@ -1219,8 +1219,8 @@ const deleteExamHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
             }
         }
         // Authorization check
-        if (req.user.role === 'SCHOOL_ADMIN' && exam.schoolId !== req.user.schoolId) {
-            return res.status(403).json({ error: 'Access denied: You can only delete exams belonging to your school.' });
+        if (!(yield (0, exports.canManageExam)(req.user, exam))) {
+            return res.status(403).json({ error: 'Access denied: You do not have permission to delete this exam.' });
         }
         yield prisma_1.default.exam.update({
             where: { id },
@@ -1229,7 +1229,7 @@ const deleteExamHandler6 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         res.json({ message: 'Exam deleted successfully' });
     }
     catch (error) {
-        console.error(' Delete error:', error);
+        console.error('[Exam Delete Error]', error);
         res.status(500).json({ error: 'Error deleting exam' });
     }
 });

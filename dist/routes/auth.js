@@ -175,6 +175,9 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         });
     }
     catch (error) {
+        if ((error === null || error === void 0 ? void 0 : error.message) === 'Shared login rate limit is unavailable') {
+            return res.status(503).json({ error: 'Login is temporarily unavailable. Please try again shortly.' });
+        }
         res.status(500).json({ error: 'Internal server error.', details: error.message });
     }
 }));

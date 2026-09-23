@@ -86,6 +86,40 @@ if (REDIS_URL) {
 
 export const isRedisActive = (): boolean => isRedisConnected && redisClient !== null;
 
+// Login lockout must never silently fall back to a per-worker Map in a cluster.
+// Keep the increment and initial expiry in one Redis operation.
+export async function getSharedLoginAttempts(key: string): Promise<{ count: number; remainingMs: number }> {
+  if (!isRedisConnected || !redisClient) throw new Error('Shared login rate limit is unavailable');
+  try {
+    const result = await redisClient.multi().get(key).pttl(key).exec();
+    if (!result || result.some(([error]) => error)) throw new Error('Redis read failed');
+    return { count: Number(result[0][1] || 0), remainingMs: Math.max(0, Number(result[1][1])) };
+  } catch {
+    throw new Error('Shared login rate limit is unavailable');
+  }
+}
+
+export async function recordSharedLoginFailure(key: string, windowMs: number): Promise<void> {
+  if (!isRedisConnected || !redisClient) throw new Error('Shared login rate limit is unavailable');
+  try {
+    await redisClient.eval(
+      "local count = redis.call('INCR', KEYS[1]); if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]); end; return count",
+      1, key, String(windowMs),
+    );
+  } catch {
+    throw new Error('Shared login rate limit is unavailable');
+  }
+}
+
+export async function clearSharedLoginAttempts(key: string): Promise<void> {
+  if (!isRedisConnected || !redisClient) throw new Error('Shared login rate limit is unavailable');
+  try {
+    await redisClient.del(key);
+  } catch {
+    throw new Error('Shared login rate limit is unavailable');
+  }
+}
+
 /**
  * Get string value from Redis or local memory store
  */

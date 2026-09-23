@@ -204,6 +204,9 @@ router.post('/api/auth/login', async (req: any, res: any) => {
       }
     });
   } catch (error: any) {
+    if (error?.message === 'Shared login rate limit is unavailable') {
+      return res.status(503).json({ error: 'Login is temporarily unavailable. Please try again shortly.' });
+    }
     res.status(500).json({ error: 'Internal server error.', details: error.message });
   }
 });

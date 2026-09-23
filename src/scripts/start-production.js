@@ -201,7 +201,12 @@ async function main() {
   }
 
 
-  await spawnCommand('pm2-runtime', ['start', 'dist/index.js', '-i', 'max', '--max-memory-restart', '1024M']);
+  // A process-local login lockout cannot protect a PM2 cluster.
+  const hasSharedRateLimit = Boolean(process.env.REDIS_URL?.trim());
+  const instances = hasSharedRateLimit ? 'max' : '1';
+  process.env.LOGIN_RATE_LIMIT_SINGLE_WORKER = hasSharedRateLimit ? '0' : '1';
+  if (!hasSharedRateLimit) console.warn('[startup] REDIS_URL is missing; starting one worker to preserve login lockout.');
+  await spawnCommand('pm2-runtime', ['start', 'dist/index.js', '-i', instances, '--max-memory-restart', '1024M']);
 }
 
 main().catch((error) => {

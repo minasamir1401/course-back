@@ -1145,25 +1145,16 @@ exports.invalidateCache = invalidateCache;
  * Uses Redis as the single source of truth when active to prevent cross-worker bypass in PM2.
  */
 const isLoginRateLimited = (ip) => __awaiter(void 0, void 0, void 0, function* () {
-    const redisKey = `ratelimit:login:${ip}`;
+    const redisKey = `ratelimit:login:v2:${ip}`;
     const now = Date.now();
-    // 1. Check Redis first as authoritative shared store across cluster workers
-    if ((0, redis_1.isRedisActive)()) {
-        try {
-            const redisStatus = yield (0, redis_1.cacheGetJSON)(redisKey);
-            if (redisStatus) {
-                if (redisStatus.count >= exports.LOGIN_MAX_ATTEMPTS && (now - redisStatus.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
-                    const remainingMs = exports.LOGIN_WINDOW_MS - (now - redisStatus.firstAttemptAt);
-                    return { isLimited: true, remainingMinutes: Math.ceil(remainingMs / 60000) };
-                }
-                return { isLimited: false, remainingMinutes: 0 };
-            }
-        }
-        catch (_a) {
-            // Fallback to local memory on Redis error
-        }
+    if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+        const { count, remainingMs } = yield (0, redis_1.getSharedLoginAttempts)(redisKey);
+        return { isLimited: count >= exports.LOGIN_MAX_ATTEMPTS, remainingMinutes: Math.ceil(remainingMs / 60000) };
     }
-    // 2. Fallback to local memory
+    if (process.env.NODE_ENV === 'production' && process.env.NODE_APP_INSTANCE !== undefined && process.env.LOGIN_RATE_LIMIT_SINGLE_WORKER !== '1') {
+        throw new Error('Shared login rate limit is unavailable');
+    }
+    // Local counting is safe only for a single worker.
     const localAttempt = exports.loginAttempts.get(ip);
     if (localAttempt && localAttempt.count >= exports.LOGIN_MAX_ATTEMPTS && (now - localAttempt.firstAttemptAt < exports.LOGIN_WINDOW_MS)) {
         const remainingMs = exports.LOGIN_WINDOW_MS - (now - localAttempt.firstAttemptAt);
@@ -1174,27 +1165,15 @@ const isLoginRateLimited = (ip) => __awaiter(void 0, void 0, void 0, function* (
 exports.isLoginRateLimited = isLoginRateLimited;
 const recordFailedLogin = (ip) => __awaiter(void 0, void 0, void 0, function* () {
     const now = Date.now();
-    const redisKey = `ratelimit:login:${ip}`;
-    // 1. If Redis is active, atomically synchronize across PM2 workers
-    if ((0, redis_1.isRedisActive)()) {
-        try {
-            const redisStatus = yield (0, redis_1.cacheGetJSON)(redisKey);
-            let newCount = 1;
-            let firstAttemptAt = now;
-            if (redisStatus && now - redisStatus.firstAttemptAt <= exports.LOGIN_WINDOW_MS) {
-                newCount = redisStatus.count + 1;
-                firstAttemptAt = redisStatus.firstAttemptAt;
-            }
-            const windowSecs = Math.floor(exports.LOGIN_WINDOW_MS / 1000);
-            yield (0, redis_1.cacheSetJSON)(redisKey, { count: newCount, firstAttemptAt }, windowSecs);
-            exports.loginAttempts.set(ip, { count: newCount, firstAttemptAt });
-            return;
-        }
-        catch (_a) {
-            // Fallback to local memory on Redis error
-        }
+    const redisKey = `ratelimit:login:v2:${ip}`;
+    if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+        yield (0, redis_1.recordSharedLoginFailure)(redisKey, exports.LOGIN_WINDOW_MS);
+        return;
     }
-    // 2. Fallback to local memory
+    if (process.env.NODE_ENV === 'production' && process.env.NODE_APP_INSTANCE !== undefined && process.env.LOGIN_RATE_LIMIT_SINGLE_WORKER !== '1') {
+        throw new Error('Shared login rate limit is unavailable');
+    }
+    // Single-worker fallback.
     const localAttempt = exports.loginAttempts.get(ip);
     let newCount = 1;
     let firstAttemptAt = now;
@@ -1207,8 +1186,8 @@ const recordFailedLogin = (ip) => __awaiter(void 0, void 0, void 0, function* ()
 exports.recordFailedLogin = recordFailedLogin;
 const clearLoginAttempts = (ip) => __awaiter(void 0, void 0, void 0, function* () {
     exports.loginAttempts.delete(ip);
-    if ((0, redis_1.isRedisActive)()) {
-        yield (0, redis_1.cacheDelete)(`ratelimit:login:${ip}`).catch(() => { });
+    if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+        yield (0, redis_1.clearSharedLoginAttempts)(`ratelimit:login:v2:${ip}`);
     }
 });
 exports.clearLoginAttempts = clearLoginAttempts;
