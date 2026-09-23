@@ -24,7 +24,9 @@ function createArchive(format: any, options?: any) {
 
 const BACKUP_DB_URL = process.env.BACKUP_DB_URL as string;
 if (!BACKUP_DB_URL && process.env.ENABLE_CLOUD_BACKUP === 'true') {
-  console.log("[Backup] Cloud backup not configured; local backups will be used instead.");
+  if (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0') {
+    console.log("[Backup] Cloud backup not configured; local backups will be used instead.");
+  }
 }
 
 // Cloud backup is opt-in so a secondary database outage cannot affect LMS availability.

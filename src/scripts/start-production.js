@@ -94,7 +94,7 @@ async function reconcileCriticalSchema() {
     const { connectionString } = getPostgresConnection();
     client = new Client({ connectionString });
     await client.connect();
-    console.log('[startup] Reconciling critical schema columns, constraints, and indexes...');
+    console.log('[startup] Verifying schema integrity and prerequisites...');
 
     // 1. Question hint columns
     await client.query('ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS "hint" TEXT;');
@@ -131,9 +131,9 @@ async function reconcileCriticalSchema() {
       );
     `);
 
-    console.log('[startup] Critical schema elements reconciled successfully.');
+    console.log('[startup] Schema integrity verified.');
   } catch (err) {
-    console.warn('[startup] Non-fatal schema reconciliation notice:', err.message || err);
+    console.warn('[startup] Schema pre-flight notice:', err.message || err);
   } finally {
     if (client) {
       await client.end().catch(() => undefined);

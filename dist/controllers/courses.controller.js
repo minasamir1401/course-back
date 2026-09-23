@@ -1585,7 +1585,6 @@ const getCourseHandler28 = (req, res) => __awaiter(void 0, void 0, void 0, funct
         const where = filters.length > 0
             ? { AND: filters, deletedAt: null }
             : { deletedAt: null };
-        console.time("courses-db-query");
         const [courses, total] = yield Promise.all([
             prisma_1.default.course.findMany({
                 where,
@@ -1616,7 +1615,6 @@ const getCourseHandler28 = (req, res) => __awaiter(void 0, void 0, void 0, funct
             }),
             prisma_1.default.course.count({ where }),
         ]);
-        console.timeEnd("courses-db-query");
         // Return database courses directly without merging unverified ghost cloud backups
         const responseData = {
             courses,

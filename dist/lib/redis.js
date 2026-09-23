@@ -70,7 +70,7 @@ if (REDIS_URL) {
         });
         redisClient.on('error', (err) => {
             if (isRedisConnected) {
-                console.warn('⚠️ [Redis] Connection lost. Falling back to in-memory store:', err.message);
+                console.warn('[Redis] Connection lost. Falling back to in-memory store:', err.message);
             }
             isRedisConnected = false;
         });
@@ -79,16 +79,16 @@ if (REDIS_URL) {
         });
     }
     catch (error) {
-        console.warn('⚠️ [Redis] Failed to initialize client, using in-memory store:', error.message);
+        console.warn('[Redis] Failed to initialize client, using in-memory store:', error.message);
         redisClient = null;
         isRedisConnected = false;
     }
 }
 else {
     // Graceful notification in development / standalone
-    // In production with PM2, REDIS_URL is strongly recommended
+    // In production with PM2, REDIS_URL is optional for cross-worker store
     if (process.env.NODE_ENV === 'production' && process.env.NODE_APP_INSTANCE === '0') {
-        console.warn('⚠️ [Cluster Notice] REDIS_URL not set in production. PM2 workers are using local memory stores.');
+        console.log('[Cluster] REDIS_URL not configured. Operating with local memory stores.');
     }
 }
 const isRedisActive = () => isRedisConnected && redisClient !== null;
@@ -139,7 +139,7 @@ function cacheSet(key, value, ttlSeconds) {
                 }
             }
             catch (err) {
-                console.warn(`⚠️ [Redis] cacheSet error for key "${key}":`, err.message);
+                console.warn(`[Redis] cacheSet error for key "${key}":`, err.message);
             }
         }
     });
@@ -155,7 +155,7 @@ function cacheDelete(key) {
                 yield redisClient.del(key);
             }
             catch (err) {
-                console.warn(`⚠️ [Redis] cacheDelete error for key "${key}":`, err.message);
+                console.warn(`[Redis] cacheDelete error for key "${key}":`, err.message);
             }
         }
     });

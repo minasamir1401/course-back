@@ -1751,7 +1751,6 @@ export const getCourseHandler28 = async (req: any, res: any) => {
         ? { AND: filters, deletedAt: null }
         : { deletedAt: null };
 
-    console.time("courses-db-query");
     const [courses, total] = await Promise.all([
       prisma.course.findMany({
         where,
@@ -1782,7 +1781,6 @@ export const getCourseHandler28 = async (req: any, res: any) => {
       }),
       prisma.course.count({ where }),
     ]);
-    console.timeEnd("courses-db-query");
 
     // Return database courses directly without merging unverified ghost cloud backups
     const responseData = {

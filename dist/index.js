@@ -79,7 +79,7 @@ if (process.env.SENTRY_DSN) {
         environment: process.env.NODE_ENV || 'development',
         tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
     });
-    console.log('✅ [Sentry] Error monitoring and performance tracing initialized.');
+    console.log('[Sentry] Error monitoring and performance tracing initialized.');
 }
 const shared_1 = require("./shared");
 const backups_1 = require("./routes/backups");
@@ -316,18 +316,18 @@ function initializeStartupData() {
                         role: 'SUPER_ADMIN'
                     }
                 });
-                console.log('✅ Super admin account created for the first time.');
+                console.log('[Admin] Super admin account created for the first time.');
             }
             else {
-                console.log('✅ Super admin already exists — password preserved as-is.');
+                console.log('[Admin] Super admin verified - password preserved as-is.');
             }
             const shouldSeedDummyData = process.env.SEED_DUMMY_DATA === 'true';
             const schoolCount = yield prisma_1.default.school.count();
             const courseCount = yield prisma_1.default.course.count();
             const examCount = yield prisma_1.default.exam.count();
-            console.log(`📊 Current Database Stats - Schools: ${schoolCount}, Courses: ${courseCount}, Exams: ${examCount}`);
+            console.log(`[Database] Current Stats - Schools: ${schoolCount}, Courses: ${courseCount}, Exams: ${examCount}`);
             if (schoolCount === 0 && shouldSeedDummyData) {
-                console.log('🌱 Database is empty of schools. Initiating automatic school data seeding...');
+                console.log('[Seed] Database is empty of schools. Initiating automatic school data seeding...');
                 const schoolsData = [
                     { name: 'مدرسة الرواد الخاصة - القاهرة', subdomain: 'alrowad', themeColor: '#4f46e5' },
                     { name: 'مدرسة النيل الدولية - الشيخ زايد', subdomain: 'nile', themeColor: '#059669' },
@@ -348,7 +348,7 @@ function initializeStartupData() {
                         yield prisma_1.default.user.create({ data: { username: `${s.subdomain}_student_${i + 1}`, password: yield bcryptjs_1.default.hash(crypto_1.default.randomBytes(10).toString('hex'), 10), name: studentNames[i], role: 'STUDENT', schoolId: school.id, grade: grades[i % grades.length] } });
                     }
                 }
-                console.log('✅ 4 Schools, Admins, Teachers, and Students seeded successfully.');
+                console.log('[Seed] 4 Schools, Admins, Teachers, and Students seeded successfully.');
             }
             if (courseCount === 0 && shouldSeedDummyData) {
                 console.log('[Seed] Database is empty of courses. Initiating automatic course data seeding...');
@@ -610,28 +610,21 @@ const startServer = () => __awaiter(void 0, void 0, void 0, function* () {
             res.status(500).json({ error: e.message });
         }
     }));
+    const isPrimaryWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`[Server] LMS Backend running on port ${PORT}`);
-        // CRITICAL FIX: Defer ALL heavy startup tasks by 30 seconds.
-        // This ensures the healthcheck passes immediately and prevents Bad Gateway (502) loops.
-        // Dokploy/Nginx will see the server as "healthy" right away, then heavy tasks run in background.
-        setTimeout(() => {
-            console.log('[Deferred Startup] Starting background initialization tasks...');
-            // Cron jobs & schedulers (lightweight to register, heavy to execute later)
-            // startBackupScheduler(); // Removed to prevent duplicate hourly backups with cronService
-            (0, cronService_1.initCronJobs)();
-            // Auto-recover missing slides (Disabled — completed its job)
-            // autoRecoverMissingSlides().catch((e: any) => console.error('[Auto-Recover-Slides]:', e.message));
-            console.log('✅ [Deferred Startup] All background tasks launched.');
-        }, 30000); // 30 seconds delay — safely after healthcheck passes
+        if (isPrimaryWorker) {
+            setTimeout(() => {
+                console.log('[Deferred Startup] Starting background initialization tasks...');
+                (0, cronService_1.initCronJobs)();
+                console.log('[Deferred Startup] All background tasks launched.');
+            }, 30000);
+        }
     });
-    // In PM2 cluster mode, only Worker #0 runs startup data initialization.
-    // Schema/index changes are owned by Prisma migrations before PM2 starts.
-    const isPrimaryWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
     if (isPrimaryWorker) {
         initializeStartupData()
-            .then(() => console.log('✅ Startup data initialized'))
-            .catch((error) => console.error('⚠️ Startup data initialization failed:', error.message));
+            .then(() => console.log('[Startup] Startup data initialized'))
+            .catch((error) => console.error('[Startup] Startup data initialization failed:', error.message));
     }
     else {
         console.log(`[Startup] PM2 worker #${process.env.NODE_APP_INSTANCE} online — deferred tasks handled by worker #0.`);
