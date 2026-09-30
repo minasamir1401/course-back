@@ -1,6 +1,6 @@
 require('ts-node/register/transpile-only');
 
-const { canManageExamRecord, resolveExamSchoolUpdate } = require('../../../src/utils/examAccessPolicy');
+const { canManageExamRecord, canViewExamRecord, resolveExamSchoolUpdate } = require('../../../src/utils/examAccessPolicy');
 
 describe('exam management access policy (IDOR & Multi-tenant isolation)', () => {
   const foreignExam = {
@@ -126,5 +126,47 @@ describe('exam management access policy (IDOR & Multi-tenant isolation)', () => 
     expect(result.isCentral).toBe(false);
     expect(result.schoolId).toBe('school-a');
     expect(result.schools.set).toEqual([{ id: 'school-a' }, { id: 'school-b' }]);
+  });
+
+  describe('canViewExamRecord policy', () => {
+    test('allows school administrator to view central exams', () => {
+      expect(canViewExamRecord(
+        { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' },
+        centralExam,
+        false,
+      )).toBe(true);
+    });
+
+    test('allows teacher to view central exams', () => {
+      expect(canViewExamRecord(
+        { id: 'teacher-a', role: 'TEACHER', schoolId: 'school-a' },
+        centralExam,
+        false,
+      )).toBe(true);
+    });
+
+    test('allows school administrator to view their own school exams', () => {
+      expect(canViewExamRecord(
+        { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' },
+        schoolAExam,
+        false,
+      )).toBe(true);
+    });
+
+    test('denies school administrator from viewing foreign non-central exams', () => {
+      expect(canViewExamRecord(
+        { id: 'admin-a', role: 'SCHOOL_ADMIN', schoolId: 'school-a' },
+        foreignExam,
+        false,
+      )).toBe(false);
+    });
+
+    test('allows creator to view their created exam even before school assignment', () => {
+      expect(canViewExamRecord(
+        { id: 'creator-1', role: 'SCHOOL_ADMIN', schoolId: null },
+        { isCentral: false, creatorId: 'creator-1', schoolId: null, schools: [] },
+        false,
+      )).toBe(true);
+    });
   });
 });

@@ -47,6 +47,22 @@ export const requireManagedExam = async (req: Request, res: Response, next: Next
   }
 };
 
+export const requireViewableExam = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const exam = await prisma.exam.findUnique({
+      where: { id: req.params.id },
+      include: { schools: { select: { id: true } } },
+    });
+    if (!exam) return res.status(404).json({ error: 'Exam not found' });
+    if (!await examsController.canViewExam((req as any).user, exam)) {
+      return res.status(403).json({ error: 'Access denied: You do not have permission to access this exam.' });
+    }
+    next();
+  } catch {
+    return res.status(500).json({ error: 'Unable to verify exam access' });
+  }
+};
+
 
 
 
@@ -126,7 +142,7 @@ router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', verifyToken, 
 router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/move', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveSubExamHandler);
 router.post('/api/exams/:id/modules/:moduleId/exams/move-all', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveAllSubExamsHandler);
 router.post('/api/exams/:id/modules/:moduleId/move-module', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.postMoveModuleHandler);
-router.get('/api/exams/:id/modules/:moduleId/exams/:subExamId/export-json', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, examsController.getExamHandler31);
+router.get('/api/exams/:id/modules/:moduleId/exams/:subExamId/export-json', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireViewableExam, examsController.getExamHandler31);
 router.post('/api/exams/:id/modules/:moduleId/exams/import-json', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), requireManagedExam, multerUpload.single('file'), examsController.postExamHandler32);
 
 // ==========================================

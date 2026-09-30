@@ -11,5 +11,5 @@
     "*.log",
     "*.json"
   ],
-  "exec": "ts-node src/index.ts"
+  "exec": "ts-node"
 }

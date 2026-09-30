@@ -23,15 +23,48 @@ export function resolveExamSchoolUpdate(existing: ExamAccessRecord, payload: {
   return { isCentral, schoolId: ids[0] || null, schools: { set: ids.map(id => ({ id })) } };
 }
 
-export const canManageExamRecord = (
-  user: { id?: string; role?: string; schoolId?: string } | undefined,
+export const canViewExamRecord = (
+  user: { id?: string; role?: string; schoolId?: string | null } | undefined,
   exam: ExamAccessRecord | undefined,
   hasTeacherCourseAccess: boolean,
 ): boolean => {
   if (!user || !exam) return false;
   if (user.role === 'SUPER_ADMIN') return true;
 
-  if (exam.isCentral) return false;
+  if (exam.isCentral) return true;
+
+  if (exam.creatorId && exam.creatorId === user.id) return true;
+
+  const belongsToSchool = Boolean(
+    user.schoolId && (
+      exam.schoolId === user.schoolId ||
+      (exam.schools || []).some((school) => school.id === user.schoolId)
+    ),
+  );
+
+  if (belongsToSchool) return true;
+
+  if (user.role === 'TEACHER') {
+    return Boolean(hasTeacherCourseAccess);
+  }
+
+  return false;
+};
+
+export const canManageExamRecord = (
+  user: { id?: string; role?: string; schoolId?: string | null } | undefined,
+  exam: ExamAccessRecord | undefined,
+  hasTeacherCourseAccess: boolean,
+): boolean => {
+  if (!user || !exam) return false;
+  if (user.role === 'SUPER_ADMIN') return true;
+
+  // A central exam with specific schools assigned is still manageable by those schools.
+  // Only block management if it's truly central (isCentral=true AND no school assignments).
+  const hasSchoolAssignments = Boolean(
+    (exam.schools || []).length > 0 || exam.schoolId
+  );
+  if (exam.isCentral && !hasSchoolAssignments) return false;
 
   const belongsToSchool = Boolean(
     user.schoolId && (

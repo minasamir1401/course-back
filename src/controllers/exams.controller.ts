@@ -18,7 +18,7 @@ import { countModuleContent, getAvailability, mergeStudentProfile, resolveExamAc
 import { logExamRequestError } from '../utils/examErrorLog';
 import { resolveExplicitExamDeletions } from '../utils/examDeletionPolicy';
 import { resolvePassingScore } from '../utils/examPassingScore';
-import { canManageExamRecord, resolveExamSchoolUpdate } from '../utils/examAccessPolicy';
+import { canManageExamRecord, canViewExamRecord, resolveExamSchoolUpdate } from '../utils/examAccessPolicy';
 import { isContentDeletionAllowed } from '../services/systemSettings.service';
 import {
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields,
@@ -41,6 +41,53 @@ const normalizeBackendDok = (raw: any): string | null => {
   return sanitizeHtml(s);
 };
 
+const resolveUserSchoolId = async (user: any): Promise<string | null> => {
+  if (user?.schoolId) return user.schoolId;
+  if (user?.id) {
+    try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { schoolId: true },
+      });
+      if (dbUser?.schoolId) {
+        user.schoolId = dbUser.schoolId;
+        return dbUser.schoolId;
+      }
+    } catch {}
+  }
+  return null;
+};
+
+export const canViewExam = async (
+  user: any,
+  exam: {
+    isCentral?: boolean | null;
+    schoolId?: string | null;
+    creatorId?: string | null;
+    courseId?: string | null;
+    schools?: Array<{ id: string }>;
+  },
+) => {
+  if (!user || !exam) return false;
+  if (user.role === 'SUPER_ADMIN') return true;
+
+  await resolveUserSchoolId(user);
+
+  let hasTeacherCourseAccess = false;
+  if (user.role === 'TEACHER' && exam.courseId) {
+    const teacherCourse = await prisma.teacherCourse.findFirst({
+      where: {
+        teacherId: user.id,
+        courseId: exam.courseId,
+      },
+      select: { id: true },
+    });
+
+    hasTeacherCourseAccess = Boolean(teacherCourse);
+  }
+  return canViewExamRecord(user, exam, hasTeacherCourseAccess);
+};
+
 export const canManageExam = async (
   user: any,
   exam: {
@@ -51,6 +98,11 @@ export const canManageExam = async (
     schools?: Array<{ id: string }>;
   },
 ) => {
+  if (!user || !exam) return false;
+  if (user.role === 'SUPER_ADMIN') return true;
+
+  await resolveUserSchoolId(user);
+
   let hasTeacherCourseAccess = false;
   if (user.role === 'TEACHER' && exam.courseId) {
     const teacherCourse = await prisma.teacherCourse.findFirst({
@@ -1421,7 +1473,7 @@ export const getExamHandler9 = async (req: Request, res: Response) => {
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
 
     // Check permission
-    if (!await canManageExam((req as any).user, exam)) {
+    if (!await canViewExam((req as any).user, exam)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -1573,7 +1625,7 @@ export const getExamQuestionsHandler = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Access denied (Student)' });
       }
     } else if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
-      const canAccessExam = await canManageExam((req as any).user, exam);
+      const canAccessExam = await canViewExam((req as any).user, exam);
       if (!canAccessExam) {
         return res.status(403).json({ error: 'Access denied' });
       }
@@ -1692,7 +1744,7 @@ export const getExamHandler10 = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Access denied (Student)' });
       }
     } else if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
-      const canAccessExam = await canManageExam((req as any).user, exam);
+      const canAccessExam = await canViewExam((req as any).user, exam);
       if (!canAccessExam) {
         return res.status(403).json({ error: 'Access denied (Role: ' + role + ', isCentral: ' + exam.isCentral + ')' });
       }
@@ -2399,7 +2451,7 @@ export const getExamHandler15 = async (req: Request, res: Response) => {
       include: { schools: { select: { id: true } } }
     });
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
-    if (!await canManageExam((req as any).user, exam)) {
+    if (!await canViewExam((req as any).user, exam)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

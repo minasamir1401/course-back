@@ -150,11 +150,23 @@ router.post('/api/auth/login', async (req: any, res: any) => {
       return res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
     }
 
-    const user = await prisma.user.findUnique({ where: { username } });
+    const cleanUsername = typeof username === 'string' ? username.trim() : '';
+    let user = await prisma.user.findUnique({ where: { username: cleanUsername } });
+    if (!user && cleanUsername) {
+      user = await prisma.user.findFirst({
+        where: {
+          username: { equals: cleanUsername, mode: 'insensitive' }
+        }
+      });
+    }
 
     if (!user || user.deletedAt) {
       await recordFailedLogin(ip);
       return res.status(400).json({ error: 'Invalid username or password.' });
+    }
+
+    if (user.status && user.status !== 'ACTIVE') {
+      return res.status(403).json({ error: 'الحساب غير مفعّل أو معلّق. يرجى مراجعة إدارة المنصة.' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
