@@ -1,18 +1,4 @@
-const { execFileSync } = require('child_process');
-const path = require('path');
-
-const helperPath = path.resolve(__dirname, '../../../src/utils/examDeletionPolicy.ts');
-
-function resolveExplicitExamDeletions(payload) {
-  const script = `
-    const { resolveExplicitExamDeletions } = require(${JSON.stringify(helperPath)});
-    console.log(JSON.stringify(resolveExplicitExamDeletions(${JSON.stringify(payload)})));
-  `;
-
-  return JSON.parse(execFileSync(process.execPath, ['-r', 'ts-node/register', '-e', script], {
-    encoding: 'utf8',
-  }));
-}
+const { resolveExplicitExamDeletions } = require('../../../src/utils/examDeletionPolicy');
 
 describe('exam deletion policy', () => {
   test('does not infer deletions from a partial save payload', () => {

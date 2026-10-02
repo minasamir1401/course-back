@@ -1,3 +1,4 @@
+import { setSessionCookies } from '../utils/authSession';
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -807,13 +808,7 @@ router.post('/api/admin/impersonate/:id', verifyToken, checkRole(['SUPER_ADMIN']
     );
 
     // Set httpOnly cookie for impersonated session
-    res.cookie('auth_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 8 * 60 * 60 * 1000,
-      path: '/'
-    });
+    setSessionCookies(res, token, JWT_SECRET);
 
     res.json({
       message: `Impersonating ${user.name}`,
@@ -853,13 +848,7 @@ router.post('/api/admin/stop-impersonate', verifyToken, async (req: any, res: an
       { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') as any }
     );
 
-    res.cookie('auth_token', adminToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 8 * 60 * 60 * 1000,
-      path: '/'
-    });
+    setSessionCookies(res, adminToken, JWT_SECRET);
 
     res.json({
       message: 'Impersonation ended. Restored admin session.',

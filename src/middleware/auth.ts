@@ -13,7 +13,7 @@ if (!JWT_SECRET || JWT_SECRET.length < 32 || INSECURE_JWT_SECRETS.has(JWT_SECRET
   throw new Error('JWT_SECRET must be a unique random value of at least 32 characters');
 }
 
-export const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
+const authenticateToken = async (req: Request, res: Response, next: NextFunction, refreshSession = false) => {
   // An explicit session belongs to the current app/account. A leftover cookie
   // from another role must not silently turn a student request into an admin request.
   const authorization = req.headers.authorization;
@@ -30,10 +30,18 @@ export const verifyToken = async (req: Request, res: Response, next: NextFunctio
     token = req.query.token as string;
   }
 
+  // Explicit bearer identities must never fall back to another account's cookie.
+  const usingRefreshCookie = refreshSession && (!bearerToken || bearerToken === 'cookie_auth') && !!req.cookies?.auth_refresh;
+  if (usingRefreshCookie) token = req.cookies.auth_refresh;
+
   if (!token) return res.status(401).json({ error: 'Access denied. No token provided.' });
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
+
+    if (usingRefreshCookie ? decoded.purpose !== 'session_refresh' : decoded.purpose !== undefined) {
+      return res.status(401).json({ error: 'Invalid session credential.' });
+    }
 
     if (!decoded || typeof decoded.id !== 'string' || !decoded.id) {
       return res.status(401).json({ error: 'Invalid token payload.' });
@@ -89,6 +97,9 @@ export const verifyToken = async (req: Request, res: Response, next: NextFunctio
     res.status(400).json({ error: 'Invalid token.' });
   }
 };
+
+export const verifyToken = (req: Request, res: Response, next: NextFunction) => authenticateToken(req, res, next);
+export const verifyRefreshSession = (req: Request, res: Response, next: NextFunction) => authenticateToken(req, res, next, true);
 
 export const checkRole = (roles: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {

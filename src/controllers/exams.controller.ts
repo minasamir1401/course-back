@@ -702,6 +702,11 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
     }
     const requestedDeletes = (deletedQuestionIds || []).filter((value: unknown): value is string => typeof value === 'string');
+    const hierarchyDeletes = resolveExplicitExamDeletions(req.body);
+    if (req.body.modules !== undefined && (hierarchyDeletes.moduleIds.length || hierarchyDeletes.subExamIds.length) &&
+        (req as any).user.role !== 'SUPER_ADMIN' && !await isContentDeletionAllowed()) {
+      return res.status(403).json({ error: 'Content deletion is currently disabled by Super Admin. حذف المحتوى معطّل حالياً من الإدارة العامة.' });
+    }
     if (requestedDeletes.length > 0 && (req as any).user.role !== 'SUPER_ADMIN') {
       const allowed = await isContentDeletionAllowed();
       if (!allowed) {
@@ -1288,7 +1293,7 @@ export const putExamHandler5 = async (req: Request, res: Response) => {
         }
 
         // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
-        // The authorization guard above reserves every persisted deletion for SUPER_ADMIN.
+        // The guard above enforces deletion policy and managed exam access.
         if (explicitDeletedIds.size) {
           await tx.question.updateMany({
             where: { id: { in: Array.from(explicitDeletedIds) }, examId: id },

@@ -223,7 +223,7 @@ router.patch(
 );
 
 // ════════════════════════════════════════════════════════════════════
-// 🔒 DELETE LESSON — Manual deletion only, SUPER_ADMIN exclusive.
+// DELETE LESSON — Manual deletion, subject to the global policy and school access.
 //    This is the ONLY endpoint that deletes lessons.
 //    The course-update endpoint (PUT) will NEVER delete lessons automatically.
 // ════════════════════════════════════════════════════════════════════
@@ -238,7 +238,7 @@ router.delete(
 router.delete(
   "/api/school/courses/:id",
   verifyToken,
-  checkRole(["SUPER_ADMIN", "SCHOOL_ADMIN"]),
+  checkRole(["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"]),
   coursesController.deleteCourseHandler22,
 );
 

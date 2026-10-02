@@ -20,12 +20,13 @@ const { verifyToken, checkRole, checkSchoolAccess } = require('../../../src/midd
 
 function response() {
   return {
-    statusCode: 200, body: undefined, headers: {}, cookies: {},
+    statusCode: 200, body: undefined, headers: {}, cookies: {}, clearedCookies: [],
     status(code) { this.statusCode = code; return this; },
     json(body) { this.body = body; return this; },
     set(name, value) { this.headers[name.toLowerCase()] = value; return this; },
     setHeader(name, value) { this.headers[name.toLowerCase()] = value; return this; },
     cookie(name, value) { this.cookies[name] = value; return this; },
+    clearCookie(name) { this.clearedCookies.push(name); return this; },
   };
 }
 function user(overrides = {}) {
@@ -115,6 +116,59 @@ describe('public registration authorization', () => {
     expect(res.body).toMatchObject({ refreshed: true, expiresAt: expect.any(Number) });
     expect(res.body.token).toBeUndefined();
     expect(jwt.verify(res.cookies.auth_token, process.env.JWT_SECRET).id).toBe('user-1');
+  });
+
+  test('login expiry matches the signed access token instead of a hardcoded eight hours', async () => {
+    const res = await route('post', '/api/auth/login', request({ body: { username: 'test-user', password: 'correct-password' } }));
+    expect(res.body.expiresAt).toBe(jwt.decode(res.cookies.auth_token).exp * 1000);
+    expect(jwt.verify(res.cookies.auth_refresh, process.env.JWT_SECRET).purpose).toBe('session_refresh');
+  });
+
+  test('logout removes both access and refresh credentials', async () => {
+    const res = await route('post', '/api/auth/logout', request());
+    expect(res.clearedCookies).toEqual(['auth_token', 'auth_refresh']);
+  });
+
+  test('expired access cookie can refresh using the dedicated signed refresh credential', async () => {
+    const login = await route('post', '/api/auth/login', request({ body: { username: 'test-user', password: 'correct-password' } }));
+    const expired = jwt.sign({ id: 'user-1' }, process.env.JWT_SECRET, { expiresIn: -1 });
+    const res = await route('post', '/api/auth/refresh-token', request({ cookies: {
+      auth_token: expired, auth_refresh: login.cookies.auth_refresh,
+    } }));
+    expect(res.statusCode).toBe(200);
+    expect(res.body.refreshed).toBe(true);
+    expect(res.body.expiresAt).toBe(jwt.decode(res.cookies.auth_token).exp * 1000);
+  });
+
+  test('refresh credential cannot authenticate normal API requests', async () => {
+    const credential = token({ purpose: 'session_refresh' });
+    const { res, next } = await authenticate({ headers: { authorization: `Bearer ${credential}` } });
+    expect(res.statusCode).toBe(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  test('expired or unsigned refresh credentials cannot revive a session', async () => {
+    const expired = jwt.sign({ id: 'user-1', purpose: 'session_refresh' }, process.env.JWT_SECRET, { expiresIn: -1 });
+    for (const credential of [expired, 'unsigned-refresh', token({ purpose: 'wrong-purpose' })]) {
+      const res = await route('post', '/api/auth/refresh-token', request({ cookies: { auth_refresh: credential } }));
+      expect(res.statusCode).not.toBe(200);
+      expect(res.cookies.auth_token).toBeUndefined();
+    }
+  });
+
+  test('refresh preserves the impersonated identity and the original administrator reference', async () => {
+    const credential = token({ purpose: 'session_refresh', isImpersonated: true, adminId: 'admin-1' });
+    const res = await route('post', '/api/auth/refresh-token', request({ cookies: { auth_refresh: credential } }));
+    expect(jwt.verify(res.cookies.auth_token, process.env.JWT_SECRET)).toMatchObject({
+      id: 'user-1', isImpersonated: true, adminId: 'admin-1',
+    });
+  });
+
+  test.each([{ status: 'SUSPENDED' }, { deletedAt: new Date() }])('refresh rejects disabled or deleted accounts: %j', async overrides => {
+    prisma.user.findUnique.mockResolvedValue(user(overrides));
+    const res = await route('post', '/api/auth/refresh-token', request({ cookies: { auth_refresh: token({ purpose: 'session_refresh' }) } }));
+    expect(res.statusCode).toBe(403);
+    expect(res.cookies.auth_token).toBeUndefined();
   });
 });
 

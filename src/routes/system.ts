@@ -49,6 +49,7 @@ router.get('/api/health', async (_req: Request, res: Response) => {
 router.get('/api/system/settings/deletion-policy', verifyToken, async (_req: Request, res: Response) => {
   try {
     const allowContentDeletion = await isContentDeletionAllowed();
+    res.set('Cache-Control', 'no-store');
     return res.json({ allowContentDeletion });
   } catch (error: any) {
     return res.status(500).json({ error: 'Failed to retrieve deletion policy', details: error.message });

@@ -4,7 +4,8 @@ import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
 import prisma from '../lib/prisma';
-import { verifyToken, checkRole, checkSchoolAccess } from '../middleware/auth';
+import { verifyToken, verifyRefreshSession, checkRole, checkSchoolAccess } from '../middleware/auth';
+import { setSessionCookies, sessionCookieOptions } from '../utils/authSession';
 import { 
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields, 
   isAnswerCorrect, sanitizeDeep, sanitizeUser, sanitizeExam, multerUpload,
@@ -186,14 +187,7 @@ router.post('/api/auth/login', async (req: any, res: any) => {
     );
 
     // Set the session only in an httpOnly cookie so browser JavaScript can never read the JWT.
-    const cookieMaxAge = 8 * 60 * 60 * 1000; // 8 hours in ms
-    res.cookie('auth_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: cookieMaxAge,
-      path: '/'
-    });
+    const expiresAt = setSessionCookies(res, token, JWT_SECRET);
 
     let schoolName = null;
     if (user.schoolId) {
@@ -203,7 +197,7 @@ router.post('/api/auth/login', async (req: any, res: any) => {
 
     res.json({
       message: 'Login successful',
-      expiresAt: Date.now() + cookieMaxAge,
+      expiresAt,
       user: {
         id: user.id,
         name: user.name,
@@ -226,36 +220,28 @@ router.post('/api/auth/login', async (req: any, res: any) => {
 // ==========================================
 // 🔄 TOKEN REFRESH ENDPOINT
 // ==========================================
-router.post('/api/auth/refresh-token', verifyToken, async (req: any, res: any) => {
+router.post('/api/auth/refresh-token', verifyRefreshSession, async (req: any, res: any) => {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Invalid token payload.' });
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, role: true, schoolId: true, grade: true, status: true, name: true, avatar: true }
+      select: { id: true, role: true, schoolId: true, grade: true, status: true, deletedAt: true, name: true, avatar: true }
     });
 
-    if (!user || user.status !== 'ACTIVE') {
+    if (!user || user.status !== 'ACTIVE' || user.deletedAt) {
       return res.status(403).json({ error: 'Account inactive or not found.' });
     }
 
     const newToken = jwt.sign(
-      { id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade },
+      { id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade,
+        ...(req.user.isImpersonated ? { isImpersonated: true, adminId: req.user.adminId } : {}) },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    const expiresAt = Date.now() + (8 * 60 * 60 * 1000); // 8 hours from now
-
-    // Refresh the httpOnly cookie as well
-    res.cookie('auth_token', newToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 8 * 60 * 60 * 1000,
-      path: '/'
-    });
+    const expiresAt = setSessionCookies(res, newToken, JWT_SECRET);
 
     res.json({
       refreshed: true,
@@ -278,12 +264,8 @@ router.post('/api/auth/refresh-token', verifyToken, async (req: any, res: any) =
 // 🚪 LOGOUT — Clear httpOnly cookie
 // ==========================================
 router.post('/api/auth/logout', (req: any, res: any) => {
-  res.clearCookie('auth_token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/'
-  });
+  res.clearCookie('auth_token', sessionCookieOptions());
+  res.clearCookie('auth_refresh', sessionCookieOptions());
   res.json({ message: 'Logged out successfully' });
 });
 
