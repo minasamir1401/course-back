@@ -23,6 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const authSession_1 = require("../utils/authSession");
 const express_1 = require("express");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -748,13 +749,7 @@ router.post('/api/admin/impersonate/:id', auth_1.verifyToken, (0, auth_1.checkRo
         }, shared_1.JWT_SECRET, { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') } // Match standard expiry
         );
         // Set httpOnly cookie for impersonated session
-        res.cookie('auth_token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: 8 * 60 * 60 * 1000,
-            path: '/'
-        });
+        (0, authSession_1.setSessionCookies)(res, token, shared_1.JWT_SECRET);
         res.json({
             message: `Impersonating ${user.name}`,
             user: {
@@ -786,13 +781,7 @@ router.post('/api/admin/stop-impersonate', auth_1.verifyToken, (req, res) => __a
             return res.status(403).json({ error: 'Original admin account not available or inactive.' });
         }
         const adminToken = jsonwebtoken_1.default.sign({ id: admin.id, role: admin.role, schoolId: admin.schoolId, grade: admin.grade }, shared_1.JWT_SECRET, { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') });
-        res.cookie('auth_token', adminToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: 8 * 60 * 60 * 1000,
-            path: '/'
-        });
+        (0, authSession_1.setSessionCookies)(res, adminToken, shared_1.JWT_SECRET);
         res.json({
             message: 'Impersonation ended. Restored admin session.',
             user: {

@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkSchoolAccess = exports.checkRole = exports.verifyToken = void 0;
+exports.checkSchoolAccess = exports.checkRole = exports.verifyRefreshSession = exports.verifyToken = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -25,8 +25,8 @@ const INSECURE_JWT_SECRETS = new Set([
 if (!JWT_SECRET || JWT_SECRET.length < 32 || INSECURE_JWT_SECRETS.has(JWT_SECRET)) {
     throw new Error('JWT_SECRET must be a unique random value of at least 32 characters');
 }
-const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b;
+const authenticateToken = (req_1, res_1, next_1, ...args_1) => __awaiter(void 0, [req_1, res_1, next_1, ...args_1], void 0, function* (req, res, next, refreshSession = false) {
+    var _a, _b, _c;
     // An explicit session belongs to the current app/account. A leftover cookie
     // from another role must not silently turn a student request into an admin request.
     const authorization = req.headers.authorization;
@@ -41,10 +41,17 @@ const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
     if (!token && req.query.token) {
         token = req.query.token;
     }
+    // Explicit bearer identities must never fall back to another account's cookie.
+    const usingRefreshCookie = refreshSession && (!bearerToken || bearerToken === 'cookie_auth') && !!((_b = req.cookies) === null || _b === void 0 ? void 0 : _b.auth_refresh);
+    if (usingRefreshCookie)
+        token = req.cookies.auth_refresh;
     if (!token)
         return res.status(401).json({ error: 'Access denied. No token provided.' });
     try {
         const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+        if (usingRefreshCookie ? decoded.purpose !== 'session_refresh' : decoded.purpose !== undefined) {
+            return res.status(401).json({ error: 'Invalid session credential.' });
+        }
         if (!decoded || typeof decoded.id !== 'string' || !decoded.id) {
             return res.status(401).json({ error: 'Invalid token payload.' });
         }
@@ -60,7 +67,7 @@ const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
                     select: { id: true, role: true, schoolId: true, grade: true, status: true, deletedAt: true }
                 });
             }
-            catch (_c) {
+            catch (_d) {
                 return res.status(503).json({ error: 'Unable to verify session. Please try again.' });
             }
             if (!user || user.status !== 'ACTIVE' || user.deletedAt) {
@@ -74,7 +81,7 @@ const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         const offlineSchoolId = req.headers['x-offline-school-id'];
         if (offlineUserId !== undefined || offlineSchoolId !== undefined) {
             if (typeof offlineUserId !== 'string' || typeof offlineSchoolId !== 'string'
-                || offlineUserId !== currentUser.id || offlineSchoolId !== ((_b = currentUser.schoolId) !== null && _b !== void 0 ? _b : '')) {
+                || offlineUserId !== currentUser.id || offlineSchoolId !== ((_c = currentUser.schoolId) !== null && _c !== void 0 ? _c : '')) {
                 return res.status(409).json({
                     code: 'OFFLINE_SESSION_CHANGED',
                     error: 'تغيّرت الجلسة أو المدرسة. يرجى تسجيل الدخول بحساب صاحب التغييرات المحفوظة.'
@@ -91,7 +98,10 @@ const verifyToken = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         res.status(400).json({ error: 'Invalid token.' });
     }
 });
+const verifyToken = (req, res, next) => authenticateToken(req, res, next);
 exports.verifyToken = verifyToken;
+const verifyRefreshSession = (req, res, next) => authenticateToken(req, res, next, true);
+exports.verifyRefreshSession = verifyRefreshSession;
 const checkRole = (roles) => {
     return (req, res, next) => {
         const user = req.user;

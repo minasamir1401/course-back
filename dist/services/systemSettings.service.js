@@ -15,33 +15,20 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.isContentDeletionAllowed = isContentDeletionAllowed;
 exports.setContentDeletionAllowed = setContentDeletionAllowed;
 const prisma_1 = __importDefault(require("../lib/prisma"));
-let cachedDeletionAllowed = null;
-let cacheExpiry = 0;
-const CACHE_DURATION_MS = 15000;
 function isContentDeletionAllowed() {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
-        const now = Date.now();
-        if (cachedDeletionAllowed !== null && now < cacheExpiry) {
-            return cachedDeletionAllowed;
+        // Always use the authoritative value, including across server workers.
+        if ((_a = prisma_1.default.systemSetting) === null || _a === void 0 ? void 0 : _a.findUnique) {
+            const setting = yield prisma_1.default.systemSetting.findUnique({
+                where: { key: 'allow_content_deletion' }
+            });
+            return (setting === null || setting === void 0 ? void 0 : setting.value) === 'true';
         }
-        try {
-            if ((_a = prisma_1.default.systemSetting) === null || _a === void 0 ? void 0 : _a.findUnique) {
-                const setting = yield prisma_1.default.systemSetting.findUnique({
-                    where: { key: 'allow_content_deletion' }
-                });
-                cachedDeletionAllowed = setting ? setting.value === 'true' : false;
-            }
-            else {
-                const rows = yield prisma_1.default.$queryRawUnsafe(`SELECT "value" FROM "SystemSetting" WHERE "key" = 'allow_content_deletion' LIMIT 1`);
-                cachedDeletionAllowed = rows.length > 0 ? rows[0].value === 'true' : false;
-            }
+        else {
+            const rows = yield prisma_1.default.$queryRawUnsafe(`SELECT "value" FROM "SystemSetting" WHERE "key" = 'allow_content_deletion' LIMIT 1`);
+            return rows.length > 0 && rows[0].value === 'true';
         }
-        catch (_b) {
-            cachedDeletionAllowed = false;
-        }
-        cacheExpiry = now + CACHE_DURATION_MS;
-        return cachedDeletionAllowed;
     });
 }
 function setContentDeletionAllowed(allowed) {
@@ -60,8 +47,6 @@ function setContentDeletionAllowed(allowed) {
        VALUES ('allow_content_deletion', $1, CURRENT_TIMESTAMP)
        ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value", "updatedAt" = CURRENT_TIMESTAMP`, stringValue);
         }
-        cachedDeletionAllowed = allowed;
-        cacheExpiry = Date.now() + CACHE_DURATION_MS;
         return allowed;
     });
 }

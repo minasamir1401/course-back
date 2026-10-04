@@ -40,6 +40,7 @@ router.get('/api/health', (_req, res) => __awaiter(void 0, void 0, void 0, funct
 router.get('/api/system/settings/deletion-policy', auth_1.verifyToken, (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const allowContentDeletion = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
+        res.set('Cache-Control', 'no-store');
         return res.json({ allowContentDeletion });
     }
     catch (error) {
@@ -177,6 +178,15 @@ router.post('/api/system/wipe-seeded-dummy-data', auth_1.verifyToken, (0, auth_1
         res.status(500).json({ error: "Failed to wipe dummy data", details: error.message });
     }
 }));
+function getEffectiveTranslatableLength(text) {
+    if (!text || typeof text !== 'string')
+        return 0;
+    return text
+        .replace(/data:image\/[a-zA-Z0-9+.-]+;base64,[a-zA-Z0-9+/=]+/gi, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g, '')
+        .length;
+}
 router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { text, texts, from = 'ar', to = 'en' } = req.body;
@@ -184,7 +194,8 @@ router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_
         const validTo = to === 'ar' ? 'ar' : 'en';
         if (text !== undefined) {
             const strText = String(text || '');
-            if (strText.length > 5000) {
+            const effectiveLength = getEffectiveTranslatableLength(strText);
+            if (effectiveLength > 5000) {
                 return res.status(400).json({ error: 'Text exceeds maximum length of 5000 characters.' });
             }
             const translated = yield (0, translation_service_1.translateSingleText)(strText, validFrom, validTo);
@@ -195,8 +206,11 @@ router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_
                 return res.status(400).json({ error: 'Batch translation limited to 50 items per request.' });
             }
             for (const item of texts) {
-                if (typeof item === 'string' && item.length > 5000) {
-                    return res.status(400).json({ error: 'Individual text item exceeds maximum length of 5000 characters.' });
+                if (typeof item === 'string') {
+                    const effectiveLength = getEffectiveTranslatableLength(item);
+                    if (effectiveLength > 5000) {
+                        return res.status(400).json({ error: 'Individual text item exceeds maximum length of 5000 characters.' });
+                    }
                 }
             }
             const translations = yield (0, translation_service_1.translateBatchTexts)(texts, validFrom, validTo);

@@ -9,6 +9,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.maskSpecialContent = maskSpecialContent;
+exports.restoreSpecialContent = restoreSpecialContent;
 exports.translateSingleText = translateSingleText;
 exports.translateBatchTexts = translateBatchTexts;
 const translationCache = new Map();
@@ -36,6 +38,11 @@ function maskSpecialContent(text) {
         tokens.push(match);
         return placeholder;
     });
+    masked = masked.replace(/data:image\/[a-zA-Z0-9+.-]+;base64,[a-zA-Z0-9+/=]+/gi, (match) => {
+        const placeholder = ` __MEDIA_${tokens.length}__ `;
+        tokens.push(match);
+        return placeholder;
+    });
     return { maskedText: masked, tokens };
 }
 function restoreSpecialContent(text, tokens) {
@@ -43,7 +50,11 @@ function restoreSpecialContent(text, tokens) {
     tokens.forEach((original, index) => {
         const mathRegex = new RegExp(`\\s*__\\s*MATH_${index}\\s*__\\s*`, 'gi');
         const htmlRegex = new RegExp(`\\s*__\\s*HTML_${index}\\s*__\\s*`, 'gi');
-        restored = restored.replace(mathRegex, ` ${original} `).replace(htmlRegex, original);
+        const mediaRegex = new RegExp(`\\s*__\\s*MEDIA_${index}\\s*__\\s*`, 'gi');
+        restored = restored
+            .replace(mathRegex, ` ${original} `)
+            .replace(htmlRegex, original)
+            .replace(mediaRegex, original);
     });
     return restored;
 }
@@ -81,8 +92,64 @@ function fetchMyMemoryTranslation(text, from, to) {
         return (typeof result === 'string' && result.trim()) ? result : null;
     });
 }
+function splitTextIntoChunks(text, maxChunkLength = 2500) {
+    if (text.length <= maxChunkLength)
+        return [text];
+    const chunks = [];
+    const paragraphs = text.split(/(\n+)/);
+    let currentChunk = '';
+    for (const part of paragraphs) {
+        if ((currentChunk + part).length <= maxChunkLength) {
+            currentChunk += part;
+        }
+        else {
+            if (currentChunk.trim()) {
+                chunks.push(currentChunk);
+                currentChunk = '';
+            }
+            if (part.length <= maxChunkLength) {
+                currentChunk = part;
+            }
+            else {
+                const sentences = part.split(/([.!?؟]+(?:\s+|$))/);
+                for (const s of sentences) {
+                    if ((currentChunk + s).length <= maxChunkLength) {
+                        currentChunk += s;
+                    }
+                    else {
+                        if (currentChunk.trim()) {
+                            chunks.push(currentChunk);
+                            currentChunk = '';
+                        }
+                        if (s.length <= maxChunkLength) {
+                            currentChunk = s;
+                        }
+                        else {
+                            for (let i = 0; i < s.length; i += maxChunkLength) {
+                                chunks.push(s.slice(i, i + maxChunkLength));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (currentChunk.trim()) {
+        chunks.push(currentChunk);
+    }
+    return chunks.length > 0 ? chunks : [text];
+}
 function translateViaFastEngine(text, from, to) {
     return __awaiter(this, void 0, void 0, function* () {
+        if (text.length > 2500) {
+            const chunks = splitTextIntoChunks(text, 2500);
+            if (chunks.length > 1) {
+                const translatedChunks = yield Promise.all(chunks.map(chunk => translateViaFastEngine(chunk, from, to)));
+                if (translatedChunks.every(Boolean)) {
+                    return translatedChunks.join('');
+                }
+            }
+        }
         const clients = ['dict-chrome-ex', 'it'];
         for (const client of clients) {
             try {

@@ -23,7 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanDuplicatesHandler = exports.postExamHandler26 = exports.postMoveSingleQuestionHandler = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.postMoveModuleHandler = exports.postMoveAllSubExamsHandler = exports.postMoveSubExamHandler = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamQuestionsHandler = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = void 0;
+exports.cleanDuplicatesHandler = exports.postExamHandler26 = exports.postMoveSingleQuestionHandler = exports.postExamHandler25 = exports.deleteExamHandler24 = exports.putExamHandler23 = exports.postExamHandler22 = exports.getExamHandler21 = exports.postExamHandler32 = exports.getExamHandler31 = exports.postMoveModuleHandler = exports.postMoveAllSubExamsHandler = exports.postMoveSubExamHandler = exports.deleteExamHandler30 = exports.putExamHandler29 = exports.postExamHandler33 = exports.postExamHandler28 = exports.deleteExamHandler20 = exports.putExamHandler19 = exports.postExamHandler18 = exports.postExamHandler17 = exports.postExamHandler16 = exports.getExamHandler15 = exports.getExamHandler14 = exports.postExamHandler13 = exports.getExamHandler12 = exports.postExamHandler11 = exports.getExamHandler10 = exports.getExamQuestionsHandler = exports.getExamHandler9 = exports.postExamHandler8 = exports.postExamHandler7 = exports.deleteExamHandler6 = exports.putExamHandler5 = exports.getExamHandler4 = exports.getExamHandler3 = exports.postExamHandler2 = exports.getExamHandler1 = exports.canManageExam = exports.canViewExam = void 0;
 exports.formatCorrectAnswer = formatCorrectAnswer;
 exports.formatExplanation = formatExplanation;
 const examQuestionWrites_1 = require("../utils/examQuestionWrites");
@@ -50,7 +50,50 @@ const normalizeBackendDok = (raw) => {
         return `DOK ${m[1]}`;
     return (0, shared_1.sanitizeHtml)(s);
 };
+const resolveUserSchoolId = (user) => __awaiter(void 0, void 0, void 0, function* () {
+    if (user === null || user === void 0 ? void 0 : user.schoolId)
+        return user.schoolId;
+    if (user === null || user === void 0 ? void 0 : user.id) {
+        try {
+            const dbUser = yield prisma_1.default.user.findUnique({
+                where: { id: user.id },
+                select: { schoolId: true },
+            });
+            if (dbUser === null || dbUser === void 0 ? void 0 : dbUser.schoolId) {
+                user.schoolId = dbUser.schoolId;
+                return dbUser.schoolId;
+            }
+        }
+        catch (_a) { }
+    }
+    return null;
+});
+const canViewExam = (user, exam) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!user || !exam)
+        return false;
+    if (user.role === 'SUPER_ADMIN')
+        return true;
+    yield resolveUserSchoolId(user);
+    let hasTeacherCourseAccess = false;
+    if (user.role === 'TEACHER' && exam.courseId) {
+        const teacherCourse = yield prisma_1.default.teacherCourse.findFirst({
+            where: {
+                teacherId: user.id,
+                courseId: exam.courseId,
+            },
+            select: { id: true },
+        });
+        hasTeacherCourseAccess = Boolean(teacherCourse);
+    }
+    return (0, examAccessPolicy_1.canViewExamRecord)(user, exam, hasTeacherCourseAccess);
+});
+exports.canViewExam = canViewExam;
 const canManageExam = (user, exam) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!user || !exam)
+        return false;
+    if (user.role === 'SUPER_ADMIN')
+        return true;
+    yield resolveUserSchoolId(user);
     let hasTeacherCourseAccess = false;
     if (user.role === 'TEACHER' && exam.courseId) {
         const teacherCourse = yield prisma_1.default.teacherCourse.findFirst({
@@ -601,6 +644,11 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
             return res.status(400).json({ error: 'deletedQuestionIds must be an array.' });
         }
         const requestedDeletes = (deletedQuestionIds || []).filter((value) => typeof value === 'string');
+        const hierarchyDeletes = (0, examDeletionPolicy_1.resolveExplicitExamDeletions)(req.body);
+        if (req.body.modules !== undefined && (hierarchyDeletes.moduleIds.length || hierarchyDeletes.subExamIds.length) &&
+            req.user.role !== 'SUPER_ADMIN' && !(yield (0, systemSettings_service_1.isContentDeletionAllowed)())) {
+            return res.status(403).json({ error: 'Content deletion is currently disabled by Super Admin. حذف المحتوى معطّل حالياً من الإدارة العامة.' });
+        }
         if (requestedDeletes.length > 0 && req.user.role !== 'SUPER_ADMIN') {
             const allowed = yield (0, systemSettings_service_1.isContentDeletionAllowed)();
             if (!allowed) {
@@ -1125,7 +1173,7 @@ const putExamHandler5 = (req, res) => __awaiter(void 0, void 0, void 0, function
                     yield tx.question.createMany({ data: pendingQuestions.slice(offset, offset + 250) });
                 }
                 // SAFE Soft-delete: only remove questions explicitly deleted by the editor UI.
-                // The authorization guard above reserves every persisted deletion for SUPER_ADMIN.
+                // The guard above enforces deletion policy and managed exam access.
                 if (explicitDeletedIds.size) {
                     yield tx.question.updateMany({
                         where: { id: { in: Array.from(explicitDeletedIds) }, examId: id },
@@ -1299,7 +1347,7 @@ const getExamHandler9 = (req, res) => __awaiter(void 0, void 0, void 0, function
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
         // Check permission
-        if (!(yield (0, exports.canManageExam)(req.user, exam))) {
+        if (!(yield (0, exports.canViewExam)(req.user, exam))) {
             return res.status(403).json({ error: 'Access denied' });
         }
         const where = { examId: id };
@@ -1447,7 +1495,7 @@ const getExamQuestionsHandler = (req, res) => __awaiter(void 0, void 0, void 0, 
             }
         }
         else if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
-            const canAccessExam = yield (0, exports.canManageExam)(req.user, exam);
+            const canAccessExam = yield (0, exports.canViewExam)(req.user, exam);
             if (!canAccessExam) {
                 return res.status(403).json({ error: 'Access denied' });
             }
@@ -1562,7 +1610,7 @@ const getExamHandler10 = (req, res) => __awaiter(void 0, void 0, void 0, functio
             }
         }
         else if (['SCHOOL_ADMIN', 'TEACHER', 'SUPERVISOR'].includes(role)) {
-            const canAccessExam = yield (0, exports.canManageExam)(req.user, exam);
+            const canAccessExam = yield (0, exports.canViewExam)(req.user, exam);
             if (!canAccessExam) {
                 return res.status(403).json({ error: 'Access denied (Role: ' + role + ', isCentral: ' + exam.isCentral + ')' });
             }
@@ -2177,7 +2225,7 @@ const getExamHandler15 = (req, res) => __awaiter(void 0, void 0, void 0, functio
         });
         if (!exam)
             return res.status(404).json({ error: 'Exam not found' });
-        if (!(yield (0, exports.canManageExam)(req.user, exam))) {
+        if (!(yield (0, exports.canViewExam)(req.user, exam))) {
             return res.status(403).json({ error: 'Access denied' });
         }
         const where = { examId: id };

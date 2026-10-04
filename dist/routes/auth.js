@@ -17,6 +17,7 @@ const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
+const authSession_1 = require("../utils/authSession");
 const shared_1 = require("../shared");
 const router = (0, express_1.Router)();
 // --- Extracted from lines 1026-1167 ---
@@ -132,10 +133,21 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         if (missing) {
             return res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
         }
-        const user = yield prisma_1.default.user.findUnique({ where: { username } });
+        const cleanUsername = typeof username === 'string' ? username.trim() : '';
+        let user = yield prisma_1.default.user.findUnique({ where: { username: cleanUsername } });
+        if (!user && cleanUsername) {
+            user = yield prisma_1.default.user.findFirst({
+                where: {
+                    username: { equals: cleanUsername, mode: 'insensitive' }
+                }
+            });
+        }
         if (!user || user.deletedAt) {
             yield (0, shared_1.recordFailedLogin)(ip);
             return res.status(400).json({ error: 'Invalid username or password.' });
+        }
+        if (user.status && user.status !== 'ACTIVE') {
+            return res.status(403).json({ error: 'الحساب غير مفعّل أو معلّق. يرجى مراجعة إدارة المنصة.' });
         }
         const validPassword = yield bcryptjs_1.default.compare(password, user.password);
         if (!validPassword) {
@@ -146,14 +158,7 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         // Generate token payload: user_id, role, school_id, grade
         const token = jsonwebtoken_1.default.sign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
         // Set the session only in an httpOnly cookie so browser JavaScript can never read the JWT.
-        const cookieMaxAge = 8 * 60 * 60 * 1000; // 8 hours in ms
-        res.cookie('auth_token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: cookieMaxAge,
-            path: '/'
-        });
+        const expiresAt = (0, authSession_1.setSessionCookies)(res, token, shared_1.JWT_SECRET);
         let schoolName = null;
         if (user.schoolId) {
             const school = yield prisma_1.default.school.findUnique({ where: { id: user.schoolId } });
@@ -161,7 +166,7 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
         }
         res.json({
             message: 'Login successful',
-            expiresAt: Date.now() + cookieMaxAge,
+            expiresAt,
             user: {
                 id: user.id,
                 name: user.name,
@@ -184,7 +189,7 @@ router.post('/api/auth/login', (req, res) => __awaiter(void 0, void 0, void 0, f
 // ==========================================
 // 🔄 TOKEN REFRESH ENDPOINT
 // ==========================================
-router.post('/api/auth/refresh-token', auth_1.verifyToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.post('/api/auth/refresh-token', auth_1.verifyRefreshSession, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     try {
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.id;
@@ -192,21 +197,13 @@ router.post('/api/auth/refresh-token', auth_1.verifyToken, (req, res) => __await
             return res.status(401).json({ error: 'Invalid token payload.' });
         const user = yield prisma_1.default.user.findUnique({
             where: { id: userId },
-            select: { id: true, role: true, schoolId: true, grade: true, status: true, name: true, avatar: true }
+            select: { id: true, role: true, schoolId: true, grade: true, status: true, deletedAt: true, name: true, avatar: true }
         });
-        if (!user || user.status !== 'ACTIVE') {
+        if (!user || user.status !== 'ACTIVE' || user.deletedAt) {
             return res.status(403).json({ error: 'Account inactive or not found.' });
         }
-        const newToken = jsonwebtoken_1.default.sign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
-        const expiresAt = Date.now() + (8 * 60 * 60 * 1000); // 8 hours from now
-        // Refresh the httpOnly cookie as well
-        res.cookie('auth_token', newToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: 8 * 60 * 60 * 1000,
-            path: '/'
-        });
+        const newToken = jsonwebtoken_1.default.sign(Object.assign({ id: user.id, role: user.role, schoolId: user.schoolId, grade: user.grade }, (req.user.isImpersonated ? { isImpersonated: true, adminId: req.user.adminId } : {})), shared_1.JWT_SECRET, { expiresIn: shared_1.JWT_EXPIRES_IN });
+        const expiresAt = (0, authSession_1.setSessionCookies)(res, newToken, shared_1.JWT_SECRET);
         res.json({
             refreshed: true,
             expiresAt,
@@ -228,12 +225,8 @@ router.post('/api/auth/refresh-token', auth_1.verifyToken, (req, res) => __await
 // 🚪 LOGOUT — Clear httpOnly cookie
 // ==========================================
 router.post('/api/auth/logout', (req, res) => {
-    res.clearCookie('auth_token', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        path: '/'
-    });
+    res.clearCookie('auth_token', (0, authSession_1.sessionCookieOptions)());
+    res.clearCookie('auth_refresh', (0, authSession_1.sessionCookieOptions)());
     res.json({ message: 'Logged out successfully' });
 });
 exports.default = router;

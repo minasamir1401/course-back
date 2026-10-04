@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.canManageExamRecord = void 0;
+exports.canManageExamRecord = exports.canViewExamRecord = void 0;
 exports.resolveExamSchoolUpdate = resolveExamSchoolUpdate;
 // Partial saves must not erase an audience. Making an assigned exam central
 // requires explicitly clearing its school selection as well.
@@ -18,12 +18,34 @@ function resolveExamSchoolUpdate(existing, payload) {
     const isCentral = ids.length > 0 ? false : ((_b = (_a = payload.isCentral) !== null && _a !== void 0 ? _a : existing.isCentral) !== null && _b !== void 0 ? _b : false);
     return { isCentral, schoolId: ids[0] || null, schools: { set: ids.map(id => ({ id })) } };
 }
-const canManageExamRecord = (user, exam, hasTeacherCourseAccess) => {
+const canViewExamRecord = (user, exam, hasTeacherCourseAccess) => {
     if (!user || !exam)
         return false;
     if (user.role === 'SUPER_ADMIN')
         return true;
     if (exam.isCentral)
+        return true;
+    if (exam.creatorId && exam.creatorId === user.id)
+        return true;
+    const belongsToSchool = Boolean(user.schoolId && (exam.schoolId === user.schoolId ||
+        (exam.schools || []).some((school) => school.id === user.schoolId)));
+    if (belongsToSchool)
+        return true;
+    if (user.role === 'TEACHER') {
+        return Boolean(hasTeacherCourseAccess);
+    }
+    return false;
+};
+exports.canViewExamRecord = canViewExamRecord;
+const canManageExamRecord = (user, exam, hasTeacherCourseAccess) => {
+    if (!user || !exam)
+        return false;
+    if (user.role === 'SUPER_ADMIN')
+        return true;
+    // A central exam with specific schools assigned is still manageable by those schools.
+    // Only block management if it's truly central (isCentral=true AND no school assignments).
+    const hasSchoolAssignments = Boolean((exam.schools || []).length > 0 || exam.schoolId);
+    if (exam.isCentral && !hasSchoolAssignments)
         return false;
     const belongsToSchool = Boolean(user.schoolId && (exam.schoolId === user.schoolId ||
         (exam.schools || []).some((school) => school.id === user.schoolId)));

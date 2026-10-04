@@ -179,5 +179,32 @@ describe('Bilingual explanation return and /api/translate authorization & valida
       expect(res.body.error).toContain('Text exceeds maximum length');
     });
 
+    test('accepts text with embedded base64 image exceeding 5000 raw chars when translatable text is within limit', async () => {
+      const teacherToken = createToken(teacherUser);
+      const richTextWithBase64 = `<p><img src="data:image/png;base64,${'A'.repeat(6000)}" />ما هي الإجابة الصحيحة؟</p>`;
+      const res = await request(app)
+        .post('/api/translate')
+        .set('Authorization', `Bearer ${teacherToken}`)
+        .send({ text: richTextWithBase64, from: 'ar', to: 'en' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.translatedText).toBe(`Translated: ${richTextWithBase64}`);
+    });
+
+    test('accepts batch items containing base64 images exceeding 5000 raw chars', async () => {
+      const teacherToken = createToken(teacherUser);
+      const batch = [
+        `<p><img src="data:image/png;base64,${'B'.repeat(6000)}" />السؤال الأول</p>`,
+        'الخيار أ',
+      ];
+      const res = await request(app)
+        .post('/api/translate')
+        .set('Authorization', `Bearer ${teacherToken}`)
+        .send({ texts: batch, from: 'ar', to: 'en' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.translations).toHaveLength(2);
+    });
+
   });
 });

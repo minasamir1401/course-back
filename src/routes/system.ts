@@ -206,6 +206,15 @@ router.post('/api/system/wipe-seeded-dummy-data', verifyToken, checkRole(['SUPER
   }
 });
 
+function getEffectiveTranslatableLength(text: string): number {
+  if (!text || typeof text !== 'string') return 0;
+  return text
+    .replace(/data:image\/[a-zA-Z0-9+.-]+;base64,[a-zA-Z0-9+/=]+/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g, '')
+    .length;
+}
+
 router.post('/api/translate', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), async (req: any, res: any) => {
   try {
     const { text, texts, from = 'ar', to = 'en' } = req.body;
@@ -214,7 +223,8 @@ router.post('/api/translate', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADM
 
     if (text !== undefined) {
       const strText = String(text || '');
-      if (strText.length > 5000) {
+      const effectiveLength = getEffectiveTranslatableLength(strText);
+      if (effectiveLength > 5000) {
         return res.status(400).json({ error: 'Text exceeds maximum length of 5000 characters.' });
       }
       const translated = await translateSingleText(strText, validFrom, validTo);
@@ -226,8 +236,11 @@ router.post('/api/translate', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADM
         return res.status(400).json({ error: 'Batch translation limited to 50 items per request.' });
       }
       for (const item of texts) {
-        if (typeof item === 'string' && item.length > 5000) {
-          return res.status(400).json({ error: 'Individual text item exceeds maximum length of 5000 characters.' });
+        if (typeof item === 'string') {
+          const effectiveLength = getEffectiveTranslatableLength(item);
+          if (effectiveLength > 5000) {
+            return res.status(400).json({ error: 'Individual text item exceeds maximum length of 5000 characters.' });
+          }
         }
       }
       const translations = await translateBatchTexts(texts, validFrom, validTo);

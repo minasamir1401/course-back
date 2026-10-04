@@ -45,7 +45,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireManagedExam = void 0;
+exports.requireViewableExam = exports.requireManagedExam = void 0;
 const examsController = __importStar(require("../controllers/exams.controller"));
 const express_1 = require("express");
 const prisma_1 = __importDefault(require("../lib/prisma"));
@@ -70,6 +70,24 @@ const requireManagedExam = (req, res, next) => __awaiter(void 0, void 0, void 0,
     }
 });
 exports.requireManagedExam = requireManagedExam;
+const requireViewableExam = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const exam = yield prisma_1.default.exam.findUnique({
+            where: { id: req.params.id },
+            include: { schools: { select: { id: true } } },
+        });
+        if (!exam)
+            return res.status(404).json({ error: 'Exam not found' });
+        if (!(yield examsController.canViewExam(req.user, exam))) {
+            return res.status(403).json({ error: 'Access denied: You do not have permission to access this exam.' });
+        }
+        next();
+    }
+    catch (_a) {
+        return res.status(500).json({ error: 'Unable to verify exam access' });
+    }
+});
+exports.requireViewableExam = requireViewableExam;
 // ==========================================
 // 🏆 STUDENT PORTFOLIO (GAMIFICATION) API
 // ==========================================
@@ -120,7 +138,7 @@ router.delete('/api/exams/:id/modules/:moduleId/exams/:subExamId', auth_1.verify
 router.post('/api/exams/:id/modules/:moduleId/exams/:subExamId/move', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), exports.requireManagedExam, examsController.postMoveSubExamHandler);
 router.post('/api/exams/:id/modules/:moduleId/exams/move-all', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), exports.requireManagedExam, examsController.postMoveAllSubExamsHandler);
 router.post('/api/exams/:id/modules/:moduleId/move-module', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), exports.requireManagedExam, examsController.postMoveModuleHandler);
-router.get('/api/exams/:id/modules/:moduleId/exams/:subExamId/export-json', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), exports.requireManagedExam, examsController.getExamHandler31);
+router.get('/api/exams/:id/modules/:moduleId/exams/:subExamId/export-json', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), exports.requireViewableExam, examsController.getExamHandler31);
 router.post('/api/exams/:id/modules/:moduleId/exams/import-json', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), exports.requireManagedExam, shared_1.multerUpload.single('file'), examsController.postExamHandler32);
 // ==========================================
 // EXAM FOLDERS (MODULES) API

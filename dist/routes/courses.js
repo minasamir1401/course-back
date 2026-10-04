@@ -82,13 +82,13 @@ router.patch("/api/lessons/:id/assignments", auth_1.verifyToken, (0, auth_1.chec
 // PATCH: Update ONLY the attachments of a lesson
 router.patch("/api/lessons/:id/attachments", auth_1.verifyToken, (0, auth_1.checkRole)(["SCHOOL_ADMIN", "SUPER_ADMIN", "TEACHER"]), coursesController.patchCourseHandler20);
 // ════════════════════════════════════════════════════════════════════
-// 🔒 DELETE LESSON — Manual deletion only, SUPER_ADMIN exclusive.
+// DELETE LESSON — Manual deletion, subject to the global policy and school access.
 //    This is the ONLY endpoint that deletes lessons.
 //    The course-update endpoint (PUT) will NEVER delete lessons automatically.
 // ════════════════════════════════════════════════════════════════════
 router.delete("/api/lessons/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"]), coursesController.deleteCourseHandler21);
 // Delete Course
-router.delete("/api/school/courses/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN", "SCHOOL_ADMIN"]), coursesController.deleteCourseHandler22);
+router.delete("/api/school/courses/:id", auth_1.verifyToken, (0, auth_1.checkRole)(["SUPER_ADMIN", "SCHOOL_ADMIN", "TEACHER"]), coursesController.deleteCourseHandler22);
 // ════════════════════════════════════════════════════════════════════
 // ♻️ RESTORE FROM TRASH (The Nile) & TRASH LIST
 // ════════════════════════════════════════════════════════════════════

@@ -61,6 +61,7 @@ exports.previewDeduplication = previewDeduplication;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const systemSettings_service_1 = require("../services/systemSettings.service");
+const contentDeletionPolicy_1 = require("../utils/contentDeletionPolicy");
 const shared_1 = require("../shared");
 const db_backup_1 = require("../lib/db-backup");
 const trashDeleteHelper_1 = require("../services/trashDeleteHelper");
@@ -492,6 +493,14 @@ const putCourseHandler12 = (req, res) => __awaiter(void 0, void 0, void 0, funct
             },
         });
         const existingLessonsMap = new Map(existingLessons.map((l) => [l.id, l]));
+        const removesContent = Array.isArray(lessons) && lessons.some((lesson) => {
+            const previous = existingLessonsMap.get(String(lesson.id));
+            return previous && ['questions', 'assignments', 'slides']
+                .some(field => lesson[field] != null && (0, contentDeletionPolicy_1.removesSavedContent)(previous[field], lesson[field]));
+        });
+        if (removesContent && req.user.role !== "SUPER_ADMIN" && !(yield (0, systemSettings_service_1.isContentDeletionAllowed)())) {
+            return res.status(403).json({ error: "حذف المحتوى معطّل من الإدارة العامة. Content deletion is disabled by Super Admin." });
+        }
         const lessonsData = lessons && Array.isArray(lessons)
             ? yield Promise.all(lessons.map((lesson, index) => __awaiter(void 0, void 0, void 0, function* () {
                 var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
@@ -918,6 +927,7 @@ const getCourseHandler16 = (req, res) => __awaiter(void 0, void 0, void 0, funct
 });
 exports.getCourseHandler16 = getCourseHandler16;
 const patchCourseHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id } = req.params;
         const { slides } = req.body;
@@ -925,10 +935,22 @@ const patchCourseHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, fun
             return res.status(400).json({ error: "slides field is required" });
         const lesson = yield prisma_1.default.lesson.findUnique({
             where: { id },
-            select: { id: true, courseId: true },
+            select: { id: true, courseId: true, slides: true, course: { select: { schoolId: true } } },
         });
         if (!lesson)
             return res.status(404).json({ error: "Lesson not found" });
+        if (req.user.role !== "SUPER_ADMIN") {
+            if (!((_a = lesson.course) === null || _a === void 0 ? void 0 : _a.schoolId) || lesson.course.schoolId !== req.user.schoolId) {
+                return res.status(403).json({ error: "Access denied: content belongs to another school." });
+            }
+            if (req.user.role === "TEACHER" && !(yield prisma_1.default.teacherCourse.findFirst({
+                where: { teacherId: req.user.id, courseId: lesson.courseId }, select: { id: true },
+            })))
+                return res.status(403).json({ error: "You are not assigned to this course." });
+            if ((0, contentDeletionPolicy_1.removesSavedContent)(lesson.slides, slides) && !(yield (0, systemSettings_service_1.isContentDeletionAllowed)())) {
+                return res.status(403).json({ error: "Content deletion is disabled by Super Admin. حذف المحتوى معطّل من الإدارة العامة." });
+            }
+        }
         const sanitizedSlides = (0, shared_1.sanitizeDeep)(slides);
         const updated = yield prisma_1.default.lesson.update({
             where: { id },
@@ -963,6 +985,7 @@ const patchCourseHandler17 = (req, res) => __awaiter(void 0, void 0, void 0, fun
 });
 exports.patchCourseHandler17 = patchCourseHandler17;
 const patchCourseHandler18 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id } = req.params;
         const { questions } = req.body;
@@ -970,10 +993,22 @@ const patchCourseHandler18 = (req, res) => __awaiter(void 0, void 0, void 0, fun
             return res.status(400).json({ error: "questions field is required" });
         const lesson = yield prisma_1.default.lesson.findUnique({
             where: { id },
-            select: { id: true, courseId: true },
+            select: { id: true, courseId: true, questions: true, course: { select: { schoolId: true } } },
         });
         if (!lesson)
             return res.status(404).json({ error: "Lesson not found" });
+        if (req.user.role !== "SUPER_ADMIN") {
+            if (!((_a = lesson.course) === null || _a === void 0 ? void 0 : _a.schoolId) || lesson.course.schoolId !== req.user.schoolId) {
+                return res.status(403).json({ error: "Access denied: content belongs to another school." });
+            }
+            if (req.user.role === "TEACHER" && !(yield prisma_1.default.teacherCourse.findFirst({
+                where: { teacherId: req.user.id, courseId: lesson.courseId }, select: { id: true },
+            })))
+                return res.status(403).json({ error: "You are not assigned to this course." });
+            if ((0, contentDeletionPolicy_1.removesSavedContent)(lesson.questions, questions) && !(yield (0, systemSettings_service_1.isContentDeletionAllowed)())) {
+                return res.status(403).json({ error: "Content deletion is disabled by Super Admin. حذف المحتوى معطّل من الإدارة العامة." });
+            }
+        }
         const sanitizedQuestions = (0, shared_1.sanitizeDeep)(questions);
         const updated = yield prisma_1.default.lesson.update({
             where: { id },
@@ -1008,6 +1043,7 @@ const patchCourseHandler18 = (req, res) => __awaiter(void 0, void 0, void 0, fun
 });
 exports.patchCourseHandler18 = patchCourseHandler18;
 const patchCourseHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { id } = req.params;
         const { assignments } = req.body;
@@ -1015,10 +1051,22 @@ const patchCourseHandler19 = (req, res) => __awaiter(void 0, void 0, void 0, fun
             return res.status(400).json({ error: "assignments field is required" });
         const lesson = yield prisma_1.default.lesson.findUnique({
             where: { id },
-            select: { id: true, courseId: true },
+            select: { id: true, courseId: true, assignments: true, course: { select: { schoolId: true } } },
         });
         if (!lesson)
             return res.status(404).json({ error: "Lesson not found" });
+        if (req.user.role !== "SUPER_ADMIN") {
+            if (!((_a = lesson.course) === null || _a === void 0 ? void 0 : _a.schoolId) || lesson.course.schoolId !== req.user.schoolId) {
+                return res.status(403).json({ error: "Access denied: content belongs to another school." });
+            }
+            if (req.user.role === "TEACHER" && !(yield prisma_1.default.teacherCourse.findFirst({
+                where: { teacherId: req.user.id, courseId: lesson.courseId }, select: { id: true },
+            })))
+                return res.status(403).json({ error: "You are not assigned to this course." });
+            if ((0, contentDeletionPolicy_1.removesSavedContent)(lesson.assignments, assignments) && !(yield (0, systemSettings_service_1.isContentDeletionAllowed)())) {
+                return res.status(403).json({ error: "Content deletion is disabled by Super Admin. حذف المحتوى معطّل من الإدارة العامة." });
+            }
+        }
         const sanitizedAssignments = (0, shared_1.sanitizeDeep)(assignments);
         const updated = yield prisma_1.default.lesson.update({
             where: { id },
@@ -1177,6 +1225,8 @@ const deleteCourseHandler22 = (req, res) => __awaiter(void 0, void 0, void 0, fu
         // Authorization check
         const existingCourse = yield prisma_1.default.course.findUnique({ where: { id } });
         if (!existingCourse) {
+            if (req.user.role !== "SUPER_ADMIN")
+                return res.status(404).json({ error: "Course not found" });
             // It's already deleted locally but still lingering in the Cloud Backup!
             // Force a full cloud sync to overwrite the cloud and clear the ghost course
             const { syncAllCoursesToCloud } = yield Promise.resolve().then(() => __importStar(require("../lib/db-backup")));
@@ -1193,13 +1243,20 @@ const deleteCourseHandler22 = (req, res) => __awaiter(void 0, void 0, void 0, fu
                 });
             }
         }
-        if (req.user.role === "SCHOOL_ADMIN" &&
-            existingCourse.schoolId !== req.user.schoolId) {
+        if (req.user.role !== "SUPER_ADMIN" &&
+            (!existingCourse.schoolId || existingCourse.schoolId !== req.user.schoolId)) {
             return res
                 .status(403)
                 .json({
                 error: "Access denied: You can only delete courses belonging to your school.",
             });
+        }
+        if (req.user.role === "TEACHER") {
+            const assignment = yield prisma_1.default.teacherCourse.findFirst({
+                where: { teacherId: req.user.id, courseId: id }, select: { id: true },
+            });
+            if (!assignment)
+                return res.status(403).json({ error: "You are not assigned to this course." });
         }
         // ♻️ Soft Delete: move to trash instead of hard delete
         yield prisma_1.default.course.update({
