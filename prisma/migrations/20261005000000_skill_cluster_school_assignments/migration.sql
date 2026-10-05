@@ -1,0 +1,1 @@
+ALTER TABLE "SkillCluster" ADD COLUMN IF NOT EXISTS "schoolIds" TEXT;

@@ -465,6 +465,7 @@ model SkillCluster {
   grade       String
   isCentral   Boolean        @default(false)
   schoolId    String?
+  schoolIds   String?        // JSON array of assigned school IDs; schoolId retains ownership
   creatorId   String?
   school      School?        @relation("SkillClusterOwner", fields: [schoolId], references: [id])
   creator     User?          @relation("SkillClusterCreator", fields: [creatorId], references: [id])

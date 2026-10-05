@@ -23,6 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const dashboardSeries_1 = require("../utils/dashboardSeries");
 const authSession_1 = require("../utils/authSession");
 const express_1 = require("express");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
@@ -640,7 +641,7 @@ router.put('/api/admin/users/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['S
     }
 }));
 // Delete User (Soft Delete)
-router.delete('/api/admin/users/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.delete('/api/admin/users/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
         const userToDelete = yield prisma_1.default.user.findUnique({ where: { id } });
@@ -649,7 +650,7 @@ router.delete('/api/admin/users/:id', auth_1.verifyToken, (0, auth_1.checkRole)(
         }
         // Security check for School Admin
         if (req.user.role === 'SCHOOL_ADMIN') {
-            if (!userToDelete || userToDelete.schoolId !== req.user.schoolId) {
+            if (!userToDelete || !req.user.schoolId || userToDelete.schoolId !== req.user.schoolId || !['STUDENT', 'TEACHER', 'PARENT'].includes(userToDelete.role)) {
                 return res.status(403).json({ error: 'غير مسموح لك بحذف مستخدم خارج مدرستك.' });
             }
         }
@@ -691,6 +692,7 @@ router.get(['/api/admin/stats', '/api/super-admin/stats'], auth_1.verifyToken, (
                 include: { _count: { select: { users: { where: { role: 'STUDENT' } } } } }
             })
         ]);
+        const examsActivityData = yield (0, dashboardSeries_1.examActivitySeries)(prisma_1.default);
         const interactionRate = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
         const recentSchools = recentSchoolsData.map(s => ({
             id: s.id,
@@ -719,7 +721,8 @@ router.get(['/api/admin/stats', '/api/super-admin/stats'], auth_1.verifyToken, (
             activeExams,
             centralExamsCount,
             recentSchools,
-            schoolPerformanceData
+            schoolPerformanceData,
+            examsActivityData
         });
     }
     catch (error) {

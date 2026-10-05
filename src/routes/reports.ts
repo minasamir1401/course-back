@@ -1,3 +1,4 @@
+import { schoolPerformanceSeries } from '../utils/dashboardSeries';
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -29,6 +30,7 @@ const router = Router();
 router.get('/api/reports/school', verifyToken, checkRole(['SCHOOL_ADMIN', 'SUPER_ADMIN', 'TEACHER']), checkSchoolAccess, async (req: any, res: any) => {
   const targetSchoolId = req.user.role === 'SUPER_ADMIN' ? req.query.schoolId : req.user.schoolId;
 
+  if (!targetSchoolId) return res.status(400).json({error:'schoolId is required'});
   try {
     const cacheKey = `school_reports_${targetSchoolId}`;
     const cached = await getCacheAsync(cacheKey);
@@ -48,7 +50,11 @@ router.get('/api/reports/school', verifyToken, checkRole(['SCHOOL_ADMIN', 'SUPER
     const averageScore = Math.round(submissionStats._avg.percentage || 0);
     const totalExamsTaken = submissionStats._count.id;
 
-    const stats = { schoolId: targetSchoolId, studentsCount, teachersCount, averageScore, totalExamsTaken };
+    const [performanceData, upcomingExams] = await Promise.all([
+      schoolPerformanceSeries(prisma, String(targetSchoolId)),
+      prisma.exam.findMany({where:{deletedAt:null,status:'PUBLISHED',startDate:{gte:new Date()},OR:[{isCentral:true},{schoolId:String(targetSchoolId)},{schools:{some:{id:String(targetSchoolId)}}}]},select:{id:true,title:true,startDate:true},orderBy:{startDate:'asc'},take:5})
+    ]);
+    const stats = { schoolId: targetSchoolId, studentsCount, teachersCount, averageScore, totalExamsTaken, performanceData, upcomingExams };
     setCache(cacheKey, stats);
     res.json(stats);
   } catch (error) {
@@ -132,13 +138,16 @@ router.get('/api/reports/exam-attendance', verifyToken, checkRole(['SUPER_ADMIN'
     const skip = (page - 1) * limit;
 
     // Build user filter
-    const userWhere: any = { role: 'STUDENT', schoolId: targetSchoolId };
+    const userWhere: any = { role: 'STUDENT', schoolId: targetSchoolId, deletedAt: null };
     if (grade) {
       userWhere.grade = grade;
     }
 
     // Count total students for pagination metadata
-    const totalStudents = await prisma.user.count({ where: userWhere });
+    const [totalStudents, attendedCount] = await Promise.all([
+      prisma.user.count({where:userWhere}),
+      prisma.user.count({where:{...userWhere, examSubmissions:{some:{examId:String(examId)}}}})
+    ]);
 
     // Get paginated students
     const students = await prisma.user.findMany({
@@ -183,6 +192,8 @@ router.get('/api/reports/exam-attendance', verifyToken, checkRole(['SUPER_ADMIN'
       attended,
       missed,
       total: totalStudents,
+      attendedCount,
+      missedCount: totalStudents - attendedCount,
       // Pagination metadata (new — backward compatible addition)
       pagination: {
         page,

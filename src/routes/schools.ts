@@ -1,3 +1,4 @@
+import { examActivitySeries } from '../utils/dashboardSeries';
 import { setSessionCookies } from '../utils/authSession';
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
@@ -688,7 +689,7 @@ router.put('/api/admin/users/:id', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOO
 });
 
 // Delete User (Soft Delete)
-router.delete('/api/admin/users/:id', verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
+router.delete('/api/admin/users/:id', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN']), async (req: any, res: any) => {
   try {
     const { id } = req.params;
 
@@ -699,7 +700,7 @@ router.delete('/api/admin/users/:id', verifyToken, checkRole(['SUPER_ADMIN']), a
 
     // Security check for School Admin
     if (req.user.role === 'SCHOOL_ADMIN') {
-      if (!userToDelete || userToDelete.schoolId !== req.user.schoolId) {
+      if (!userToDelete || !req.user.schoolId || userToDelete.schoolId !== req.user.schoolId || !['STUDENT', 'TEACHER', 'PARENT'].includes(userToDelete.role)) {
         return res.status(403).json({ error: 'غير مسموح لك بحذف مستخدم خارج مدرستك.' });
       }
     }
@@ -743,6 +744,7 @@ router.get(['/api/admin/stats', '/api/super-admin/stats'], verifyToken, checkRol
       })
     ]);
 
+    const examsActivityData = await examActivitySeries(prisma);
     const interactionRate = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
 
     const recentSchools = recentSchoolsData.map(s => ({
@@ -774,7 +776,8 @@ router.get(['/api/admin/stats', '/api/super-admin/stats'], verifyToken, checkRol
       activeExams,
       centralExamsCount,
       recentSchools,
-      schoolPerformanceData
+      schoolPerformanceData,
+      examsActivityData
     });
   } catch (error) {
     console.error('❌ Stats error:', error);

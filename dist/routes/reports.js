@@ -12,6 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const dashboardSeries_1 = require("../utils/dashboardSeries");
 const express_1 = require("express");
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
@@ -20,6 +21,8 @@ const router = (0, express_1.Router)();
 // --- Extracted from lines 3851-3979 ---
 router.get('/api/reports/school', auth_1.verifyToken, (0, auth_1.checkRole)(['SCHOOL_ADMIN', 'SUPER_ADMIN', 'TEACHER']), auth_1.checkSchoolAccess, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const targetSchoolId = req.user.role === 'SUPER_ADMIN' ? req.query.schoolId : req.user.schoolId;
+    if (!targetSchoolId)
+        return res.status(400).json({ error: 'schoolId is required' });
     try {
         const cacheKey = `school_reports_${targetSchoolId}`;
         const cached = yield (0, shared_1.getCacheAsync)(cacheKey);
@@ -37,7 +40,11 @@ router.get('/api/reports/school', auth_1.verifyToken, (0, auth_1.checkRole)(['SC
         ]);
         const averageScore = Math.round(submissionStats._avg.percentage || 0);
         const totalExamsTaken = submissionStats._count.id;
-        const stats = { schoolId: targetSchoolId, studentsCount, teachersCount, averageScore, totalExamsTaken };
+        const [performanceData, upcomingExams] = yield Promise.all([
+            (0, dashboardSeries_1.schoolPerformanceSeries)(prisma_1.default, String(targetSchoolId)),
+            prisma_1.default.exam.findMany({ where: { deletedAt: null, status: 'PUBLISHED', startDate: { gte: new Date() }, OR: [{ isCentral: true }, { schoolId: String(targetSchoolId) }, { schools: { some: { id: String(targetSchoolId) } } }] }, select: { id: true, title: true, startDate: true }, orderBy: { startDate: 'asc' }, take: 5 })
+        ]);
+        const stats = { schoolId: targetSchoolId, studentsCount, teachersCount, averageScore, totalExamsTaken, performanceData, upcomingExams };
         (0, shared_1.setCache)(cacheKey, stats);
         res.json(stats);
     }
@@ -112,12 +119,15 @@ router.get('/api/reports/exam-attendance', auth_1.verifyToken, (0, auth_1.checkR
         const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 100));
         const skip = (page - 1) * limit;
         // Build user filter
-        const userWhere = { role: 'STUDENT', schoolId: targetSchoolId };
+        const userWhere = { role: 'STUDENT', schoolId: targetSchoolId, deletedAt: null };
         if (grade) {
             userWhere.grade = grade;
         }
         // Count total students for pagination metadata
-        const totalStudents = yield prisma_1.default.user.count({ where: userWhere });
+        const [totalStudents, attendedCount] = yield Promise.all([
+            prisma_1.default.user.count({ where: userWhere }),
+            prisma_1.default.user.count({ where: Object.assign(Object.assign({}, userWhere), { examSubmissions: { some: { examId: String(examId) } } }) })
+        ]);
         // Get paginated students
         const students = yield prisma_1.default.user.findMany({
             where: userWhere,
@@ -157,6 +167,8 @@ router.get('/api/reports/exam-attendance', auth_1.verifyToken, (0, auth_1.checkR
             attended,
             missed,
             total: totalStudents,
+            attendedCount,
+            missedCount: totalStudents - attendedCount,
             // Pagination metadata (new — backward compatible addition)
             pagination: {
                 page,

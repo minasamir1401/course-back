@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -12,54 +45,48 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const systemSettings_service_1 = require("../services/systemSettings.service");
+const multer_1 = __importDefault(require("multer"));
+const XLSX = __importStar(require("xlsx"));
+const skillExcel_1 = require("../utils/skillExcel");
+const skillAccess_1 = require("../utils/skillAccess");
 const express_1 = require("express");
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
 const shared_1 = require("../shared");
 const router = (0, express_1.Router)();
+// One central setting governs every deletion path, including nested skill content.
+const enforceDeletionPolicy = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        if (req.user.role !== 'SUPER_ADMIN' && !(yield (0, systemSettings_service_1.isContentDeletionAllowed)()))
+            return res.status(403).json({ error: 'Content deletion is protected by Super Admin. Enable Content & Question Deletion Policy first.' });
+        next();
+    }
+    catch (_a) {
+        res.status(503).json({ error: 'Could not verify deletion policy. Please retry.' });
+    }
+});
 // --- Extracted from lines 4383-5216 ---
 router.get('/api/skills-hub/clusters', auth_1.verifyToken, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { grade, subject } = req.query;
         const user = req.user;
-        const where = {};
+        const filters = [];
         if (subject)
-            where.subject = subject;
-        if (grade) {
-            const studentGrades = (0, shared_1.getStudentGradeAndStage)(grade);
-            const gradeOrConditions = [];
-            for (const g of studentGrades) {
-                gradeOrConditions.push({ grade: { contains: g } });
-            }
-            where.AND = [
-                ...(where.AND || []),
-                { OR: gradeOrConditions }
-            ];
-        }
+            filters.push({ subject: String(subject) });
+        const targetGrade = user.role === 'STUDENT' ? user.grade : grade;
+        if (targetGrade)
+            filters.push((0, skillAccess_1.skillGradeWhere)((0, shared_1.getStudentGradeAndStage)(String(targetGrade))));
         if (user.role === 'SUPER_ADMIN') {
-            const { schoolId } = req.query;
-            if (schoolId) {
-                where.OR = [
-                    { schoolId: schoolId },
-                    { schoolId: { contains: schoolId } }
-                ];
-            }
-        }
-        else if (user.role === 'TEACHER') {
-            where.OR = [
-                { creatorId: user.id }
-            ];
-        }
-        else if (user.role === 'SCHOOL_ADMIN' || user.schoolId) {
-            where.OR = [
-                { isCentral: true },
-                { schoolId: user.schoolId },
-                { schoolId: { contains: user.schoolId } }
-            ];
+            if (req.query.schoolId)
+                filters.push({ OR: [{ schoolId: String(req.query.schoolId) }, { schoolIds: { contains: JSON.stringify(String(req.query.schoolId)) } }] });
         }
         else {
-            where.isCentral = true;
+            filters.push((0, skillAccess_1.skillSchoolWhere)(user.schoolId));
+            if (user.role === 'STUDENT' && !user.grade)
+                return res.json([]);
         }
+        const where = { AND: filters };
         const clusters = yield prisma_1.default.skillCluster.findMany({
             where,
             include: {
@@ -72,7 +99,7 @@ router.get('/api/skills-hub/clusters', auth_1.verifyToken, (req, res) => __await
             },
             orderBy: { createdAt: 'desc' }
         });
-        res.json(clusters);
+        res.json(clusters.map(skillAccess_1.skillClusterPayload));
     }
     catch (error) {
         console.error('Error fetching skill clusters:', error);
@@ -81,35 +108,19 @@ router.get('/api/skills-hub/clusters', auth_1.verifyToken, (req, res) => __await
 }));
 // Create a Skill Cluster
 router.post('/api/skills-hub/clusters', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
         const { name, description, subject, isCentral } = req.body;
         const rawGrade = req.body.grades || req.body.grade;
         const grade = Array.isArray(rawGrade) ? JSON.stringify(rawGrade) : String(rawGrade || '');
-        const rawSchool = req.body.schoolIds !== undefined ? req.body.schoolIds : req.body.schoolId;
-        let schoolId = null;
-        if (req.user.role === 'SUPER_ADMIN') {
-            if (!isCentral) {
-                if (Array.isArray(rawSchool)) {
-                    schoolId = rawSchool[0] || null;
-                }
-                else if (typeof rawSchool === 'string' && rawSchool.startsWith('[')) {
-                    try {
-                        const parsed = JSON.parse(rawSchool);
-                        schoolId = Array.isArray(parsed) ? (parsed[0] || null) : rawSchool;
-                    }
-                    catch (_a) {
-                        schoolId = rawSchool || null;
-                    }
-                }
-                else {
-                    schoolId = rawSchool || null;
-                }
-            }
-        }
-        else {
-            schoolId = req.user.schoolId || null;
-        }
-        if (!name || !subject || !grade) {
+        const rawSchool = (_a = req.body.schoolIds) !== null && _a !== void 0 ? _a : req.body.schoolId;
+        const schoolIds = req.user.role === 'SUPER_ADMIN' ? (isCentral ? [] : (0, skillAccess_1.skillSelections)(rawSchool)) : (0, skillAccess_1.skillSelections)(req.user.schoolId);
+        const schoolId = schoolIds[0] || null;
+        if (!isCentral && schoolIds.length === 0)
+            return res.status(400).json({ error: 'Select at least one school for a non-central cluster.' });
+        if (schoolIds.length && (yield prisma_1.default.school.count({ where: { id: { in: schoolIds } } })) !== schoolIds.length)
+            return res.status(400).json({ error: 'Invalid school assignment' });
+        if (!name || !subject || (0, skillAccess_1.skillSelections)(grade).length === 0) {
             return res.status(400).json({ error: 'Missing required fields: name, subject, grade' });
         }
         if (req.user.role !== 'SUPER_ADMIN' && isCentral) {
@@ -136,10 +147,11 @@ router.post('/api/skills-hub/clusters', auth_1.verifyToken, (0, auth_1.checkRole
                 grade,
                 isCentral: req.user.role === 'SUPER_ADMIN' ? !!isCentral : false,
                 creatorId: req.user.id,
-                schoolId
+                schoolId,
+                schoolIds: JSON.stringify(schoolIds)
             }
         });
-        res.json({ message: 'Skill Cluster created successfully', cluster });
+        res.json({ message: 'Skill Cluster created successfully', cluster: (0, skillAccess_1.skillClusterPayload)(cluster) });
     }
     catch (error) {
         console.error('Error creating skill cluster:', error);
@@ -148,6 +160,7 @@ router.post('/api/skills-hub/clusters', auth_1.verifyToken, (0, auth_1.checkRole
 }));
 // Update a Skill Cluster
 router.put('/api/skills-hub/clusters/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
     try {
         const { id } = req.params;
         const { name, description, subject, isCentral } = req.body;
@@ -157,37 +170,20 @@ router.put('/api/skills-hub/clusters/:id', auth_1.verifyToken, (0, auth_1.checkR
         if (!existingCluster) {
             return res.status(404).json({ error: 'Skill Cluster not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && existingCluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canManageSkillCluster)(req.user, existingCluster)) {
             return res.status(403).json({ error: 'Access denied: You can only edit your school\'s clusters.' });
         }
         if (req.user.role !== 'SUPER_ADMIN' && isCentral !== undefined && isCentral !== existingCluster.isCentral) {
             return res.status(403).json({ error: 'Only Super Admin can modify centrality of clusters.' });
         }
-        const rawSchool = req.body.schoolIds !== undefined ? req.body.schoolIds : req.body.schoolId;
-        let schoolId = undefined;
-        if (req.user.role === 'SUPER_ADMIN') {
-            const checkIsCentral = isCentral !== undefined ? !!isCentral : existingCluster.isCentral;
-            if (checkIsCentral) {
-                schoolId = null;
-            }
-            else if (rawSchool !== undefined) {
-                if (Array.isArray(rawSchool)) {
-                    schoolId = rawSchool[0] || null;
-                }
-                else if (typeof rawSchool === 'string' && rawSchool.startsWith('[')) {
-                    try {
-                        const parsed = JSON.parse(rawSchool);
-                        schoolId = Array.isArray(parsed) ? (parsed[0] || null) : rawSchool;
-                    }
-                    catch (_a) {
-                        schoolId = rawSchool || null;
-                    }
-                }
-                else {
-                    schoolId = rawSchool || null;
-                }
-            }
-        }
+        const rawSchool = (_a = req.body.schoolIds) !== null && _a !== void 0 ? _a : req.body.schoolId;
+        const central = req.user.role === 'SUPER_ADMIN' && isCentral !== undefined ? !!isCentral : existingCluster.isCentral;
+        const schoolIds = central ? [] : (req.user.role === 'SUPER_ADMIN' && rawSchool !== undefined ? (0, skillAccess_1.skillSelections)(rawSchool) : (0, skillAccess_1.skillSelections)((_b = existingCluster.schoolIds) !== null && _b !== void 0 ? _b : existingCluster.schoolId));
+        const schoolId = schoolIds[0] || null;
+        if (!central && !schoolId)
+            return res.status(400).json({ error: 'Select at least one school for a non-central cluster.' });
+        if (schoolIds.length && (yield prisma_1.default.school.count({ where: { id: { in: schoolIds } } })) !== schoolIds.length)
+            return res.status(400).json({ error: 'Invalid school assignment' });
         const checkSubject = subject !== undefined ? subject : existingCluster.subject;
         const checkGrade = grade !== undefined ? grade : existingCluster.grade;
         const isGrade123 = (g) => {
@@ -205,9 +201,9 @@ router.put('/api/skills-hub/clusters/:id', auth_1.verifyToken, (0, auth_1.checkR
         }
         const cluster = yield prisma_1.default.skillCluster.update({
             where: { id },
-            data: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (name !== undefined && { name })), (description !== undefined && { description })), (subject !== undefined && { subject })), (grade !== undefined && { grade })), (isCentral !== undefined && req.user.role === 'SUPER_ADMIN' && { isCentral: !!isCentral })), (schoolId !== undefined && req.user.role === 'SUPER_ADMIN' && { schoolId }))
+            data: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (name !== undefined && { name })), (description !== undefined && { description })), (subject !== undefined && { subject })), (grade !== undefined && { grade })), (isCentral !== undefined && req.user.role === 'SUPER_ADMIN' && { isCentral: !!isCentral })), (req.user.role === 'SUPER_ADMIN' && { schoolId, schoolIds: JSON.stringify(schoolIds) }))
         });
-        res.json({ message: 'Skill Cluster updated successfully', cluster });
+        res.json({ message: 'Skill Cluster updated successfully', cluster: (0, skillAccess_1.skillClusterPayload)(cluster) });
     }
     catch (error) {
         console.error('Error updating skill cluster:', error);
@@ -215,14 +211,14 @@ router.put('/api/skills-hub/clusters/:id', auth_1.verifyToken, (0, auth_1.checkR
     }
 }));
 // Delete a Skill Cluster
-router.delete('/api/skills-hub/clusters/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.delete('/api/skills-hub/clusters/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), enforceDeletionPolicy, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
         const existingCluster = yield prisma_1.default.skillCluster.findUnique({ where: { id } });
         if (!existingCluster) {
             return res.status(404).json({ error: 'Skill Cluster not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && existingCluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canDeleteSkillCluster)(req.user, existingCluster)) {
             return res.status(403).json({ error: 'Access denied: You can only delete your school\'s clusters.' });
         }
         yield prisma_1.default.skillCluster.delete({ where: { id } });
@@ -242,7 +238,7 @@ router.get('/api/skills-hub/clusters/:clusterId/lessons', auth_1.verifyToken, (r
         if (!cluster) {
             return res.status(404).json({ error: 'Skill Cluster not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && !cluster.isCentral && cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canViewSkillCluster)(req.user, cluster, (0, shared_1.getStudentGradeAndStage)(req.user.grade))) {
             return res.status(403).json({ error: 'Access denied' });
         }
         const lessons = yield prisma_1.default.skillLesson.findMany({
@@ -274,7 +270,7 @@ router.post(['/api/skills-hub/lessons', '/api/skills-hub/clusters/:clusterId/les
         if (!cluster) {
             return res.status(404).json({ error: 'Skill Cluster not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && cluster.schoolId && cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canManageSkillCluster)(req.user, cluster)) {
             return res.status(403).json({ error: 'Access denied: Cannot add lessons to this cluster.' });
         }
         const lesson = yield prisma_1.default.skillLesson.create({
@@ -308,7 +304,7 @@ router.put('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.checkRo
         if (!existingLesson) {
             return res.status(404).json({ error: 'Skill Lesson not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && existingLesson.cluster.schoolId && existingLesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canManageSkillCluster)(req.user, existingLesson.cluster)) {
             return res.status(403).json({ error: 'Access denied: Cannot edit lessons in this cluster.' });
         }
         const lesson = yield prisma_1.default.skillLesson.update({
@@ -327,7 +323,7 @@ router.put('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.checkRo
     }
 }));
 // Delete a Skill Lesson
-router.delete('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.delete('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), enforceDeletionPolicy, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
         const existingLesson = yield prisma_1.default.skillLesson.findUnique({
@@ -337,7 +333,7 @@ router.delete('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.chec
         if (!existingLesson) {
             return res.status(404).json({ error: 'Skill Lesson not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && existingLesson.cluster.schoolId && existingLesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canDeleteSkillCluster)(req.user, existingLesson.cluster)) {
             return res.status(403).json({ error: 'Access denied: Cannot delete lessons in this cluster.' });
         }
         yield prisma_1.default.skillLesson.delete({ where: { id } });
@@ -347,6 +343,44 @@ router.delete('/api/skills-hub/lessons/:id', auth_1.verifyToken, (0, auth_1.chec
         console.error('Error deleting skill lesson:', error);
         res.status(500).json({ error: 'Error deleting skill lesson', details: error.message });
     }
+}));
+// Memory upload avoids retaining rejected/imported spreadsheets on disk.
+const excelUpload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+router.post('/api/skills-hub/lessons/:id/upload-excel', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const lesson = yield prisma_1.default.skillLesson.findUnique({ where: { id: req.params.id }, include: { cluster: true } }).catch(() => null);
+    if (!lesson)
+        return res.status(404).json({ error: 'Lesson not found' });
+    if (!(0, skillAccess_1.canManageSkillCluster)(req.user, lesson.cluster))
+        return res.status(403).json({ error: 'Access denied' });
+    excelUpload.single('file')(req, res, (uploadError) => __awaiter(void 0, void 0, void 0, function* () {
+        if (uploadError)
+            return res.status(400).json({ error: uploadError.message });
+        if (!req.file || !/\.xlsx?$/i.test(req.file.originalname))
+            return res.status(400).json({ error: 'Upload an .xls or .xlsx file' });
+        let data;
+        try {
+            const workbook = XLSX.read(req.file.buffer, { type: 'buffer', sheetRows: 1002 });
+            if (!workbook.SheetNames.length)
+                throw new Error('Empty workbook');
+            data = (0, skillExcel_1.parseSkillExcelRows)(XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' }), lesson.id);
+            data = (0, shared_1.sanitizeDeep)(data);
+        }
+        catch (error) {
+            return res.status(400).json({ error: error.message });
+        }
+        try {
+            const result = yield prisma_1.default.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+                const current = yield tx.skillLesson.findUnique({ where: { id: lesson.id }, include: { cluster: true } });
+                if (!current || !(0, skillAccess_1.canManageSkillCluster)(req.user, current.cluster))
+                    throw new Error('Access denied');
+                return tx.interactiveActivity.createMany({ data });
+            }));
+            res.json({ message: 'Activities imported', count: result.count });
+        }
+        catch (error) {
+            res.status(error.message === 'Access denied' ? 403 : 500).json({ error: 'Could not import activities' });
+        }
+    }));
 }));
 // --- 3. INTERACTIVE ACTIVITIES CRUD ---
 // Get all activities for a lesson
@@ -360,14 +394,14 @@ router.get('/api/skills-hub/lessons/:lessonId/activities', auth_1.verifyToken, (
         if (!lesson) {
             return res.status(404).json({ error: 'Skill Lesson not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && !lesson.cluster.isCentral && lesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canViewSkillCluster)(req.user, lesson.cluster, (0, shared_1.getStudentGradeAndStage)(req.user.grade))) {
             return res.status(403).json({ error: 'Access denied' });
         }
         const activities = yield prisma_1.default.interactiveActivity.findMany({
             where: { lessonId },
             orderBy: { createdAt: 'asc' }
         });
-        const parsedActivities = activities.map((act) => (Object.assign(Object.assign({}, act), { options: typeof act.options === 'string' && (act.options.startsWith('{') || act.options.startsWith('[')) ? JSON.parse(act.options) : act.options, correctAnswer: typeof act.correctAnswer === 'string' && (act.correctAnswer.startsWith('{') || act.correctAnswer.startsWith('[')) ? JSON.parse(act.correctAnswer) : act.correctAnswer })));
+        const parsedActivities = activities.map(act => (0, skillAccess_1.skillActivityPayload)(act, req.user.role === 'STUDENT'));
         res.json(parsedActivities);
     }
     catch (error) {
@@ -390,10 +424,10 @@ router.get('/api/skills-hub/activities/:id', auth_1.verifyToken, (req, res) => _
         if (!activity) {
             return res.status(404).json({ error: 'Activity not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && !activity.lesson.cluster.isCentral && activity.lesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canViewSkillCluster)(req.user, activity.lesson.cluster, (0, shared_1.getStudentGradeAndStage)(req.user.grade))) {
             return res.status(403).json({ error: 'Access denied' });
         }
-        const responseData = Object.assign(Object.assign({}, activity), { options: typeof activity.options === 'string' && (activity.options.startsWith('{') || activity.options.startsWith('[')) ? JSON.parse(activity.options) : activity.options, correctAnswer: typeof activity.correctAnswer === 'string' && (activity.correctAnswer.startsWith('{') || activity.correctAnswer.startsWith('[')) ? JSON.parse(activity.correctAnswer) : activity.correctAnswer });
+        const responseData = (0, skillAccess_1.skillActivityPayload)(activity, req.user.role === 'STUDENT');
         res.json(responseData);
     }
     catch (error) {
@@ -424,7 +458,7 @@ router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRo
         if (!lesson) {
             return res.status(404).json({ error: 'Skill Lesson not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && lesson.cluster.schoolId && lesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canManageSkillCluster)(req.user, lesson.cluster)) {
             return res.status(403).json({ error: 'Access denied: Cannot add activities in this cluster.' });
         }
         const activity = yield prisma_1.default.interactiveActivity.create({
@@ -477,7 +511,7 @@ router.put('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.chec
         if (!existingActivity) {
             return res.status(404).json({ error: 'Interactive Activity not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && existingActivity.lesson.cluster.schoolId && existingActivity.lesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canManageSkillCluster)(req.user, existingActivity.lesson.cluster)) {
             return res.status(403).json({ error: 'Access denied: Cannot edit activities in this cluster.' });
         }
         const activity = yield prisma_1.default.interactiveActivity.update({
@@ -519,7 +553,7 @@ router.put('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.chec
     }
 }));
 // Delete an Interactive Activity
-router.delete('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+router.delete('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), enforceDeletionPolicy, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { id } = req.params;
         const existingActivity = yield prisma_1.default.interactiveActivity.findUnique({
@@ -529,7 +563,7 @@ router.delete('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.c
         if (!existingActivity) {
             return res.status(404).json({ error: 'Interactive Activity not found' });
         }
-        if (req.user.role !== 'SUPER_ADMIN' && existingActivity.lesson.cluster.schoolId && existingActivity.lesson.cluster.schoolId !== req.user.schoolId) {
+        if (!(0, skillAccess_1.canDeleteSkillCluster)(req.user, existingActivity.lesson.cluster)) {
             return res.status(403).json({ error: 'Access denied: Cannot delete activities in this cluster.' });
         }
         yield prisma_1.default.interactiveActivity.delete({ where: { id } });
@@ -553,12 +587,14 @@ router.post('/api/skills-hub/activities/:id/attempt', auth_1.verifyToken, (req, 
         if (!activity) {
             return res.status(404).json({ error: 'Activity not found' });
         }
-        if (user.role !== 'SUPER_ADMIN' && !activity.lesson.cluster.isCentral && activity.lesson.cluster.schoolId !== user.schoolId) {
+        if (!(0, skillAccess_1.canViewSkillCluster)(user, activity.lesson.cluster, (0, shared_1.getStudentGradeAndStage)(user.grade))) {
             return res.status(403).json({ error: 'Access denied' });
         }
         const mockQuestion = {
             type: activity.type,
             correctAnswer: activity.correctAnswer,
+            optionsEn: activity.optionsEn,
+            correctAnswerEn: activity.correctAnswerEn,
             options: activity.options // ✅ required for MCQ grading in isAnswerCorrect
         };
         const isCorrect = (0, shared_1.isAnswerCorrect)(mockQuestion, selectedAnswer);
@@ -700,29 +736,13 @@ router.get('/api/skills-hub/progress', auth_1.verifyToken, (req, res) => __await
         if (!targetUser) {
             return res.status(404).json({ error: 'User not found' });
         }
-        const clusterWhere = {};
-        if (subject)
-            clusterWhere.subject = subject;
-        const targetGrade = grade || targetUser.grade;
-        const isGrade123 = (g) => [
-            "الصف الأول الابتدائي",
-            "الصف الثاني الابتدائي",
-            "الصف الثالث الابتدائي"
-        ].includes(g);
-        if (subject === 'العلوم' && targetGrade && isGrade123(targetGrade)) {
-            return res.status(400).json({ error: 'Science (العلوم) is not available for Grade 1, 2, and 3 Primary.' });
+        if (targetUserId !== user.id && (targetUser.role !== 'STUDENT' || (user.role !== 'SUPER_ADMIN' && (!user.schoolId || targetUser.schoolId !== user.schoolId)))) {
+            return res.status(403).json({ error: 'Access denied' });
         }
-        if (targetGrade)
-            clusterWhere.grade = targetGrade;
-        if (targetUser.schoolId) {
-            clusterWhere.OR = [
-                { isCentral: true },
-                { schoolId: targetUser.schoolId }
-            ];
-        }
-        else {
-            clusterWhere.isCentral = true;
-        }
+        const targetGrade = user.role === 'STUDENT' ? targetUser.grade : (String(grade || '') || targetUser.grade);
+        if (!targetGrade)
+            return res.json({ userId: targetUserId, grade: targetGrade, subject, subjects: [], clusters: [] });
+        const clusterWhere = { AND: [(0, skillAccess_1.skillSchoolWhere)(targetUser.schoolId), (0, skillAccess_1.skillGradeWhere)((0, shared_1.getStudentGradeAndStage)(targetGrade))] };
         const clusters = yield prisma_1.default.skillCluster.findMany({
             where: clusterWhere,
             include: {
@@ -762,7 +782,9 @@ router.get('/api/skills-hub/progress', auth_1.verifyToken, (req, res) => __await
                 bestAttemptsMap.set(att.activityId, att);
             }
         });
-        const clusterProgressReport = clusters.map(cluster => {
+        const subjects = [...new Set(clusters.map(cluster => cluster.subject))];
+        const visibleClusters = subject ? clusters.filter(cluster => cluster.subject === String(subject)) : clusters;
+        const clusterProgressReport = visibleClusters.map(cluster => {
             let totalActivities = 0;
             let completedActivities = 0;
             let totalStarsEarned = 0;
@@ -831,6 +853,7 @@ router.get('/api/skills-hub/progress', auth_1.verifyToken, (req, res) => __await
             userId: targetUserId,
             grade: targetGrade,
             subject,
+            subjects,
             clusters: clusterProgressReport
         });
     }
@@ -859,18 +882,7 @@ router.get('/api/skills-hub/classroom-mastery', auth_1.verifyToken, (0, auth_1.c
         if (req.user.role !== 'SUPER_ADMIN' && classroom.schoolId !== req.user.schoolId) {
             return res.status(403).json({ error: 'Access denied' });
         }
-        const clusterWhere = { grade: classroom.grade };
-        if (subject)
-            clusterWhere.subject = subject;
-        if (classroom.schoolId) {
-            clusterWhere.OR = [
-                { isCentral: true },
-                { schoolId: classroom.schoolId }
-            ];
-        }
-        else {
-            clusterWhere.isCentral = true;
-        }
+        const clusterWhere = Object.assign({ AND: [(0, skillAccess_1.skillSchoolWhere)(classroom.schoolId), (0, skillAccess_1.skillGradeWhere)((0, shared_1.getStudentGradeAndStage)(classroom.grade))] }, (subject ? { subject: String(subject) } : {}));
         const clusters = yield prisma_1.default.skillCluster.findMany({
             where: clusterWhere,
             include: {
