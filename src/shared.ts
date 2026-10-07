@@ -195,14 +195,34 @@ export const isOriginAllowed = (origin: string, allowedList: string[]): boolean 
   }
 };
 
+const IMAGE_MIME_TO_EXT: Record<string, string> = {
+  jpeg: 'jpg',
+  jpg: 'jpg',
+  pjpeg: 'jpg',
+  png: 'png',
+  'x-png': 'png',
+  webp: 'webp',
+  gif: 'gif',
+  heic: 'heic',
+  heif: 'heif',
+  avif: 'avif',
+  bmp: 'bmp'
+};
+
+const ALLOWED_IMAGE_SUBTYPES = Array.from(ALLOWED_MIME_TYPES)
+  .filter(mime => mime.startsWith('image/'))
+  .map(mime => mime.slice('image/'.length).toLowerCase());
+
+const ESCAPED_IMAGE_SUBTYPES = ALLOWED_IMAGE_SUBTYPES
+  .map(sub => sub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
+
 const DATA_IMAGE_URI_REGEX = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
 
 const extensionFromImageMime = (mimeSubtype: string): string => {
-  const normalized = mimeSubtype.toLowerCase();
-  if (normalized === 'jpeg' || normalized === 'jpg') return 'jpg';
-  // Security note: SVG intentionally removed: SVG can contain arbitrary JS (XSS vector)
-  if (normalized === 'png' || normalized === 'webp' || normalized === 'gif') return normalized;
-  return 'bin'; // Unknown / unsafe types: save as binary (won't be served as image)
+  const normalized = mimeSubtype.toLowerCase().trim();
+  if (IMAGE_MIME_TO_EXT[normalized]) return IMAGE_MIME_TO_EXT[normalized];
+  return 'bin';
 };
 
 export const replaceEmbeddedDataImages = (input: string): string => {
@@ -488,14 +508,16 @@ export function extractAndSaveBase64Images(input: any): any {
   if (!input) return input;
   
   if (typeof input === 'string') {
-    // Security note: svg+xml intentionally excluded — SVG can contain arbitrary JS (XSS).
-    const base64Regex = /data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)/g;
+    // Security note: svg+xml intentionally excluded via ALLOWED_MIME_TYPES filter.
+    const base64Regex = new RegExp(`data:image\\/(${ESCAPED_IMAGE_SUBTYPES});base64,([A-Za-z0-9+/=]+)`, 'gi');
     return input.replace(base64Regex, (_match: string, mimeType: string, base64Data: string) => {
       try {
-        const ext = mimeType.replace('+', '').replace('xml', ''); // safe fallback (not used for SVG)
+        const ext = extensionFromImageMime(mimeType);
+        if (ext === 'bin') return _match;
         const buffer = Buffer.from(base64Data, 'base64');
+        if (buffer.length === 0) return _match;
         const hash = crypto.createHash('md5').update(buffer).digest('hex');
-        const filename = `img_${hash}.${mimeType}`;
+        const filename = `img_${hash}.${ext}`;
         const filePath = path.join(UPLOADS_DIR, filename);
         if (!fs.existsSync(filePath)) {
           fs.writeFileSync(filePath, buffer);
