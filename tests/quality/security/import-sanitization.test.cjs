@@ -1,8 +1,13 @@
 require('ts-node/register/transpile-only');
 
-const { sanitizeDeep } = require('../../../src/shared');
+const { sanitizeDeep, sanitizeHtml } = require('../../../src/shared');
 
 describe('import sanitization security policy', () => {
+  test('preserves escaped formula text and data-latex through content saves', () => {
+    const html = '<span class="math-tex" data-latex="x &lt; y &amp; &quot;z&quot;">\\( x &lt; y &amp; &quot;z&quot; \\)</span>';
+    expect(sanitizeHtml(html)).toBe(html);
+    expect(sanitizeHtml('&lt;p&gt;Legacy&lt;/p&gt;')).toBe('<p>Legacy</p>');
+  });
   test('strips dangerous <script> tags and onerror handlers from nested JSON', () => {
     const maliciousPayload = {
       course: {

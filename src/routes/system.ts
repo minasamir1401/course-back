@@ -1,3 +1,4 @@
+import { hasHeicSignature, UNSUPPORTED_HEIC_MESSAGE } from "../lib/uploadImagePolicy";
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -79,6 +80,18 @@ router.post('/api/upload', verifyToken, (req: Request, res: Response) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'No file provided.' });
+      }
+      // Validate the container too: MIME types and filename extensions can be incorrect.
+      const handle = await fs.promises.open(req.file.path, 'r');
+      const header = Buffer.alloc(64);
+      try {
+        await handle.read(header, 0, header.length, 0);
+      } finally {
+        await handle.close();
+      }
+      if (hasHeicSignature(header)) {
+        await fs.promises.unlink(req.file.path);
+        return res.status(415).json({ error: UNSUPPORTED_HEIC_MESSAGE });
       }
       const persisted = await persistUpload(req.file.path, req.file.filename, req.file.mimetype);
       return res.json({

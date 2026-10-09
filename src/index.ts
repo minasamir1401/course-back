@@ -1,3 +1,4 @@
+import { rejectHeicDataImages } from "./lib/uploadImagePolicy";
 import 'dotenv/config';
 import { blockPublicBackups } from './lib/backupSnapshot';
 // Backend API for LMS - Modularized entrypoint
@@ -158,6 +159,8 @@ app.use(cors({
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(cookieParser());
+// Prevent unsupported image payloads from bypassing /api/upload via offline/JSON saves.
+app.use('/api', rejectHeicDataImages);
 
 // Serve Uploaded Files with Cache-Control
 app.use('/uploads', blockPublicBackups);

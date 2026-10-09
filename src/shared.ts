@@ -1,3 +1,4 @@
+import { isHeicUpload, UNSUPPORTED_HEIC_MESSAGE } from "./lib/uploadImagePolicy";
 import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -42,7 +43,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 export const ALLOWED_MIME_TYPES = new Set([
   // Images (raster and modern mobile formats)
   'image/jpeg', 'image/jpg', 'image/png', 'image/x-png', 'image/webp', 'image/gif',
-  'image/heic', 'image/heif', 'image/avif', 'image/bmp', 'image/pjpeg',
+  'image/avif', 'image/bmp', 'image/pjpeg',
   // Documents & Data
   'application/pdf',
   'application/json',
@@ -91,6 +92,9 @@ export const multerUpload = multer({
   limits: { fileSize: 150 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const mime = (file.mimetype || '').toLowerCase().trim();
+    if (isHeicUpload(file)) {
+      return cb(new Error(UNSUPPORTED_HEIC_MESSAGE));
+    }
     if (ALLOWED_MIME_TYPES.has(mime)) {
       cb(null, true);
     } else {
@@ -287,7 +291,8 @@ export const sanitizeHtml = (input: any): string => {
     return String(input);
   }
   let sanitized = input;
-  if (sanitized.includes('&lt;') || sanitized.includes('&gt;')) {
+  // Preserve escaped text and attribute values in actual HTML, especially math.
+  if (!/<\/?[a-z][^>]*>/i.test(sanitized) && (sanitized.includes('&lt;') || sanitized.includes('&gt;'))) {
     sanitized = sanitized
       .replace(/&lt;/gi, '<')
       .replace(/&gt;/gi, '>')
@@ -1239,4 +1244,3 @@ export const getQuestionCoreSignature = (t: string | null | undefined): string =
   const alpha = norm.replace(/[^a-z0-9\u0600-\u06FF]/gi, '');
   return alpha.length >= 5 ? alpha : norm;
 };
-

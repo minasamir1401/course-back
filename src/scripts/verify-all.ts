@@ -48,8 +48,6 @@ async function runVerification() {
     'image/gif',
     'image/bmp',
     'image/avif',
-    'image/heic',
-    'image/heif',
     'image/pjpeg',
   ];
 
@@ -242,8 +240,8 @@ async function runVerification() {
     .set('Authorization', `Bearer ${teacherToken}`)
     .attach('file', Buffer.from('mock-heic-content'), { filename: 'iphone-photo.heic', contentType: 'image/heic' });
 
-  assert(uploadHeicRes.status === 200, `Upload HEIC returned 200 OK (got ${uploadHeicRes.status})`);
-  assert(uploadHeicRes.body.mimetype === 'image/heic', 'HEIC mimetype preserved correctly');
+  assert(uploadHeicRes.status === 400, `Unsupported HEIC upload rejected (got ${uploadHeicRes.status})`);
+  assert(/JPEG/.test(uploadHeicRes.body.details), 'HEIC rejection explains how to convert the image');
 
   // 4d. Upload disallowed file type (e.g. .exe)
   const uploadDisallowedRes = await request(app)
