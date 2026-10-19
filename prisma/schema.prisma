@@ -72,6 +72,8 @@ model User {
   activityAttempts   ActivityAttempt[]
   xp                 Int                 @default(0)
   xpHistories        XPHistory[]
+  sentMessages       Message[] @relation("MessageSender")
+  receivedMessages   Message[] @relation("MessageRecipient")
   deletedAt          DateTime?           // Soft Delete: null = active, date = in trash
   
   // Content Creation Tracking
@@ -194,6 +196,10 @@ model Lesson {
   
   @@index([courseId, order])
   @@index([deletedAt])
+  domainEn String?
+  standardsEn String?
+  indicatorsEn String?
+  learningOutcomesEn String?
 }
 
 model LessonProgress {
@@ -201,6 +207,8 @@ model LessonProgress {
   userId          String
   lessonId        String
   watchedSeconds  Int      @default(0)
+  activeStudySeconds Int   @default(0)
+  lastActivityAt DateTime?
   isCompleted     Boolean  @default(false)
   lastBlockId     String?
   createdAt       DateTime @default(now())
@@ -349,6 +357,16 @@ model Question {
   @@index([subExamId, deletedAt])
   @@index([moduleId])
   @@index([deletedAt])
+  courseEn String?
+  sectionEn String?
+  domainEn String?
+  standardEn String?
+  learningOutcomeEn String?
+  indicatorEn String?
+  skillEn String?
+  subskillEn String?
+  microSkillEn String?
+  errorPatternEn String?
 }
 
 model ExamSubmission {
@@ -360,6 +378,9 @@ model ExamSubmission {
   totalTime  Int?
   createdAt  DateTime        @default(now())
   percentage Float?
+  reportSnapshot Json?
+  schoolIdAtSubmission String?
+  gradeAtSubmission String?
   exam       Exam            @relation(fields: [examId], references: [id], onDelete: Cascade)
   user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   answers    StudentAnswer[]
@@ -368,6 +389,7 @@ model ExamSubmission {
   @@index([examId])
   @@index([userId, createdAt])
   @@index([examId, userId])
+  @@index([schoolIdAtSubmission, createdAt])
 }
 
 model StudentAnswer {
@@ -377,6 +399,7 @@ model StudentAnswer {
   questionId     String
   selectedAnswer String
   isCorrect      Boolean
+  questionSnapshot Json?
   timeTaken      Int?
   createdAt      DateTime       @default(now())
   question       Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
@@ -529,6 +552,10 @@ model InteractiveActivity {
   attempts         ActivityAttempt[]
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
+  standardEn String?
+  indicatorEn String?
+  learningOutcomeEn String?
+  skillEn String?
 }
 
 // 4. محاولات الطلاب وتقييمهم
@@ -603,6 +630,14 @@ model ExamModule {
   
   @@index([examId, order])
   @@index([parentModuleId])
+  domain String?
+  domainEn String?
+  standards String?
+  standardsEn String?
+  indicators String?
+  indicatorsEn String?
+  learningOutcomes String?
+  learningOutcomesEn String?
 }
 
 model SubExam {
@@ -628,4 +663,17 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model Message {
+  id String @id @default(uuid())
+  senderId String
+  recipientId String
+  body String
+  createdAt DateTime @default(now())
+  readAt DateTime?
+  sender User @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  @@index([recipientId, createdAt])
+  @@index([senderId, createdAt])
 }

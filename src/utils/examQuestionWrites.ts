@@ -1,10 +1,11 @@
+import { QUESTION_METADATA_FIELDS } from './bilingualMetadata';
 import { Prisma } from '@prisma/client';
 
 // Only server-owned field names can enter SQL. Values stay bound parameters.
 const QUESTION_FIELDS = ['text', 'textEn', 'type', 'options', 'optionsEn', 'correctAnswer', 'points', 'xpPoints', 'skill',
   'learningOutcome', 'indicator', 'videoUrl', 'level', 'dok', 'cognitive', 'course', 'section', 'domain',
   'standard', 'subskill', 'microSkill', 'gradeTarget', 'errorPattern', 'estimatedTime', 'explanation', 'explanationEn',
-  'hint', 'hintEn', 'imageUrl', 'moduleId', 'subExamId', 'order'] as const;
+  'hint', 'hintEn', 'imageUrl', 'moduleId', 'subExamId', 'order', ...QUESTION_METADATA_FIELDS.map(field => `${field}En`)] as const;
 export async function persistQuestionUpdates(tx: any, examId: string, updates: Array<{ id: string; data: Record<string, any> }>) {
   if (!updates.length) return;
   const columns = Prisma.raw(QUESTION_FIELDS.map(field => `"${field}"`).join(', '));

@@ -23,7 +23,7 @@ export function parseSkillExcelRows(rows: Record<string, any>[], lessonId: strin
     const difficulty = String(row.difficulty || 'Medium');
     if (!['Easy','Medium','Hard'].includes(difficulty)) fail('difficulty must be Easy, Medium or Hard.');
     const data: any = {lessonId, title, type, options: JSON.stringify(options), correctAnswer, difficulty, points:number('points',10,0,1000), xpPoints:number('xpPoints',10,0,1000), estimatedTime:number('estimatedTime',60,0,86400)};
-    for (const field of ['titleEn','questionText','questionTextEn','hint','hintEn','tip','tipEn','explanation','explanationEn','keyInsight','keyInsightEn','standard','indicator','learningOutcome','skill','dok']) if (row[field] != null) data[field] = String(row[field]);
+    for (const field of ['titleEn','questionText','questionTextEn','hint','hintEn','tip','tipEn','explanation','explanationEn','keyInsight','keyInsightEn','standard','standardEn','indicator','indicatorEn','learningOutcome','learningOutcomeEn','skill','skillEn','dok']) if (row[field] != null) data[field] = String(row[field]);
     for (const field of ['optionsEn','correctAnswerEn']) if (row[field] != null && row[field] !== '') { if (field === 'optionsEn') { try { JSON.parse(String(row[field])); } catch { fail('optionsEn must contain valid JSON.'); } } data[field] = String(row[field]); }
     return data;
   });

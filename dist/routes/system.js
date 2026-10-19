@@ -12,7 +12,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const metadataGlossary_1 = require("../utils/metadataGlossary");
+const uploadImagePolicy_1 = require("../lib/uploadImagePolicy");
 const express_1 = require("express");
+const fs_1 = __importDefault(require("fs"));
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
 const shared_1 = require("../shared");
@@ -69,6 +72,19 @@ router.post('/api/upload', auth_1.verifyToken, (req, res) => {
         try {
             if (!req.file) {
                 return res.status(400).json({ error: 'No file provided.' });
+            }
+            // Validate the container too: MIME types and filename extensions can be incorrect.
+            const handle = yield fs_1.default.promises.open(req.file.path, 'r');
+            const header = Buffer.alloc(64);
+            try {
+                yield handle.read(header, 0, header.length, 0);
+            }
+            finally {
+                yield handle.close();
+            }
+            if ((0, uploadImagePolicy_1.hasHeicSignature)(header)) {
+                yield fs_1.default.promises.unlink(req.file.path);
+                return res.status(415).json({ error: uploadImagePolicy_1.UNSUPPORTED_HEIC_MESSAGE });
             }
             const persisted = yield (0, shared_1.persistUpload)(req.file.path, req.file.filename, req.file.mimetype);
             return res.json({
@@ -188,8 +204,9 @@ function getEffectiveTranslatableLength(text) {
         .length;
 }
 router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     try {
-        const { text, texts, from = 'ar', to = 'en' } = req.body;
+        const { text, texts, from = 'ar', to = 'en', kind, metadataIndices } = req.body;
         const validFrom = from === 'en' ? 'en' : 'ar';
         const validTo = to === 'ar' ? 'ar' : 'en';
         if (text !== undefined) {
@@ -198,7 +215,7 @@ router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_
             if (effectiveLength > 5000) {
                 return res.status(400).json({ error: 'Text exceeds maximum length of 5000 characters.' });
             }
-            const translated = yield (0, translation_service_1.translateSingleText)(strText, validFrom, validTo);
+            const translated = (_a = (kind === 'metadata' ? (0, metadataGlossary_1.translateMetadataTerm)(strText, validTo) : undefined)) !== null && _a !== void 0 ? _a : yield (0, translation_service_1.translateSingleText)(strText, validFrom, validTo);
             return res.json({ translatedText: translated });
         }
         if (Array.isArray(texts)) {
@@ -213,7 +230,9 @@ router.post('/api/translate', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_
                     }
                 }
             }
-            const translations = yield (0, translation_service_1.translateBatchTexts)(texts, validFrom, validTo);
+            const terms = texts.map((text, index) => typeof text === 'string' && (kind === 'metadata' || Array.isArray(metadataIndices) && metadataIndices.includes(index)) ? (0, metadataGlossary_1.translateMetadataTerm)(text, validTo) : undefined);
+            const translated = yield (0, translation_service_1.translateBatchTexts)(texts.map((text, index) => terms[index] !== undefined ? '' : text), validFrom, validTo);
+            const translations = translated.map((text, index) => { var _a; return (_a = terms[index]) !== null && _a !== void 0 ? _a : text; });
             return res.json({ translations });
         }
         return res.status(400).json({ error: 'Either "text" or "texts" must be provided.' });

@@ -33,6 +33,8 @@ jest.mock('../../../src/lib/redis', () => ({
   cacheDelete: jest.fn(async () => {}),
 }));
 
+jest.mock('../../../src/scripts/clean-duplicates-and-empty', () => ({ runSafeDeduplicationAndEmptyCleanup: jest.fn(async () => ({ duplicatesDeleted: 0, emptyQuestionsDeleted: 0 })) }));
+
 const { requireManagedExam } = require('../../../src/routes/exams');
 const { canManageExam, cleanDuplicatesHandler } = require('../../../src/controllers/exams.controller');
 const { canManageExamRecord } = require('../../../src/utils/examAccessPolicy');

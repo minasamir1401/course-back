@@ -57,6 +57,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startServer = exports.app = void 0;
+const uploadImagePolicy_1 = require("./lib/uploadImagePolicy");
+const egyptDates_1 = require("./middleware/egyptDates");
 require("dotenv/config");
 const backupSnapshot_1 = require("./lib/backupSnapshot");
 // Backend API for LMS - Modularized entrypoint
@@ -96,6 +98,7 @@ const exams_1 = __importDefault(require("./routes/exams"));
 const progress_1 = __importDefault(require("./routes/progress"));
 const skillsHub_1 = __importDefault(require("./routes/skillsHub"));
 const reports_1 = __importDefault(require("./routes/reports"));
+const workspace_1 = __importDefault(require("./routes/workspace"));
 const imports_1 = __importDefault(require("./routes/imports"));
 const system_1 = __importDefault(require("./routes/system"));
 const deduplicate_1 = __importDefault(require("./routes/deduplicate"));
@@ -201,6 +204,9 @@ app.use((0, cors_1.default)({
 app.use(express_1.default.json({ limit: '100mb' }));
 app.use(express_1.default.urlencoded({ limit: '100mb', extended: true }));
 app.use((0, cookie_parser_1.default)());
+app.use('/api', egyptDates_1.egyptDates);
+// Prevent unsupported image payloads from bypassing /api/upload via offline/JSON saves.
+app.use('/api', uploadImagePolicy_1.rejectHeicDataImages);
 // Serve Uploaded Files with Cache-Control
 app.use('/uploads', backupSnapshot_1.blockPublicBackups);
 app.use('/uploads', (req, res, next) => {
@@ -234,6 +240,7 @@ app.use(exams_1.default);
 app.use(progress_1.default);
 app.use(skillsHub_1.default);
 app.use(reports_1.default);
+app.use(workspace_1.default);
 app.use(imports_1.default);
 app.use(system_1.default);
 app.use('/api/deduplicate', deduplicate_1.default);

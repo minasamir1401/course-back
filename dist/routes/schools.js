@@ -23,7 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const dashboardSeries_1 = require("../utils/dashboardSeries");
+const platformStats_service_1 = require("../services/platformStats.service");
 const authSession_1 = require("../utils/authSession");
 const express_1 = require("express");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
@@ -521,8 +521,9 @@ router.post('/api/admin/users', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPE
 router.get('/api/admin/users', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), auth_1.checkSchoolAccess, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { schoolId, role, page = '1', limit = '50', search } = req.query;
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        const take = parseInt(limit);
+        const pageNumber = Math.max(1, parseInt(page) || 1);
+        const take = Math.min(200, Math.max(1, parseInt(limit) || 50));
+        const skip = (pageNumber - 1) * take;
         // ✅ Filter out soft-deleted users
         const where = { deletedAt: null };
         if (req.user.role === 'SUPER_ADMIN') {
@@ -538,6 +539,14 @@ router.get('/api/admin/users', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER
             else
                 where.role = { not: 'SUPER_ADMIN' };
         }
+        if (req.user.role === 'SUPER_ADMIN' && req.query.excludeSuperAdmin === 'true' && !role)
+            where.role = { not: 'SUPER_ADMIN' };
+        if (typeof req.query.status === 'string' && ['ACTIVE', 'INACTIVE', 'SUSPENDED'].includes(req.query.status))
+            where.status = req.query.status;
+        if (typeof req.query.grade === 'string' && req.query.grade)
+            where.grade = req.query.grade;
+        if (typeof req.query.classroomId === 'string' && req.query.classroomId)
+            where.classroomId = req.query.classroomId;
         if (search) {
             where.AND = [
                 ...(where.AND || []),
@@ -565,7 +574,7 @@ router.get('/api/admin/users', auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER
             users: mappedUsers,
             pagination: {
                 total,
-                page: parseInt(page),
+                page: pageNumber,
                 limit: take,
                 totalPages: Math.ceil(total / take)
             }
@@ -669,64 +678,10 @@ router.delete('/api/admin/users/:id', auth_1.verifyToken, (0, auth_1.checkRole)(
 // Get Super Admin Stats
 router.get(['/api/admin/stats', '/api/super-admin/stats'], auth_1.verifyToken, (0, auth_1.checkRole)(['SUPER_ADMIN']), (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        // Run all counts in parallel for maximum speed
-        const [totalSchools, totalUsers, totalStudents, totalTeachers, totalCourses, totalClassrooms, totalParents, activeStudents, activeExams, centralExamsCount, recentSchoolsData, allSchools] = yield Promise.all([
-            prisma_1.default.school.count(),
-            prisma_1.default.user.count(),
-            prisma_1.default.user.count({ where: { role: 'STUDENT' } }),
-            prisma_1.default.user.count({ where: { role: 'TEACHER' } }),
-            prisma_1.default.course.count({ where: { isCentral: true } }),
-            prisma_1.default.classroom.count(),
-            prisma_1.default.user.count({ where: { role: 'PARENT' } }),
-            prisma_1.default.user.count({ where: { role: 'STUDENT', OR: [{ studentEnrollments: { some: {} } }, { examSubmissions: { some: {} } }] } }),
-            prisma_1.default.exam.count({ where: { status: 'PUBLISHED' } }),
-            prisma_1.default.exam.count({ where: { isCentral: true } }),
-            prisma_1.default.school.findMany({
-                take: 5,
-                orderBy: { createdAt: 'desc' },
-                include: {
-                    _count: { select: { users: { where: { role: 'STUDENT' } } } }
-                }
-            }),
-            prisma_1.default.school.findMany({
-                include: { _count: { select: { users: { where: { role: 'STUDENT' } } } } }
-            })
-        ]);
-        const examsActivityData = yield (0, dashboardSeries_1.examActivitySeries)(prisma_1.default);
-        const interactionRate = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
-        const recentSchools = recentSchoolsData.map(s => ({
-            id: s.id,
-            name: s.name,
-            students: s._count.users,
-            status: s.status,
-            type: 'مدرسة' // or logic based on grade if exists
-        }));
-        const schoolPerformanceData = allSchools
-            .map(s => ({
-            name: s.name,
-            students: s._count.users,
-            growth: 0
-        }))
-            .sort((a, b) => b.students - a.students)
-            .slice(0, 5);
-        res.json({
-            schoolsCount: totalSchools,
-            usersCount: totalUsers,
-            studentsCount: totalStudents,
-            teachersCount: totalTeachers,
-            coursesCount: totalCourses,
-            interactionRate,
-            classroomsCount: totalClassrooms,
-            parentsCount: totalParents,
-            activeExams,
-            centralExamsCount,
-            recentSchools,
-            schoolPerformanceData,
-            examsActivityData
-        });
+        res.json(yield (0, platformStats_service_1.platformStats)());
     }
     catch (error) {
-        console.error('❌ Stats error:', error);
+        console.error('Platform statistics failed:', error);
         res.status(500).json({ error: 'Error fetching statistics' });
     }
 }));
@@ -806,11 +761,11 @@ router.get('/api/admin/schools/:id/stats', auth_1.verifyToken, (0, auth_1.checkR
         if ((req.user.role === 'SCHOOL_ADMIN' || req.user.role === 'TEACHER') && id !== req.user.schoolId) {
             return res.status(403).json({ error: 'Access denied' });
         }
-        const students = yield prisma_1.default.user.count({ where: { schoolId: id, role: 'STUDENT' } });
-        const teachers = yield prisma_1.default.user.count({ where: { schoolId: id, role: 'TEACHER' } });
-        const parents = yield prisma_1.default.user.count({ where: { schoolId: id, role: 'PARENT' } });
+        const students = yield prisma_1.default.user.count({ where: { schoolId: id, role: 'STUDENT', deletedAt: null } });
+        const teachers = yield prisma_1.default.user.count({ where: { schoolId: id, role: 'TEACHER', deletedAt: null } });
+        const parents = yield prisma_1.default.user.count({ where: { schoolId: id, role: 'PARENT', deletedAt: null } });
         const classrooms = yield prisma_1.default.classroom.count({ where: { schoolId: id } });
-        const exams = yield prisma_1.default.exam.count({ where: { schoolId: id } });
+        const exams = yield prisma_1.default.exam.count({ where: { deletedAt: null, OR: [{ schoolId: id }, { schools: { some: { id } } }, { isCentral: true, schoolId: null, schools: { none: {} } }] } });
         res.json({
             students,
             teachers,

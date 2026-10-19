@@ -115,14 +115,14 @@ describe('Content Reconciliation & Data Safety', () => {
 
   it('course imports never invoke destructive global title deduplication', () => {
     const importsRoute = fs.readFileSync(path.resolve(__dirname, '../src/routes/imports.ts'), 'utf8');
-    const coursesController = fs.readFileSync(path.resolve(__dirname, '../src/controllers/courses.controller.ts'), 'utf8');
+    const coursesController = ['courses.controller.ts', 'courseManagement.ts', 'courseLessons.ts', 'courseDelivery.ts'].map(file => fs.readFileSync(path.resolve(__dirname, '../src/controllers', file), 'utf8')).join('\n');
     assert.equal(/runGlobalDeduplication\s*\(/.test(importsRoute), false);
     assert.equal(/runGlobalDeduplication\s*\(/.test(coursesController), false);
     assert.match(coursesController, /Automatic title-based deduplication is disabled/);
   });
 
   it('conflicting delete IDs win before question reordering', () => {
-    const examsController = fs.readFileSync(path.resolve(__dirname, '../src/controllers/exams.controller.ts'), 'utf8');
+    const examsController = ['exams.controller.ts', 'examManagement.ts', 'examEditing.ts', 'examDelivery.ts'].map(file => fs.readFileSync(path.resolve(__dirname, '../src/controllers', file), 'utf8')).join('\n');
     assert.match(
       examsController,
       /if \(typeof q\?\.id === 'string' && explicitDeletedIds\.has\(q\.id\)\)[\s\S]*continue;/
@@ -141,8 +141,8 @@ describe('Content Reconciliation & Data Safety', () => {
   });
 
   it('course and exam updates reject malformed collection payloads', () => {
-    const coursesController = fs.readFileSync(path.resolve(__dirname, '../src/controllers/courses.controller.ts'), 'utf8');
-    const examsController = fs.readFileSync(path.resolve(__dirname, '../src/controllers/exams.controller.ts'), 'utf8');
+    const coursesController = ['courses.controller.ts', 'courseManagement.ts', 'courseLessons.ts', 'courseDelivery.ts'].map(file => fs.readFileSync(path.resolve(__dirname, '../src/controllers', file), 'utf8')).join('\n');
+    const examsController = ['exams.controller.ts', 'examManagement.ts', 'examEditing.ts', 'examDelivery.ts'].map(file => fs.readFileSync(path.resolve(__dirname, '../src/controllers', file), 'utf8')).join('\n');
     assert.match(coursesController, /lessons !== undefined && !Array\.isArray\(lessons\)[\s\S]*status\(400\)/);
     assert.match(examsController, /questions !== undefined && !Array\.isArray\(questions\)[\s\S]*status\(400\)/);
   });

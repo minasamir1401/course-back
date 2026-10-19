@@ -1,3 +1,4 @@
+import { translateMetadataTerm } from '../utils/metadataGlossary';
 import { hasHeicSignature, UNSUPPORTED_HEIC_MESSAGE } from "../lib/uploadImagePolicy";
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
@@ -230,7 +231,7 @@ function getEffectiveTranslatableLength(text: string): number {
 
 router.post('/api/translate', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), async (req: any, res: any) => {
   try {
-    const { text, texts, from = 'ar', to = 'en' } = req.body;
+    const { text, texts, from = 'ar', to = 'en', kind, metadataIndices } = req.body;
     const validFrom = from === 'en' ? 'en' : 'ar';
     const validTo = to === 'ar' ? 'ar' : 'en';
 
@@ -240,7 +241,7 @@ router.post('/api/translate', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADM
       if (effectiveLength > 5000) {
         return res.status(400).json({ error: 'Text exceeds maximum length of 5000 characters.' });
       }
-      const translated = await translateSingleText(strText, validFrom, validTo);
+      const translated = (kind === 'metadata' ? translateMetadataTerm(strText, validTo) : undefined) ?? await translateSingleText(strText, validFrom, validTo);
       return res.json({ translatedText: translated });
     }
 
@@ -256,7 +257,9 @@ router.post('/api/translate', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADM
           }
         }
       }
-      const translations = await translateBatchTexts(texts, validFrom, validTo);
+      const terms = texts.map((text: any, index: number) => typeof text === 'string' && (kind === 'metadata' || Array.isArray(metadataIndices) && metadataIndices.includes(index)) ? translateMetadataTerm(text, validTo) : undefined);
+      const translated = await translateBatchTexts(texts.map((text: any, index: number) => terms[index] !== undefined ? '' : text), validFrom, validTo);
+      const translations = translated.map((text, index) => terms[index] ?? text);
       return res.json({ translations });
     }
 

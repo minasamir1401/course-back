@@ -45,6 +45,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const bilingualMetadata_1 = require("../utils/bilingualMetadata");
 const express_1 = __importDefault(require("express"));
 const client_1 = require("@prisma/client");
 const auth_1 = require("../middleware/auth");
@@ -935,27 +936,7 @@ router.get('/api/school/export/json/course/:id', auth_1.verifyToken, (0, auth_1.
                 schoolName: ((_a = course.school) === null || _a === void 0 ? void 0 : _a.name) || null,
                 assignedSchools: ((_b = course.schools) === null || _b === void 0 ? void 0 : _b.map((s) => s.name)) || []
             },
-            lessons: course.lessons.map(l => ({
-                title: l.title,
-                domain: l.domain,
-                videoUrl: l.videoUrl,
-                duration: l.duration,
-                summary: l.summary,
-                notes: l.notes,
-                content: l.content,
-                slides: safeParse(l.slides),
-                questions: safeParse(l.questions),
-                assignments: safeParse(l.assignments),
-                attachments: safeParse(l.attachments),
-                standards: l.standards,
-                indicators: l.indicators,
-                learningOutcomes: l.learningOutcomes,
-                order: l.order,
-                isVisible: l.isVisible,
-                isCentral: l.isCentral,
-                publishDate: l.publishDate ? l.publishDate.toISOString() : null,
-                cutOffDate: l.cutOffDate ? l.cutOffDate.toISOString() : null,
-                blocks: (l.blocks || []).map((b) => ({
+            lessons: course.lessons.map(l => (Object.assign(Object.assign({ title: l.title }, (0, bilingualMetadata_1.metadataTranslations)(l, String, bilingualMetadata_1.LESSON_METADATA_FIELDS)), { domain: l.domain, videoUrl: l.videoUrl, duration: l.duration, summary: l.summary, notes: l.notes, content: l.content, slides: safeParse(l.slides), questions: safeParse(l.questions), assignments: safeParse(l.assignments), attachments: safeParse(l.attachments), standards: l.standards, indicators: l.indicators, learningOutcomes: l.learningOutcomes, order: l.order, isVisible: l.isVisible, isCentral: l.isCentral, publishDate: l.publishDate ? l.publishDate.toISOString() : null, cutOffDate: l.cutOffDate ? l.cutOffDate.toISOString() : null, blocks: (l.blocks || []).map((b) => ({
                     type: b.type,
                     label: b.label,
                     title: b.title,
@@ -971,8 +952,7 @@ router.get('/api/school/export/json/course/:id', auth_1.verifyToken, (0, auth_1.
                         content: s.content,
                         order: s.order
                     }))
-                }))
-            })),
+                })) }))),
             exams: (course.exams || []).map((e) => ({
                 title: e.title,
                 description: e.description,
@@ -992,24 +972,7 @@ router.get('/api/school/export/json/course/:id', auth_1.verifyToken, (0, auth_1.
                 level: e.level,
                 startDate: e.startDate ? e.startDate.toISOString() : null,
                 endDate: e.endDate ? e.endDate.toISOString() : null,
-                questions: (e.questions || []).map((q) => ({
-                    text: q.text,
-                    type: q.type,
-                    options: safeParse(q.options, q.options),
-                    correctAnswer: q.correctAnswer,
-                    points: q.points,
-                    xpPoints: q.xpPoints,
-                    skill: q.skill,
-                    standard: q.standard,
-                    learningOutcome: q.learningOutcome,
-                    indicator: q.indicator,
-                    videoUrl: q.videoUrl,
-                    level: q.level,
-                    dok: q.dok,
-                    explanation: q.explanation,
-                    imageUrl: q.imageUrl,
-                    order: q.order
-                }))
+                questions: (e.questions || []).map((q) => (Object.assign(Object.assign({ text: q.text, type: q.type, options: safeParse(q.options, q.options), correctAnswer: q.correctAnswer, points: q.points, xpPoints: q.xpPoints }, (0, bilingualMetadata_1.metadataTranslations)(q)), { skill: q.skill, standard: q.standard, learningOutcome: q.learningOutcome, indicator: q.indicator, videoUrl: q.videoUrl, level: q.level, dok: q.dok, explanation: q.explanation, imageUrl: q.imageUrl, order: q.order })))
             }))
         };
         const buffer = Buffer.from(JSON.stringify(exportData, null, 2), 'utf8');
@@ -1106,25 +1069,7 @@ router.post('/api/school/import/json/course', auth_1.verifyToken, (0, auth_1.che
                         deletedAt: null
                     }
                 });
-                const lessonData = {
-                    domain: l.domain || null,
-                    videoUrl: l.videoUrl || null,
-                    duration: l.duration || 0,
-                    summary: l.summary || null,
-                    notes: l.notes || null,
-                    content: l.content || null,
-                    slides: l.slides ? l.slides : null,
-                    questions: l.questions ? l.questions : null,
-                    assignments: l.assignments ? l.assignments : null,
-                    attachments: l.attachments ? l.attachments : null,
-                    standards: l.standards || null,
-                    indicators: l.indicators || null,
-                    learningOutcomes: l.learningOutcomes || null,
-                    order: l.order !== undefined ? l.order : idx,
-                    isVisible: l.isVisible !== undefined ? !!l.isVisible : true,
-                    publishDate: l.publishDate ? new Date(l.publishDate) : null,
-                    cutOffDate: l.cutOffDate ? new Date(l.cutOffDate) : null
-                };
+                const lessonData = Object.assign(Object.assign({}, (0, bilingualMetadata_1.metadataTranslations)(l, String, bilingualMetadata_1.LESSON_METADATA_FIELDS)), { domain: l.domain || null, videoUrl: l.videoUrl || null, duration: l.duration || 0, summary: l.summary || null, notes: l.notes || null, content: l.content || null, slides: l.slides ? l.slides : null, questions: l.questions ? l.questions : null, assignments: l.assignments ? l.assignments : null, attachments: l.attachments ? l.attachments : null, standards: l.standards || null, indicators: l.indicators || null, learningOutcomes: l.learningOutcomes || null, order: l.order !== undefined ? l.order : idx, isVisible: l.isVisible !== undefined ? !!l.isVisible : true, publishDate: l.publishDate ? new Date(l.publishDate) : null, cutOffDate: l.cutOffDate ? new Date(l.cutOffDate) : null });
                 if (existingLesson) {
                     yield tx.lesson.update({
                         where: { id: existingLesson.id },

@@ -1,4 +1,5 @@
 import { rejectHeicDataImages } from "./lib/uploadImagePolicy";
+import { egyptDates } from './middleware/egyptDates';
 import 'dotenv/config';
 import { blockPublicBackups } from './lib/backupSnapshot';
 // Backend API for LMS - Modularized entrypoint
@@ -47,6 +48,7 @@ import examsRouter from './routes/exams';
 import progressRouter from './routes/progress';
 import skillsHubRouter from './routes/skillsHub';
 import reportsRouter from './routes/reports';
+import workspaceRouter from './routes/workspace';
 import importRouter from './routes/imports';
 import systemRouter from './routes/system';
 import deduplicateRouter from './routes/deduplicate';
@@ -159,6 +161,7 @@ app.use(cors({
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(cookieParser());
+app.use('/api', egyptDates);
 // Prevent unsupported image payloads from bypassing /api/upload via offline/JSON saves.
 app.use('/api', rejectHeicDataImages);
 
@@ -198,6 +201,7 @@ app.use(examsRouter);
 app.use(progressRouter);
 app.use(skillsHubRouter);
 app.use(reportsRouter);
+app.use(workspaceRouter);
 app.use(importRouter);
 app.use(systemRouter);
 app.use('/api/deduplicate', deduplicateRouter);

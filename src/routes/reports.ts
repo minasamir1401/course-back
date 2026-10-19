@@ -1,215 +1,104 @@
-import { schoolPerformanceSeries } from '../utils/dashboardSeries';
-import { Router, Request, Response, NextFunction } from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import fs from 'fs';
-import path from 'path';
+import { Router } from 'express';
 import prisma from '../lib/prisma';
 import { verifyToken, checkRole, checkSchoolAccess } from '../middleware/auth';
-import { 
-  JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields, 
-  isAnswerCorrect, sanitizeDeep, sanitizeUser, sanitizeExam, multerUpload,
-  diagnosticLogs, pushDiagnosticLog, ALL_ROLES, SCHOOL_MANAGED_ROLES,
-  statsCache, CACHE_TTL, setCache, getCache, getCacheAsync, invalidateCache, getStudentGradeAndStage, examMatchesStudent,
-  buildStudentCourseWhere, loginAttempts, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS,
-  UPLOADS_DIR, userSafeSelect, isAllowedVideoUrl, sanitizeHtml, parseStringArray,
-  normalizeLegacyCourses
-} from '../shared';
-
-declare global {
-  namespace Express {
-    interface Request {
-      user?: any;
-    }
-  }
-}
+import { generateReport, reportOptions, ReportError } from '../services/reporting.service';
+import { examAttendance } from '../services/attendance.service';
+import { csvCell } from '../utils/reportMetrics';
+import { REPORT_TIME_ZONE } from '../utils/egyptTime';
+import { schoolPerformanceSeries } from '../utils/dashboardSeries';
+import { buildStudentCourseWhere, examMatchesStudent } from '../shared';
+import * as XLSX from 'xlsx';
 
 const router = Router();
+const reportRoles = checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'STUDENT']);
+const adminRoles = checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']);
+const fail = (res: any, error: any) => {
+  if (!(error instanceof ReportError)) console.error('Report generation failed:', error);
+  return res.status(error instanceof ReportError ? error.status : error.message?.match(/date|time|range|policy/i) ? 400 : 500)
+    .json({ error: error instanceof ReportError || error.message?.match(/date|time|range|policy/i) ? error.message : 'Could not generate report' });
+};
 
-// --- Extracted from lines 3851-3979 ---
-router.get('/api/reports/school', verifyToken, checkRole(['SCHOOL_ADMIN', 'SUPER_ADMIN', 'TEACHER']), checkSchoolAccess, async (req: any, res: any) => {
-  const targetSchoolId = req.user.role === 'SUPER_ADMIN' ? req.query.schoolId : req.user.schoolId;
-
-  if (!targetSchoolId) return res.status(400).json({error:'schoolId is required'});
-  try {
-    const cacheKey = `school_reports_${targetSchoolId}`;
-    const cached = await getCacheAsync(cacheKey);
-    if (cached) return res.json(cached.data !== undefined ? cached.data : cached);
-
-    // ✅ PERF FIX: Use parallel count + aggregate instead of loading ALL submissions into RAM
-    const [studentsCount, teachersCount, submissionStats] = await Promise.all([
-      prisma.user.count({ where: { schoolId: targetSchoolId as string, role: 'STUDENT' } }),
-      prisma.user.count({ where: { schoolId: targetSchoolId as string, role: 'TEACHER' } }),
-      prisma.examSubmission.aggregate({
-        where: { user: { schoolId: targetSchoolId as string } },
-        _avg: { percentage: true },
-        _count: { id: true },
-      }),
-    ]);
-
-    const averageScore = Math.round(submissionStats._avg.percentage || 0);
-    const totalExamsTaken = submissionStats._count.id;
-
-    const [performanceData, upcomingExams] = await Promise.all([
-      schoolPerformanceSeries(prisma, String(targetSchoolId)),
-      prisma.exam.findMany({where:{deletedAt:null,status:'PUBLISHED',startDate:{gte:new Date()},OR:[{isCentral:true},{schoolId:String(targetSchoolId)},{schools:{some:{id:String(targetSchoolId)}}}]},select:{id:true,title:true,startDate:true},orderBy:{startDate:'asc'},take:5})
-    ]);
-    const stats = { schoolId: targetSchoolId, studentsCount, teachersCount, averageScore, totalExamsTaken, performanceData, upcomingExams };
-    setCache(cacheKey, stats);
-    res.json(stats);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error generating report' });
-  }
+router.get('/api/reports/options', verifyToken, reportRoles, async (req: any, res: any) => {
+  try { res.json(await reportOptions(req.user)); } catch (error) { fail(res, error); }
 });
-
-// Student Dashboard Stats
+router.get('/api/reports/overview', verifyToken, reportRoles, async (req: any, res: any) => {
+  try {
+    const { exportRows, ...report } = await generateReport(req.user, req.query);
+    res.setHeader('Cache-Control', 'private, no-store'); res.json(report);
+  } catch (error) { fail(res, error); }
+});
+router.get('/api/reports/exam-attendance', verifyToken, adminRoles, async (req: any, res: any) => {
+  try { const { exportRows, ...report } = await examAttendance(req.user, req.query); res.json(report); }
+  catch (error) { fail(res, error); }
+});
+router.get('/api/reports/export', verifyToken, reportRoles, async (req: any, res: any) => {
+  try {
+    const attendance = req.query.kind === 'attendance';
+    if (attendance && req.user.role === 'STUDENT') return res.status(403).json({ error: 'Access denied' });
+    const report = attendance ? await examAttendance(req.user, req.query) : await generateReport(req.user, req.query);
+    const columns = attendance ? ['name', 'username', 'grade', 'status', 'score', 'percentage', 'passed', 'submittedAt']
+      : ['name', 'username', 'schoolName', 'grade', 'examTitle', 'score', 'percentage', 'passed', 'totalTime', 'createdAt', 'historicalSnapshot'];
+    const ar = req.query.language === 'ar';
+    const labels: Record<string, string> = { name: 'الاسم', username: 'اسم المستخدم', schoolName: 'المدرسة', grade: 'الصف', examTitle: 'الاختبار', score: 'الدرجة', percentage: 'النسبة المئوية', passed: 'اجتاز', totalTime: 'الوقت بالثواني', createdAt: 'تاريخ التسليم — مصر', historicalSnapshot: 'نسخة محفوظة وقت التسليم', status: 'الحالة', submittedAt: 'تاريخ التسليم — مصر' };
+    const heading = (column: string) => ar ? labels[column] || column : column;
+    if (req.query.format === 'xlsx') {
+      const book = XLSX.utils.book_new();
+      const data = report.exportRows.map((row: any) => Object.fromEntries(columns.map(column => [heading(column),
+        column.endsWith('At') && row[column] ? new Date(row[column]).toLocaleString('en-GB', { timeZone: REPORT_TIME_ZONE, hour12: false }) : row[column] ?? null])));
+      XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(data, { header: columns.map(heading) }), 'Results');
+      XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([
+        { item: 'Time zone', value: REPORT_TIME_ZONE }, { item: 'Generated at', value: report.generatedAt },
+        { item: 'Scope', value: attendance ? (ar ? 'كل محاولات الاختبار أو القسم المحدد؛ الطلاب المسندون حاليًا' : 'All attempts of selected exam / section; current assigned students') : (ar ? 'المحاولات المعتمدة خلال الفترة المحددة بتوقيت مصر' : 'Selected attempts within inclusive Egyptian calendar dates') },
+        ...Object.entries((report as any).filters || {}).filter(([key]) => !['page', 'limit', 'start', 'end'].includes(key)).map(([item, value]) => ({ item, value: String(value) })),
+      ].map(row => ar ? { 'البيان': ({ 'Time zone': 'المنطقة الزمنية', 'Generated at': 'وقت الإنشاء', Scope: 'نطاق التقرير', from: 'من تاريخ', to: 'إلى تاريخ', schoolId: 'معرف المدرسة', grade: 'الصف', classroomId: 'معرف الفصل', courseId: 'معرف المقرر', examId: 'معرف الاختبار', subExamId: 'معرف الاختبار الفرعي', subject: 'المادة', attemptPolicy: 'سياسة المحاولات', search: 'البحث', timeZone: 'المنطقة الزمنية' } as any)[row.item] || row.item, 'القيمة': row.item === 'attemptPolicy' ? ({ latest: 'أحدث محاولة', first: 'أول محاولة', best: 'أفضل محاولة', all: 'كل المحاولات' } as any)[String(row.value)] || row.value : row.value } : row)), ar ? 'سياق التقرير' : 'Report context');
+      if (!attendance) XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(((report as any).skills || []).map((skill: any) => ({ [ar ? 'المهارة بالعربية' : 'Skill (Ar)']: skill.nameAr || skill.name, [ar ? 'المهارة بالإنجليزية' : 'Skill (En)']: skill.nameEn || skill.name, [ar ? 'عدد الإجابات' : 'Answers']: skill.answers, [ar ? 'نسبة الصحيح' : 'Correct rate']: skill.correctRate }))), ar ? 'المهارات' : 'Skills');
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="klevro-report.xlsx"');
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.send(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }));
+    }
+    const rows = report.exportRows.map((row: any) => columns.map(column => {
+      const value = row[column];
+      return csvCell(value instanceof Date || column.endsWith('At') && value ? new Date(value).toLocaleString('en-GB', { timeZone: REPORT_TIME_ZONE, hour12: false }) : value);
+    }).join(','));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="klevro-report-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send('\uFEFF' + columns.map(heading).map(csvCell).join(',') + '\r\n' + rows.join('\r\n'));
+  } catch (error) { fail(res, error); }
+});
+router.get('/api/reports/school', verifyToken, adminRoles, checkSchoolAccess, async (req: any, res: any) => {
+  try {
+    const schoolId = req.user.role === 'SUPER_ADMIN' ? String(req.query.schoolId || '') : req.user.schoolId;
+    if (!schoolId) throw new ReportError('schoolId is required');
+    const [report, studentsCount, teachersCount, classesCount, performanceData, upcomingExams] = await Promise.all([
+      generateReport(req.user, { ...req.query, schoolId }),
+      prisma.user.count({ where: { schoolId, role: 'STUDENT', deletedAt: null } }),
+      prisma.user.count({ where: { schoolId, role: 'TEACHER', deletedAt: null } }),
+      prisma.classroom.count({ where: { schoolId } }), schoolPerformanceSeries(prisma, schoolId),
+      prisma.exam.findMany({ where: { deletedAt: null, status: 'PUBLISHED', startDate: { gt: new Date() },
+        OR: [{ isCentral: true, schoolId: null, schools: { none: {} } }, { schoolId }, { schools: { some: { id: schoolId } } }] },
+        select: { id: true, title: true, startDate: true }, orderBy: { startDate: 'asc' }, take: 5 }),
+    ]);
+    res.json({ schoolId, studentsCount, teachersCount, classesCount, averageScore: report.summary.averageScore,
+      passRate: report.summary.passRate, uniqueStudents: report.summary.uniqueStudents, totalExamsTaken: report.summary.totalAttempts,
+      performanceData, upcomingExams, generatedAt: report.generatedAt, filters: report.filters, timeZone: REPORT_TIME_ZONE });
+  } catch (error) { fail(res, error); }
+});
 router.get('/api/student/dashboard-stats', verifyToken, checkRole(['STUDENT']), async (req: any, res: any) => {
   try {
-    const studentId = req.user.id;
-    const cacheKey = `student_dashboard_${studentId}`;
-    const cached = await getCacheAsync(cacheKey);
-    if (cached) return res.json(cached.data !== undefined ? cached.data : cached);
-
-    const student = await prisma.user.findUnique({
-      where: { id: studentId },
-      include: {
-        school: { select: { name: true } },
-        _count: {
-          select: {
-            studentEnrollments: true,
-            examSubmissions: true
-          }
-        }
-      }
-    });
-
-    if (!student) return res.status(404).json({ error: 'Student not found' });
-
-    // Count upcoming exams in the student's school
-    const upcomingExamsCount = await prisma.exam.count({
-      where: {
-        schoolId: student.schoolId,
-        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Placeholder for "upcoming/recent"
-      }
-    });
-
-    const stats = {
-      name: student.name,
-      schoolName: student.school?.name,
-      coursesCount: student._count.studentEnrollments,
-      examsTaken: student._count.examSubmissions,
-      upcomingExams: upcomingExamsCount,
-      overallProgress: 0 // Placeholder
-    };
-
-    setCache(cacheKey, stats);
-    res.json(stats);
-  } catch (error) {
-    res.status(500).json({ error: 'Error fetching dashboard stats' });
-  }
-});
-
-
-// (Removed redundant route definition)
-
-
-// ==========================================
-// 📊 STATS & REPORTS
-// ==========================================
-
-// Exam Attendance Report
-router.get('/api/reports/exam-attendance', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN']), async (req: Request, res: Response) => {
-  try {
-    const { schoolId, grade, examId } = req.query;
-
-    if (!examId) return res.status(400).json({ error: 'examId is required' });
-
-    let targetSchoolId = schoolId as string;
-    if (req.user.role === 'SCHOOL_ADMIN') {
-      targetSchoolId = req.user.schoolId;
-    }
-
-    if (!targetSchoolId) return res.status(400).json({ error: 'schoolId is required' });
-
-    // Pagination params — max 200 per page to prevent large payloads
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
-    const skip = (page - 1) * limit;
-
-    // Build user filter
-    const userWhere: any = { role: 'STUDENT', schoolId: targetSchoolId, deletedAt: null };
-    if (grade) {
-      userWhere.grade = grade;
-    }
-
-    // Count total students for pagination metadata
-    const [totalStudents, attendedCount] = await Promise.all([
-      prisma.user.count({where:userWhere}),
-      prisma.user.count({where:{...userWhere, examSubmissions:{some:{examId:String(examId)}}}})
+    const user = await prisma.user.findUnique({ where: { id: req.user.id }, include: { school: { select: { name: true } } } });
+    if (!user) return res.status(404).json({ error: 'Student not found' });
+    const courseWhere = { ...buildStudentCourseWhere(user), deletedAt: null };
+    const [courses, lessons, completed, attempts, upcoming] = await Promise.all([
+      prisma.course.count({ where: courseWhere }), prisma.lesson.count({ where: { deletedAt: null, course: courseWhere } }),
+      prisma.lessonProgress.count({ where: { userId: user.id, isCompleted: true, lesson: { deletedAt: null, course: courseWhere } } }),
+      prisma.examSubmission.count({ where: { userId: user.id } }),
+      prisma.exam.findMany({ where: { deletedAt: null, status: 'PUBLISHED', startDate: { gt: new Date() } }, include: { schools: { select: { id: true } } } }),
     ]);
-
-    // Get paginated students
-    const students = await prisma.user.findMany({
-      where: userWhere,
-      select: { id: true, name: true, username: true, grade: true },
-      skip,
-      take: limit,
-      orderBy: { name: 'asc' },
-    });
-
-    // Get all submissions for this exam for the current page of students
-    const submissions = await prisma.examSubmission.findMany({
-      where: {
-        examId: examId as string,
-        userId: { in: students.map(s => s.id)
-        }
-      },
-      orderBy: { totalScore: 'desc' }
-    });
-
-    // Group submissions by user
-    const submissionMap = new Map();
-    for (const sub of submissions) {
-      if (!submissionMap.has(sub.userId)) {
-        submissionMap.set(sub.userId, sub);
-      }
-    }
-
-    const attended: any[] = [];
-    const missed: any[] = [];
-
-    for (const student of students) {
-      if (submissionMap.has(student.id)) {
-        const sub = submissionMap.get(student.id);
-        attended.push({ ...student, score: sub.totalScore, percentage: sub.percentage, submittedAt: sub.createdAt });
-      } else {
-        missed.push(student);
-      }
-    }
-
-    res.json({
-      attended,
-      missed,
-      total: totalStudents,
-      attendedCount,
-      missedCount: totalStudents - attendedCount,
-      // Pagination metadata (new — backward compatible addition)
-      pagination: {
-        page,
-        limit,
-        total: totalStudents,
-        pages: Math.ceil(totalStudents / limit),
-        hasMore: page * limit < totalStudents,
-      }
-    });
-  } catch (error) {
-    console.error('Report error:', error);
-    res.status(500).json({ error: 'Error generating report' });
-  }
+    res.json({ name: user.name, schoolName: user.school?.name, coursesCount: courses, examsTaken: attempts,
+      upcomingExams: upcoming.filter(exam => examMatchesStudent(exam, user)).length, overallProgress: lessons ? Math.round(completed / lessons * 100) : null,
+      generatedAt: new Date().toISOString(), timeZone: REPORT_TIME_ZONE });
+  } catch (error) { fail(res, error); }
 });
-
-
-// Student Stats (Admins can also view their own stats for testing)
-
 export default router;

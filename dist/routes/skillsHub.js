@@ -45,6 +45,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const bilingualMetadata_1 = require("../utils/bilingualMetadata");
 const systemSettings_service_1 = require("../services/systemSettings.service");
 const multer_1 = __importDefault(require("multer"));
 const XLSX = __importStar(require("xlsx"));
@@ -462,35 +463,8 @@ router.post('/api/skills-hub/activities', auth_1.verifyToken, (0, auth_1.checkRo
             return res.status(403).json({ error: 'Access denied: Cannot add activities in this cluster.' });
         }
         const activity = yield prisma_1.default.interactiveActivity.create({
-            data: {
-                lessonId,
-                title,
-                titleEn: titleEn || null,
-                questionText: questionText || null,
-                questionTextEn: questionTextEn || null,
-                type,
-                options: typeof options === 'string' ? options : JSON.stringify(options),
-                optionsEn: optionsEn !== undefined ? (typeof optionsEn === 'string' ? optionsEn : JSON.stringify(optionsEn)) : null,
-                correctAnswer: typeof correctAnswer === 'string' ? correctAnswer : JSON.stringify(correctAnswer),
-                correctAnswerEn: correctAnswerEn !== undefined ? (typeof correctAnswerEn === 'string' ? correctAnswerEn : JSON.stringify(correctAnswerEn)) : null,
-                points: points !== undefined ? Number(points) : 10,
-                xpPoints: xpPoints !== undefined ? Number(xpPoints) : 10,
-                difficulty: difficulty || 'Medium',
-                dok: dok || null,
-                estimatedTime: estimatedTime !== undefined ? Number(estimatedTime) : 60,
-                standard: standard || null,
-                indicator: indicator || null,
-                learningOutcome: learningOutcome || null,
-                skill: skill || null,
-                hint: hint || null,
-                hintEn: hintEn || null,
-                tip: tip || null,
-                tipEn: tipEn || null,
-                explanation: explanation || null,
-                explanationEn: explanationEn || null,
-                keyInsight: keyInsight || null,
-                keyInsightEn: keyInsightEn || null
-            }
+            data: Object.assign(Object.assign({ lessonId,
+                title, titleEn: titleEn || null, questionText: questionText || null, questionTextEn: questionTextEn || null, type, options: typeof options === 'string' ? options : JSON.stringify(options), optionsEn: optionsEn !== undefined ? (typeof optionsEn === 'string' ? optionsEn : JSON.stringify(optionsEn)) : null, correctAnswer: typeof correctAnswer === 'string' ? correctAnswer : JSON.stringify(correctAnswer), correctAnswerEn: correctAnswerEn !== undefined ? (typeof correctAnswerEn === 'string' ? correctAnswerEn : JSON.stringify(correctAnswerEn)) : null, points: points !== undefined ? Number(points) : 10, xpPoints: xpPoints !== undefined ? Number(xpPoints) : 10, difficulty: difficulty || 'Medium', dok: dok || null, estimatedTime: estimatedTime !== undefined ? Number(estimatedTime) : 60 }, (0, bilingualMetadata_1.metadataTranslations)(req.body, String, ['standard', 'indicator', 'learningOutcome', 'skill'])), { standard: standard || null, indicator: indicator || null, learningOutcome: learningOutcome || null, skill: skill || null, hint: hint || null, hintEn: hintEn || null, tip: tip || null, tipEn: tipEn || null, explanation: explanation || null, explanationEn: explanationEn || null, keyInsight: keyInsight || null, keyInsightEn: keyInsightEn || null })
         });
         res.json({ message: 'Interactive Activity created successfully', activity });
     }
@@ -516,34 +490,7 @@ router.put('/api/skills-hub/activities/:id', auth_1.verifyToken, (0, auth_1.chec
         }
         const activity = yield prisma_1.default.interactiveActivity.update({
             where: { id },
-            data: {
-                title: title !== undefined ? title : existingActivity.title,
-                titleEn: titleEn !== undefined ? titleEn : existingActivity.titleEn,
-                questionText: questionText !== undefined ? questionText : existingActivity.questionText,
-                questionTextEn: questionTextEn !== undefined ? questionTextEn : existingActivity.questionTextEn,
-                type: type !== undefined ? type : existingActivity.type,
-                options: options !== undefined ? (typeof options === 'string' ? options : JSON.stringify(options)) : existingActivity.options,
-                optionsEn: optionsEn !== undefined ? (typeof optionsEn === 'string' ? optionsEn : JSON.stringify(optionsEn)) : existingActivity.optionsEn,
-                correctAnswer: correctAnswer !== undefined ? (typeof correctAnswer === 'string' ? correctAnswer : JSON.stringify(correctAnswer)) : existingActivity.correctAnswer,
-                correctAnswerEn: correctAnswerEn !== undefined ? (typeof correctAnswerEn === 'string' ? correctAnswerEn : JSON.stringify(correctAnswerEn)) : existingActivity.correctAnswerEn,
-                points: points !== undefined ? Number(points) : existingActivity.points,
-                xpPoints: xpPoints !== undefined ? Number(xpPoints) : existingActivity.xpPoints,
-                difficulty: difficulty !== undefined ? difficulty : existingActivity.difficulty,
-                dok: dok !== undefined ? dok : existingActivity.dok,
-                estimatedTime: estimatedTime !== undefined ? Number(estimatedTime) : existingActivity.estimatedTime,
-                standard: standard !== undefined ? standard : existingActivity.standard,
-                indicator: indicator !== undefined ? indicator : existingActivity.indicator,
-                learningOutcome: learningOutcome !== undefined ? learningOutcome : existingActivity.learningOutcome,
-                skill: skill !== undefined ? skill : existingActivity.skill,
-                hint: hint !== undefined ? hint : existingActivity.hint,
-                hintEn: hintEn !== undefined ? hintEn : existingActivity.hintEn,
-                tip: tip !== undefined ? tip : existingActivity.tip,
-                tipEn: tipEn !== undefined ? tipEn : existingActivity.tipEn,
-                explanation: explanation !== undefined ? explanation : existingActivity.explanation,
-                explanationEn: explanationEn !== undefined ? explanationEn : existingActivity.explanationEn,
-                keyInsight: keyInsight !== undefined ? keyInsight : existingActivity.keyInsight,
-                keyInsightEn: keyInsightEn !== undefined ? keyInsightEn : existingActivity.keyInsightEn
-            }
+            data: Object.assign(Object.assign({ title: title !== undefined ? title : existingActivity.title, titleEn: titleEn !== undefined ? titleEn : existingActivity.titleEn, questionText: questionText !== undefined ? questionText : existingActivity.questionText, questionTextEn: questionTextEn !== undefined ? questionTextEn : existingActivity.questionTextEn, type: type !== undefined ? type : existingActivity.type, options: options !== undefined ? (typeof options === 'string' ? options : JSON.stringify(options)) : existingActivity.options, optionsEn: optionsEn !== undefined ? (typeof optionsEn === 'string' ? optionsEn : JSON.stringify(optionsEn)) : existingActivity.optionsEn, correctAnswer: correctAnswer !== undefined ? (typeof correctAnswer === 'string' ? correctAnswer : JSON.stringify(correctAnswer)) : existingActivity.correctAnswer, correctAnswerEn: correctAnswerEn !== undefined ? (typeof correctAnswerEn === 'string' ? correctAnswerEn : JSON.stringify(correctAnswerEn)) : existingActivity.correctAnswerEn, points: points !== undefined ? Number(points) : existingActivity.points, xpPoints: xpPoints !== undefined ? Number(xpPoints) : existingActivity.xpPoints, difficulty: difficulty !== undefined ? difficulty : existingActivity.difficulty, dok: dok !== undefined ? dok : existingActivity.dok, estimatedTime: estimatedTime !== undefined ? Number(estimatedTime) : existingActivity.estimatedTime }, (0, bilingualMetadata_1.metadataTranslations)(req.body, String, ['standard', 'indicator', 'learningOutcome', 'skill'])), { standard: standard !== undefined ? standard : existingActivity.standard, indicator: indicator !== undefined ? indicator : existingActivity.indicator, learningOutcome: learningOutcome !== undefined ? learningOutcome : existingActivity.learningOutcome, skill: skill !== undefined ? skill : existingActivity.skill, hint: hint !== undefined ? hint : existingActivity.hint, hintEn: hintEn !== undefined ? hintEn : existingActivity.hintEn, tip: tip !== undefined ? tip : existingActivity.tip, tipEn: tipEn !== undefined ? tipEn : existingActivity.tipEn, explanation: explanation !== undefined ? explanation : existingActivity.explanation, explanationEn: explanationEn !== undefined ? explanationEn : existingActivity.explanationEn, keyInsight: keyInsight !== undefined ? keyInsight : existingActivity.keyInsight, keyInsightEn: keyInsightEn !== undefined ? keyInsightEn : existingActivity.keyInsightEn })
         });
         res.json({ message: 'Interactive Activity updated successfully', activity });
     }
@@ -804,20 +751,8 @@ router.get('/api/skills-hub/progress', auth_1.verifyToken, (req, res) => __await
                             completedActivities++;
                         }
                     }
-                    return {
-                        id: act.id,
-                        title: act.title,
-                        type: act.type,
-                        difficulty: act.difficulty,
-                        dok: act.dok,
-                        points: act.points,
-                        estimatedTime: act.estimatedTime,
-                        standard: act.standard,
-                        indicator: act.indicator,
-                        learningOutcome: act.learningOutcome,
-                        bestAttemptStars,
-                        bestAttemptCorrect
-                    };
+                    return Object.assign(Object.assign({ id: act.id, title: act.title, type: act.type, difficulty: act.difficulty, dok: act.dok, points: act.points, estimatedTime: act.estimatedTime }, (0, bilingualMetadata_1.metadataTranslations)(act)), { standard: act.standard, indicator: act.indicator, learningOutcome: act.learningOutcome, bestAttemptStars,
+                        bestAttemptCorrect });
                 });
                 return {
                     id: skill.id,

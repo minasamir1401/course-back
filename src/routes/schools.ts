@@ -1,3 +1,4 @@
+import { platformStats } from '../services/platformStats.service';
 import { examActivitySeries } from '../utils/dashboardSeries';
 import { setSessionCookies } from '../utils/authSession';
 import { Router, Request, Response, NextFunction } from 'express';
@@ -562,8 +563,9 @@ router.post('/api/admin/users', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_A
 router.get('/api/admin/users', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER']), checkSchoolAccess, async (req: any, res: any) => {
   try {
     const { schoolId, role, page = '1', limit = '50', search } = req.query;
-    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
-    const take = parseInt(limit as string);
+    const pageNumber = Math.max(1, parseInt(page as string) || 1);
+    const take = Math.min(200, Math.max(1, parseInt(limit as string) || 50));
+    const skip = (pageNumber - 1) * take;
 
     // ✅ Filter out soft-deleted users
     const where: any = { deletedAt: null };
@@ -577,6 +579,10 @@ router.get('/api/admin/users', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_AD
       else where.role = { not: 'SUPER_ADMIN' };
     }
 
+    if (req.user.role === 'SUPER_ADMIN' && req.query.excludeSuperAdmin === 'true' && !role) where.role = { not: 'SUPER_ADMIN' };
+    if (typeof req.query.status === 'string' && ['ACTIVE', 'INACTIVE', 'SUSPENDED'].includes(req.query.status)) where.status = req.query.status;
+    if (typeof req.query.grade === 'string' && req.query.grade) where.grade = req.query.grade;
+    if (typeof req.query.classroomId === 'string' && req.query.classroomId) where.classroomId = req.query.classroomId;
     if (search) {
       where.AND = [
         ...(where.AND || []),
@@ -610,7 +616,7 @@ router.get('/api/admin/users', verifyToken, checkRole(['SUPER_ADMIN', 'SCHOOL_AD
       users: mappedUsers,
       pagination: {
         total,
-        page: parseInt(page as string),
+        page: pageNumber,
         limit: take,
         totalPages: Math.ceil(total / take)
       }
@@ -719,70 +725,8 @@ router.delete('/api/admin/users/:id', verifyToken, checkRole(['SUPER_ADMIN', 'SC
 
 // Get Super Admin Stats
 router.get(['/api/admin/stats', '/api/super-admin/stats'], verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
-  try {
-    // Run all counts in parallel for maximum speed
-    const [totalSchools, totalUsers, totalStudents, totalTeachers, totalCourses, totalClassrooms, totalParents, activeStudents, activeExams, centralExamsCount, recentSchoolsData, allSchools] = await Promise.all([
-      prisma.school.count(),
-      prisma.user.count(),
-      prisma.user.count({ where: { role: 'STUDENT' } }),
-      prisma.user.count({ where: { role: 'TEACHER' } }),
-      prisma.course.count({ where: { isCentral: true } }),
-      prisma.classroom.count(),
-      prisma.user.count({ where: { role: 'PARENT' } }),
-      prisma.user.count({ where: { role: 'STUDENT', OR: [{ studentEnrollments: { some: {} } }, { examSubmissions: { some: {} } }] } }),
-      prisma.exam.count({ where: { status: 'PUBLISHED' } }),
-      prisma.exam.count({ where: { isCentral: true } }),
-      prisma.school.findMany({
-        take: 5,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          _count: { select: { users: { where: { role: 'STUDENT' } } } }
-        }
-      }),
-      prisma.school.findMany({
-        include: { _count: { select: { users: { where: { role: 'STUDENT' } } } } }
-      })
-    ]);
-
-    const examsActivityData = await examActivitySeries(prisma);
-    const interactionRate = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
-
-    const recentSchools = recentSchoolsData.map(s => ({
-      id: s.id,
-      name: s.name,
-      students: s._count.users,
-      status: s.status,
-      type: 'مدرسة' // or logic based on grade if exists
-    }));
-
-    const schoolPerformanceData = allSchools
-      .map(s => ({
-        name: s.name,
-        students: s._count.users,
-        growth: 0
-      }))
-      .sort((a, b) => b.students - a.students)
-      .slice(0, 5);
-
-    res.json({ 
-      schoolsCount: totalSchools, 
-      usersCount: totalUsers, 
-      studentsCount: totalStudents, 
-      teachersCount: totalTeachers,
-      coursesCount: totalCourses, 
-      interactionRate, 
-      classroomsCount: totalClassrooms, 
-      parentsCount: totalParents,
-      activeExams,
-      centralExamsCount,
-      recentSchools,
-      schoolPerformanceData,
-      examsActivityData
-    });
-  } catch (error) {
-    console.error('❌ Stats error:', error);
-    res.status(500).json({ error: 'Error fetching statistics' });
-  }
+  try { res.json(await platformStats()); }
+  catch (error) { console.error('Platform statistics failed:', error); res.status(500).json({ error: 'Error fetching statistics' }); }
 });
 
 // Impersonate User (Super Admin only)
@@ -875,11 +819,11 @@ router.get('/api/admin/schools/:id/stats', verifyToken, checkRole(['SUPER_ADMIN'
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const students = await prisma.user.count({ where: { schoolId: id, role: 'STUDENT' } });
-    const teachers = await prisma.user.count({ where: { schoolId: id, role: 'TEACHER' } });
-    const parents = await prisma.user.count({ where: { schoolId: id, role: 'PARENT' } });
+    const students = await prisma.user.count({ where: { schoolId: id, role: 'STUDENT', deletedAt: null } });
+    const teachers = await prisma.user.count({ where: { schoolId: id, role: 'TEACHER', deletedAt: null } });
+    const parents = await prisma.user.count({ where: { schoolId: id, role: 'PARENT', deletedAt: null } });
     const classrooms = await prisma.classroom.count({ where: { schoolId: id } });
-    const exams = await prisma.exam.count({ where: { schoolId: id } });
+    const exams = await prisma.exam.count({ where: { deletedAt: null, OR: [{ schoolId: id }, { schools: { some: { id } } }, { isCentral: true, schoolId: null, schools: { none: {} } }] } });
 
     res.json({
       students,

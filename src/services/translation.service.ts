@@ -1,3 +1,4 @@
+import { protectRenderedMath } from '../utils/translationMath';
 const translationCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 5000;
 
@@ -16,10 +17,16 @@ function setCache(key: string, value: string): void {
 export function maskSpecialContent(text: string): { maskedText: string; tokens: string[] } {
   const tokens: string[] = [];
   
-  let masked = text.replace(/\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g, (match) => {
-    const placeholder = ` __MATH_${tokens.length}__ `;
+  const rendered = protectRenderedMath(text);
+  let masked = rendered.html.replace(/\x00RENDERED(\d+)\x00/g, (_, index) => {
+    const token = ` __MATH_${tokens.length}__ `;
+    tokens.push(rendered.blocks[Number(index)]);
+    return token;
+  });
+  masked = masked.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\$)\$[^$\n]+\$(?!\$)/g, match => {
+    const token = ` __MATH_${tokens.length}__ `;
     tokens.push(match);
-    return placeholder;
+    return token;
   });
 
   masked = masked.replace(/<[^>]+>/g, (match) => {
@@ -38,17 +45,11 @@ export function maskSpecialContent(text: string): { maskedText: string; tokens: 
 }
 
 export function restoreSpecialContent(text: string, tokens: string[]): string {
-  let restored = text;
-  tokens.forEach((original, index) => {
-    const mathRegex = new RegExp(`\\s*__\\s*MATH_${index}\\s*__\\s*`, 'gi');
-    const htmlRegex = new RegExp(`\\s*__\\s*HTML_${index}\\s*__\\s*`, 'gi');
-    const mediaRegex = new RegExp(`\\s*__\\s*MEDIA_${index}\\s*__\\s*`, 'gi');
-    restored = restored
-      .replace(mathRegex, ` ${original} `)
-      .replace(htmlRegex, original)
-      .replace(mediaRegex, original);
+  return text.replace(/\s*__\s*(MATH|HTML|MEDIA)_(\d+)\s*__\s*/gi, (match, kind, index) => {
+    const original = tokens[Number(index)];
+    if (original === undefined) return match;
+    return kind.toUpperCase() === 'MATH' ? ` ${original} ` : original;
   });
-  return restored;
 }
 
 async function fetchGoogleTranslation(text: string, from: 'ar' | 'en', to: 'ar' | 'en', client: string): Promise<string | null> {
@@ -178,7 +179,13 @@ export async function translateSingleText(
   }
 
   const fastResult = await translateViaFastEngine(maskedText.trim(), from, to);
-  if (fastResult) {
+  // A provider dropping or duplicating a placeholder must never corrupt saved math/HTML.
+  const expectedTokens = maskedText.match(/__(?:MATH|HTML|MEDIA)_\d+__/g) || [];
+  const intact = fastResult && expectedTokens.every(token => {
+    const pattern = token.replace(/^__/, '__\\s*').replace(/__$/, '\\s*__');
+    return (fastResult.match(new RegExp(pattern, 'gi')) || []).length === 1;
+  });
+  if (fastResult && intact) {
     const finalResult = restoreSpecialContent(fastResult, tokens);
     setCache(cacheKey, finalResult);
     return finalResult;

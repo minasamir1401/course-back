@@ -40,7 +40,7 @@ function parseSkillExcelRows(rows, lessonId) {
         if (!['Easy', 'Medium', 'Hard'].includes(difficulty))
             fail('difficulty must be Easy, Medium or Hard.');
         const data = { lessonId, title, type, options: JSON.stringify(options), correctAnswer, difficulty, points: number('points', 10, 0, 1000), xpPoints: number('xpPoints', 10, 0, 1000), estimatedTime: number('estimatedTime', 60, 0, 86400) };
-        for (const field of ['titleEn', 'questionText', 'questionTextEn', 'hint', 'hintEn', 'tip', 'tipEn', 'explanation', 'explanationEn', 'keyInsight', 'keyInsightEn', 'standard', 'indicator', 'learningOutcome', 'skill', 'dok'])
+        for (const field of ['titleEn', 'questionText', 'questionTextEn', 'hint', 'hintEn', 'tip', 'tipEn', 'explanation', 'explanationEn', 'keyInsight', 'keyInsightEn', 'standard', 'standardEn', 'indicator', 'indicatorEn', 'learningOutcome', 'learningOutcomeEn', 'skill', 'skillEn', 'dok'])
             if (row[field] != null)
                 data[field] = String(row[field]);
         for (const field of ['optionsEn', 'correctAnswerEn'])

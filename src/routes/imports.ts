@@ -1,3 +1,4 @@
+import { metadataTranslations, LESSON_METADATA_FIELDS } from '../utils/bilingualMetadata';
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { verifyToken, checkRole } from '../middleware/auth';
@@ -884,6 +885,7 @@ router.get('/api/school/export/json/course/:id', verifyToken, checkRole(['SCHOOL
       },
       lessons: course.lessons.map(l => ({
         title: l.title,
+        ...metadataTranslations(l, String, LESSON_METADATA_FIELDS),
         domain: l.domain,
         videoUrl: l.videoUrl,
         duration: l.duration,
@@ -946,6 +948,7 @@ router.get('/api/school/export/json/course/:id', verifyToken, checkRole(['SCHOOL
           correctAnswer: q.correctAnswer,
           points: q.points,
           xpPoints: q.xpPoints,
+          ...metadataTranslations(q),
           skill: q.skill,
           standard: q.standard,
           learningOutcome: q.learningOutcome,
@@ -1058,6 +1061,7 @@ router.post('/api/school/import/json/course', verifyToken, checkRole(['SCHOOL_AD
           });
 
           const lessonData = {
+              ...metadataTranslations(l, String, LESSON_METADATA_FIELDS),
               domain: l.domain || null,
               videoUrl: l.videoUrl || null,
               duration: l.duration || 0,

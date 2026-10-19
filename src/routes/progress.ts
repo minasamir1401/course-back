@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
 import prisma from '../lib/prisma';
+import { attemptPassed, selectAttempts } from '../utils/reportMetrics';
 import { verifyToken, checkRole, checkSchoolAccess } from '../middleware/auth';
 import { 
   JWT_SECRET, JWT_EXPIRES_IN, getVideoDuration, hasRequiredFields, 
@@ -61,31 +62,33 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
     if (!student) return res.status(404).json({ error: 'Student not found' });
 
     // 2. Build course filters
-    const courseWhere = buildStudentCourseWhere(student);
+    const courseWhere = { ...buildStudentCourseWhere(student), deletedAt: null };
 
     // 3. Fetch all dashboard data in PARALLEL
     const [
       allSubmissions,
       allLessonProgresses,
-      avgScoreData,
+      selectedSubmissionsData,
       availableCourses,
       courseProgresses,
-      upcomingExamsCount
+      upcomingCandidates,
+      totalAttempts
     ] = await Promise.all([
       prisma.examSubmission.findMany({
-        where: { userId },
+        where: { userId, exam: { resultVisibility: { not: 'HIDE_ALL' } } },
         orderBy: { createdAt: 'desc' },
+        take: 20,
         include: {
           exam: {
             select: {
               title: true,
-              type: true
+              type: true, passingScore: true, resultVisibility: true
             }
-          }
+          }, answers: { select: { isCorrect: true } }
         }
       }),
       prisma.lessonProgress.findMany({
-        where: { userId },
+        where: { userId, lesson: { deletedAt: null, course: courseWhere } },
         include: {
           lesson: {
             select: {
@@ -98,9 +101,10 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
         },
         orderBy: { updatedAt: 'desc' }
       }),
-      prisma.examSubmission.aggregate({
-        where: { userId },
-        _avg: { percentage: true }
+      prisma.examSubmission.findMany({
+        where: { userId, exam: { resultVisibility: { not: 'HIDE_ALL' } } },
+        distinct: ['examId', 'subExamId'], orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        include: { exam: { select: { title: true, passingScore: true } }, answers: { select: { isCorrect: true } } }
       }),
       prisma.course.findMany({
         where: courseWhere,
@@ -108,7 +112,7 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
         orderBy: { createdAt: 'desc' }
       }),
       prisma.courseProgress.findMany({ where: { userId } }),
-      prisma.exam.count({
+      prisma.exam.findMany({
         where: {
           OR: [
             { isCentral: true },
@@ -117,9 +121,10 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
               { schools: { some: { id: student.schoolId } } }
             ] : [])
           ],
-          createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-        }
-      })
+          deletedAt: null, status: 'PUBLISHED', startDate: { gt: new Date() }
+        }, include: { schools: { select: { id: true } } }, orderBy: { startDate: 'asc' }
+      }),
+      prisma.examSubmission.count({ where: { userId, exam: { resultVisibility: { not: 'HIDE_ALL' } } } })
     ]);
 
     const completedLessonsData = allLessonProgresses.filter(lp => lp.isCompleted);
@@ -128,7 +133,7 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
     const lessonCounts = courseIds.length > 0
       ? await prisma.lesson.groupBy({
         by: ['courseId'],
-        where: { courseId: { in: courseIds } },
+        where: { courseId: { in: courseIds }, deletedAt: null },
         _count: { _all: true },
         _sum: { duration: true }
       })
@@ -137,7 +142,7 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
     // Build question count map by fetching lessons with non-null questions
     const lessonsWithQuestions = courseIds.length > 0
       ? await prisma.lesson.findMany({
-        where: { courseId: { in: courseIds }, questions: { not: 'DbNull' as any } },
+        where: { courseId: { in: courseIds }, deletedAt: null, questions: { not: 'DbNull' as any } },
         select: { courseId: true, questions: true }
       })
       : [];
@@ -188,6 +193,24 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
     const totalCompleted = availableCourses.reduce((acc, c) => acc + (completedCountMap[c.id] || 0), 0);
     const overallCourseProgress = totalPossibleLessons > 0 ? Math.round((totalCompleted / totalPossibleLessons) * 100) : 0;
 
+    const childIds = [...new Set([...allSubmissions, ...selectedSubmissionsData].map(item => item.subExamId).filter((id): id is string => Boolean(id)))];
+    const children = childIds.length ? await prisma.subExam.findMany({ where: { id: { in: childIds } }, select: { id: true, title: true, passingScore: true } }) : [];
+    const enriched = allSubmissions.map(item => {
+      const subExam = children.find(child => child.id === item.subExamId);
+      const snapshot = item.reportSnapshot as any;
+      const summary = { ...item, subExam, totalQuestions: snapshot?.totalQuestions ?? item.answers.length,
+        correctAnswers: snapshot?.correctAnswers ?? item.answers.filter(answer => answer.isCorrect).length };
+      return { ...summary, passed: attemptPassed(summary), exam: { ...item.exam,
+        title: snapshot?.examTitle || subExam?.title || item.exam.title, passingScore: snapshot?.passingScore ?? subExam?.passingScore ?? item.exam.passingScore } };
+    });
+    const selected = selectedSubmissionsData.filter(item => item.percentage != null).map(item => {
+      const snapshot = item.reportSnapshot as any;
+      const summary = { ...item, subExam: children.find(child => child.id === item.subExamId),
+        totalQuestions: snapshot?.totalQuestions ?? item.answers.length,
+        correctAnswers: snapshot?.correctAnswers ?? item.answers.filter(answer => answer.isCorrect).length };
+      return { ...summary, passed: attemptPassed(summary) };
+    });
+    const upcoming = upcomingCandidates.filter(exam => examMatchesStudent(exam, { ...student, role: 'STUDENT' }));
     const result = {
       name: student.name,
       grade: student.grade,
@@ -195,19 +218,23 @@ router.get('/api/student/stats', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMI
       schoolName: student.school?.name,
       classroomName: student.classroom ? student.classroom.name.split(' | ')[0] : null,
       teacherName: student.classroom?.teacher?.name || null,
-      totalExams: allSubmissions.length,
-      avgScore: Math.round(avgScoreData._avg.percentage || 0),
-      upcomingExams: upcomingExamsCount,
+      totalExams: totalAttempts,
+      avgScore: selected.length ? Math.round(selected.reduce((sum, item) => sum + (item.percentage || 0), 0) / selected.length) : null,
+      passRate: selected.length ? Math.round(selected.filter(item => item.passed).length / selected.length * 100) : null,
+      upcomingExams: upcoming.length,
+      upcomingTasks: upcoming.slice(0, 5).map(exam => ({ id: exam.id, title: exam.title, startDate: exam.startDate, endDate: exam.endDate, subject: exam.subjects })),
+      generatedAt: new Date().toISOString(), timeZone: 'Africa/Cairo',
       overallCourseProgress,
+      activeStudySeconds: allLessonProgresses.reduce((sum, progress) => sum + progress.activeStudySeconds, 0),
       courseProgresses: coursesWithProgress,
-      recentExams: allSubmissions.slice(0, 5).map((s: any) => ({
+      recentExams: enriched.slice(0, 5).map((s: any) => ({
         id: s.id,
         examTitle: s.exam.title,
         score: s.totalScore,
         percentage: s.percentage,
         date: s.createdAt
       })),
-      submissions: allSubmissions,
+      submissions: enriched,
       lessonProgresses: allLessonProgresses
     };
 
@@ -226,19 +253,14 @@ router.get('/api/admin/submissions', verifyToken, checkRole(['SUPER_ADMIN', 'SCH
     const take = Math.min(parseInt(limit as string) || 50, 200); // max 200 per page
     const skip = (Math.max(parseInt(page as string) || 1, 1) - 1) * take;
 
-    const where: any = {};
+    const where: any = { user: { role: 'STUDENT', deletedAt: null } };
 
     if (examId) where.examId = examId;
 
     if (req.user.role === 'SCHOOL_ADMIN') {
-      where.exam = {
-        OR: [
-          { schoolId: req.user.schoolId },
-          { schools: { some: { id: req.user.schoolId } } }
-        ]
-      };
+      where.user.schoolId = req.user.schoolId;
     } else if (schoolId) {
-      where.user = { schoolId };
+      where.user.schoolId = schoolId;
     }
 
     const [submissions, total] = await Promise.all([
@@ -273,11 +295,14 @@ router.get('/api/admin/submissions', verifyToken, checkRole(['SUPER_ADMIN', 'SCH
 router.post('/api/progress/lesson/:lessonId', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMIN', 'TEACHER', 'SUPER_ADMIN']), async (req: any, res: any) => {
   try {
     const { lessonId } = req.params;
-    const { watchedSeconds } = req.body;
+    const { watchedSeconds, activeSeconds } = req.body;
     const userId = req.user.id;
 
     if (watchedSeconds === undefined || watchedSeconds === null) {
       return res.status(400).json({ error: 'watchedSeconds is required' });
+    }
+    if (!Number.isFinite(watchedSeconds) || watchedSeconds < 0 || (activeSeconds !== undefined && (!Number.isFinite(activeSeconds) || activeSeconds < 0))) {
+      return res.status(400).json({ error: 'Progress must contain finite, non-negative seconds' });
     }
 
     const lesson = await prisma.lesson.findUnique({
@@ -303,7 +328,11 @@ router.post('/api/progress/lesson/:lessonId', verifyToken, checkRole(['STUDENT',
       where: { userId_lessonId: { userId, lessonId } }
     });
 
-    const totalWatched = Math.max(existingProgress?.watchedSeconds || 0, watchedSeconds);
+    const position = Math.floor(Math.min(watchedSeconds, lesson.duration > 0 ? lesson.duration : 86400));
+    const totalWatched = Math.max(existingProgress?.watchedSeconds || 0, position);
+    const activityAt = new Date();
+    const elapsed = existingProgress?.lastActivityAt ? Math.max(0, Math.floor((activityAt.getTime() - existingProgress.lastActivityAt.getTime()) / 1000)) : 0;
+    const verifiedActiveSeconds = Math.min(30, elapsed, Math.floor(activeSeconds || 0));
     let isCompleted: boolean;
 
     if (lesson.duration > 0) {
@@ -317,10 +346,13 @@ router.post('/api/progress/lesson/:lessonId', verifyToken, checkRole(['STUDENT',
     // Mark progress for internal tracking without heavy logging
 
     if (existingProgress) {
+      // Optimistic timestamp check prevents simultaneous tabs crediting the same elapsed interval twice.
+      await prisma.lessonProgress.updateMany({ where: { id: existingProgress.id, lastActivityAt: existingProgress.lastActivityAt },
+        data: { activeStudySeconds: { increment: verifiedActiveSeconds }, lastActivityAt: activityAt } });
       existingProgress = await prisma.lessonProgress.update({
         where: { id: existingProgress.id },
         data: {
-          watchedSeconds: Math.max(existingProgress.watchedSeconds, watchedSeconds),
+          watchedSeconds: totalWatched,
           isCompleted: existingProgress.isCompleted || isCompleted
         }
       });
@@ -329,7 +361,8 @@ router.post('/api/progress/lesson/:lessonId', verifyToken, checkRole(['STUDENT',
         data: {
           userId,
           lessonId,
-          watchedSeconds,
+          watchedSeconds: position,
+          lastActivityAt: activityAt,
           isCompleted
         }
       });
@@ -402,6 +435,7 @@ router.get('/api/student/xp-summary', verifyToken, checkRole(['STUDENT', 'SCHOOL
 
     const courseXP: Record<string, { courseId: string; title: string; xp: number }> = {};
     const skillsXP = { title: "مهارات كليفر (Skills Hub)", xp: 0 };
+    let otherXP = 0;
 
     histories.forEach(h => {
       let courseId = '';
@@ -429,12 +463,16 @@ router.get('/api/student/xp-summary', verifyToken, checkRole(['STUDENT', 'SCHOOL
           courseXP[courseId] = { courseId, title: courseTitle, xp: 0 };
         }
         courseXP[courseId].xp += h.xp;
-      }
+      } else { otherXP += h.xp; }
     });
 
     res.json({
       totalXP: user?.xp || 0,
       courseXP: Object.values(courseXP),
+      courses: Object.values(courseXP),
+      otherXP,
+      ledgerXP: histories.reduce((sum, history) => sum + history.xp, 0),
+      unreconciledXP: (user?.xp || 0) - histories.reduce((sum, history) => sum + history.xp, 0),
       skillsXP
     });
   } catch (error: any) {
@@ -610,57 +648,5 @@ router.post('/api/progress/lesson/:lessonId/submit-answer', verifyToken, checkRo
 // ==========================================
 // 🏆 XP SUMMARY (for gamification reports)
 // ==========================================
-router.get('/api/student/xp-summary', verifyToken, checkRole(['STUDENT', 'SCHOOL_ADMIN', 'SUPER_ADMIN']), async (req: any, res: any) => {
-  try {
-    const userId = req.user.id;
-
-    // Aggregate total XP for the user
-    const [totalAgg, byLesson] = await Promise.all([
-      prisma.xPHistory.aggregate({
-        where: { userId },
-        _sum: { xp: true }
-      }),
-      prisma.xPHistory.findMany({
-        where: { userId },
-        select: { xp: true, sourceId: true }
-      })
-    ]);
-
-    const totalXP = totalAgg._sum.xp || 0;
-
-    // Group by lesson source, then join with lesson course info
-    const lessonIds = [...new Set(byLesson.map(h => h.sourceId).filter(Boolean))];
-    const lessonDetails = lessonIds.length > 0 ? await prisma.lesson.findMany({
-      where: { id: { in: lessonIds } },
-      select: { id: true, title: true, courseId: true, course: { select: { id: true, title: true } } }
-    }) : [];
-
-    const lessonMap = new Map(lessonDetails.map(l => [l.id, l]));
-    const courseXPMap = new Map<string, { courseId: string; title: string; xp: number }>();
-
-    for (const h of byLesson) {
-      const lesson = lessonMap.get(h.sourceId || '');
-      if (lesson?.course) {
-        const cid = lesson.course.id;
-        if (!courseXPMap.has(cid)) {
-          courseXPMap.set(cid, { courseId: cid, title: lesson.course.title, xp: 0 });
-        }
-        courseXPMap.get(cid)!.xp += h.xp || 0;
-      }
-    }
-
-    // Skills XP (non-lesson sources)
-    const skillsXP = byLesson.filter(h => !lessonMap.has(h.sourceId || '')).reduce((acc, h) => acc + (h.xp || 0), 0);
-
-    res.json({
-      totalXP,
-      courseXP: Array.from(courseXPMap.values()),
-      skillsXP: { xp: skillsXP }
-    });
-  } catch (error: any) {
-    console.error('Error fetching XP summary:', error);
-    res.status(500).json({ error: 'Error fetching XP summary', totalXP: 0, courseXP: [], skillsXP: { xp: 0 } });
-  }
-});
 
 export default router;

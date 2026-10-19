@@ -1,3 +1,4 @@
+import { metadataTranslations } from '../utils/bilingualMetadata';
 import { isContentDeletionAllowed } from '../services/systemSettings.service';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
@@ -491,6 +492,7 @@ router.post('/api/skills-hub/activities', verifyToken, checkRole(['SUPER_ADMIN',
         difficulty: difficulty || 'Medium',
         dok: dok || null,
         estimatedTime: estimatedTime !== undefined ? Number(estimatedTime) : 60,
+        ...metadataTranslations(req.body, String, ['standard', 'indicator', 'learningOutcome', 'skill']),
         standard: standard || null,
         indicator: indicator || null,
         learningOutcome: learningOutcome || null,
@@ -552,6 +554,7 @@ router.put('/api/skills-hub/activities/:id', verifyToken, checkRole(['SUPER_ADMI
         difficulty: difficulty !== undefined ? difficulty : existingActivity.difficulty,
         dok: dok !== undefined ? dok : existingActivity.dok,
         estimatedTime: estimatedTime !== undefined ? Number(estimatedTime) : existingActivity.estimatedTime,
+        ...metadataTranslations(req.body, String, ['standard', 'indicator', 'learningOutcome', 'skill']),
         standard: standard !== undefined ? standard : existingActivity.standard,
         indicator: indicator !== undefined ? indicator : existingActivity.indicator,
         learningOutcome: learningOutcome !== undefined ? learningOutcome : existingActivity.learningOutcome,
@@ -864,6 +867,7 @@ router.get('/api/skills-hub/progress', verifyToken, async (req: any, res: any) =
             dok: act.dok,
             points: act.points,
             estimatedTime: act.estimatedTime,
+            ...metadataTranslations(act),
             standard: act.standard,
             indicator: act.indicator,
             learningOutcome: act.learningOutcome,

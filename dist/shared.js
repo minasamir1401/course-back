@@ -32,6 +32,7 @@ exports.getVideoDuration = getVideoDuration;
 exports.extractAndSaveBase64Images = extractAndSaveBase64Images;
 exports.ensurePerformanceIndexes = ensurePerformanceIndexes;
 exports.normalizeLegacyCourses = normalizeLegacyCourses;
+const uploadImagePolicy_1 = require("./lib/uploadImagePolicy");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const https_1 = __importDefault(require("https"));
@@ -55,7 +56,7 @@ if (!fs_1.default.existsSync(exports.UPLOADS_DIR))
 exports.ALLOWED_MIME_TYPES = new Set([
     // Images (raster and modern mobile formats)
     'image/jpeg', 'image/jpg', 'image/png', 'image/x-png', 'image/webp', 'image/gif',
-    'image/heic', 'image/heif', 'image/avif', 'image/bmp', 'image/pjpeg',
+    'image/avif', 'image/bmp', 'image/pjpeg',
     // Documents & Data
     'application/pdf',
     'application/json',
@@ -102,6 +103,9 @@ exports.multerUpload = (0, multer_1.default)({
     limits: { fileSize: 150 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
         const mime = (file.mimetype || '').toLowerCase().trim();
+        if ((0, uploadImagePolicy_1.isHeicUpload)(file)) {
+            return cb(new Error(uploadImagePolicy_1.UNSUPPORTED_HEIC_MESSAGE));
+        }
         if (exports.ALLOWED_MIME_TYPES.has(mime)) {
             cb(null, true);
         }
@@ -199,15 +203,31 @@ const isOriginAllowed = (origin, allowedList) => {
     }
 };
 exports.isOriginAllowed = isOriginAllowed;
+const IMAGE_MIME_TO_EXT = {
+    jpeg: 'jpg',
+    jpg: 'jpg',
+    pjpeg: 'jpg',
+    png: 'png',
+    'x-png': 'png',
+    webp: 'webp',
+    gif: 'gif',
+    heic: 'heic',
+    heif: 'heif',
+    avif: 'avif',
+    bmp: 'bmp'
+};
+const ALLOWED_IMAGE_SUBTYPES = Array.from(exports.ALLOWED_MIME_TYPES)
+    .filter(mime => mime.startsWith('image/'))
+    .map(mime => mime.slice('image/'.length).toLowerCase());
+const ESCAPED_IMAGE_SUBTYPES = ALLOWED_IMAGE_SUBTYPES
+    .map(sub => sub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
 const DATA_IMAGE_URI_REGEX = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
 const extensionFromImageMime = (mimeSubtype) => {
-    const normalized = mimeSubtype.toLowerCase();
-    if (normalized === 'jpeg' || normalized === 'jpg')
-        return 'jpg';
-    // Security note: SVG intentionally removed: SVG can contain arbitrary JS (XSS vector)
-    if (normalized === 'png' || normalized === 'webp' || normalized === 'gif')
-        return normalized;
-    return 'bin'; // Unknown / unsafe types: save as binary (won't be served as image)
+    const normalized = mimeSubtype.toLowerCase().trim();
+    if (IMAGE_MIME_TO_EXT[normalized])
+        return IMAGE_MIME_TO_EXT[normalized];
+    return 'bin';
 };
 const replaceEmbeddedDataImages = (input) => {
     if (!input || typeof input !== 'string' || !input.includes('data:image/'))
@@ -274,7 +294,8 @@ const sanitizeHtml = (input) => {
         return String(input);
     }
     let sanitized = input;
-    if (sanitized.includes('&lt;') || sanitized.includes('&gt;')) {
+    // Preserve escaped text and attribute values in actual HTML, especially math.
+    if (!/<\/?[a-z][^>]*>/i.test(sanitized) && (sanitized.includes('&lt;') || sanitized.includes('&gt;'))) {
         sanitized = sanitized
             .replace(/&lt;/gi, '<')
             .replace(/&gt;/gi, '>')
@@ -495,14 +516,18 @@ function extractAndSaveBase64Images(input) {
     if (!input)
         return input;
     if (typeof input === 'string') {
-        // Security note: svg+xml intentionally excluded — SVG can contain arbitrary JS (XSS).
-        const base64Regex = /data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)/g;
+        // Security note: svg+xml intentionally excluded via ALLOWED_MIME_TYPES filter.
+        const base64Regex = new RegExp(`data:image\\/(${ESCAPED_IMAGE_SUBTYPES});base64,([A-Za-z0-9+/=]+)`, 'gi');
         return input.replace(base64Regex, (_match, mimeType, base64Data) => {
             try {
-                const ext = mimeType.replace('+', '').replace('xml', ''); // safe fallback (not used for SVG)
+                const ext = extensionFromImageMime(mimeType);
+                if (ext === 'bin')
+                    return _match;
                 const buffer = Buffer.from(base64Data, 'base64');
+                if (buffer.length === 0)
+                    return _match;
                 const hash = crypto_1.default.createHash('md5').update(buffer).digest('hex');
-                const filename = `img_${hash}.${mimeType}`;
+                const filename = `img_${hash}.${ext}`;
                 const filePath = path_1.default.join(exports.UPLOADS_DIR, filename);
                 if (!fs_1.default.existsSync(filePath)) {
                     fs_1.default.writeFileSync(filePath, buffer);

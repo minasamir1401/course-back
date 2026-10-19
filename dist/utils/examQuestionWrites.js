@@ -10,12 +10,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.persistQuestionUpdates = persistQuestionUpdates;
+const bilingualMetadata_1 = require("./bilingualMetadata");
 const client_1 = require("@prisma/client");
 // Only server-owned field names can enter SQL. Values stay bound parameters.
 const QUESTION_FIELDS = ['text', 'textEn', 'type', 'options', 'optionsEn', 'correctAnswer', 'points', 'xpPoints', 'skill',
     'learningOutcome', 'indicator', 'videoUrl', 'level', 'dok', 'cognitive', 'course', 'section', 'domain',
     'standard', 'subskill', 'microSkill', 'gradeTarget', 'errorPattern', 'estimatedTime', 'explanation', 'explanationEn',
-    'hint', 'hintEn', 'imageUrl', 'moduleId', 'subExamId', 'order'];
+    'hint', 'hintEn', 'imageUrl', 'moduleId', 'subExamId', 'order', ...bilingualMetadata_1.QUESTION_METADATA_FIELDS.map(field => `${field}En`)];
 function persistQuestionUpdates(tx, examId, updates) {
     return __awaiter(this, void 0, void 0, function* () {
         if (!updates.length)

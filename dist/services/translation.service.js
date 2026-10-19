@@ -13,6 +13,7 @@ exports.maskSpecialContent = maskSpecialContent;
 exports.restoreSpecialContent = restoreSpecialContent;
 exports.translateSingleText = translateSingleText;
 exports.translateBatchTexts = translateBatchTexts;
+const translationMath_1 = require("../utils/translationMath");
 const translationCache = new Map();
 const MAX_CACHE_SIZE = 5000;
 function getCacheKey(text, from, to) {
@@ -28,10 +29,16 @@ function setCache(key, value) {
 }
 function maskSpecialContent(text) {
     const tokens = [];
-    let masked = text.replace(/\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g, (match) => {
-        const placeholder = ` __MATH_${tokens.length}__ `;
+    const rendered = (0, translationMath_1.protectRenderedMath)(text);
+    let masked = rendered.html.replace(/\x00RENDERED(\d+)\x00/g, (_, index) => {
+        const token = ` __MATH_${tokens.length}__ `;
+        tokens.push(rendered.blocks[Number(index)]);
+        return token;
+    });
+    masked = masked.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\$)\$[^$\n]+\$(?!\$)/g, match => {
+        const token = ` __MATH_${tokens.length}__ `;
         tokens.push(match);
-        return placeholder;
+        return token;
     });
     masked = masked.replace(/<[^>]+>/g, (match) => {
         const placeholder = ` __HTML_${tokens.length}__ `;
@@ -46,17 +53,12 @@ function maskSpecialContent(text) {
     return { maskedText: masked, tokens };
 }
 function restoreSpecialContent(text, tokens) {
-    let restored = text;
-    tokens.forEach((original, index) => {
-        const mathRegex = new RegExp(`\\s*__\\s*MATH_${index}\\s*__\\s*`, 'gi');
-        const htmlRegex = new RegExp(`\\s*__\\s*HTML_${index}\\s*__\\s*`, 'gi');
-        const mediaRegex = new RegExp(`\\s*__\\s*MEDIA_${index}\\s*__\\s*`, 'gi');
-        restored = restored
-            .replace(mathRegex, ` ${original} `)
-            .replace(htmlRegex, original)
-            .replace(mediaRegex, original);
+    return text.replace(/\s*__\s*(MATH|HTML|MEDIA)_(\d+)\s*__\s*/gi, (match, kind, index) => {
+        const original = tokens[Number(index)];
+        if (original === undefined)
+            return match;
+        return kind.toUpperCase() === 'MATH' ? ` ${original} ` : original;
     });
-    return restored;
 }
 function fetchGoogleTranslation(text, from, to, client) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -185,7 +187,13 @@ function translateSingleText(text_1) {
             return restoreSpecialContent(maskedText, tokens);
         }
         const fastResult = yield translateViaFastEngine(maskedText.trim(), from, to);
-        if (fastResult) {
+        // A provider dropping or duplicating a placeholder must never corrupt saved math/HTML.
+        const expectedTokens = maskedText.match(/__(?:MATH|HTML|MEDIA)_\d+__/g) || [];
+        const intact = fastResult && expectedTokens.every(token => {
+            const pattern = token.replace(/^__/, '__\\s*').replace(/__$/, '\\s*__');
+            return (fastResult.match(new RegExp(pattern, 'gi')) || []).length === 1;
+        });
+        if (fastResult && intact) {
             const finalResult = restoreSpecialContent(fastResult, tokens);
             setCache(cacheKey, finalResult);
             return finalResult;
