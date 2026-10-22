@@ -4,6 +4,7 @@ import { constants } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
+import { readCertificateBytes } from './studentDeliveryPolicy';
 
 const models = Prisma.dmmf.datamodel.models;
 const delegate = (name: string) => name[0].toLowerCase() + name.slice(1);
@@ -60,18 +61,20 @@ async function visitSnapshot(db: any, consume: (key: string, rows: any[], first:
       const pkField = getPkField(model);
       let cursor: string | undefined;
       let first = true;
+      // Certificate rows contain their file bytes; keep snapshot memory bounded.
+      const pageSize = model.name === 'Certificate' ? 1 : 250;
       do {
         // Explicit filter defeats the application client's default soft-delete scope.
         const where = model.fields.some(f => f.name === 'deletedAt') ? { deletedAt: {} } : undefined;
         const rows = await tx[delegate(model.name)].findMany({
-          take: 250, orderBy: { [pkField]: 'asc' }, where,
+          take: pageSize, orderBy: { [pkField]: 'asc' }, where,
           ...(cursor ? { cursor: { [pkField]: cursor }, skip: 1 } : {}),
           ...(['Course', 'Exam'].includes(model.name) ? { include: { schools: { select: { id: true } } } } : {})
         });
         await consume(key, rows, first);
         first = false;
         counts[key] += rows.length;
-        if (rows.length < 250) break;
+        if (rows.length < pageSize) break;
         cursor = rows[rows.length - 1][pkField];
       } while (true);
     }
@@ -135,7 +138,7 @@ export async function restoreSnapshot(db: any, backup: any) {
     for (const model of models) {
       const key = keyFor(model.name);
       if (!Array.isArray(data[key])) {
-        if (model.name === 'SystemSetting') {
+        if (['SystemSetting', 'StudentNotification', 'PushSubscription', 'PushDelivery', 'Certificate', 'NotificationCursor', 'CompetitionPolicy', 'CompetitionProfile', 'Competition', 'CompetitionQuestion', 'CompetitionEntry', 'CompetitionAnswer', 'CompetitionAward'].includes(model.name)) {
           data[key] = [];
         } else {
           throw new Error(`Incomplete backup: missing ${key}`);
@@ -156,6 +159,7 @@ export async function restoreSnapshot(db: any, backup: any) {
     for (const row of rows || []) {
       const rowId = row?.[pkField];
       if (!row || typeof rowId !== 'string' || !rowId || ids.has(rowId)) throw new Error(`Invalid or duplicate ${model.name} ID`);
+      if (model.name === 'Certificate') readCertificateBytes(row);
       ids.add(rowId);
     }
   }

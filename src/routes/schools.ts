@@ -406,6 +406,9 @@ router.post('/api/admin/schools', verifyToken, checkRole(['SUPER_ADMIN']), async
 
 router.get('/api/admin/schools', verifyToken, checkRole(['SUPER_ADMIN']), async (req: any, res: any) => {
   try {
+    if (req.query.view === 'options') {
+      return res.json(await prisma.school.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }));
+    }
     // Fetch ALL schools without pagination to always show the complete list
     const schools = await prisma.school.findMany({
       orderBy: { createdAt: 'desc' },

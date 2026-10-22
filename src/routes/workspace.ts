@@ -17,25 +17,26 @@ router.get('/api/workspace/calendar', verifyToken, workspaceRoles, async (req: a
     if (!user) return res.status(404).json({ error: 'Account not found' });
     const [exams, lessons] = await Promise.all([
       prisma.exam.findMany({ where: { deletedAt: null, status: 'PUBLISHED', ...(user.role === 'SUPER_ADMIN' ? {} : { OR: [ { isCentral: true }, { schoolId: user.schoolId || '__none__' }, { schools: { some: { id: user.schoolId || '__none__' } } } ] }) },
-        select: { id: true, title: true, type: true, grade: true, grades: true, isCentral: true, schoolId: true, schools: { select: { id: true } }, startDate: true, endDate: true,
+        select: { id: true, title: true, subjects: true, course: { select: { title: true, subject: true, coverImage: true } }, type: true, grade: true, grades: true, isCentral: true, schoolId: true, schools: { select: { id: true } }, startDate: true, endDate: true,
           modules: { select: { subExams: { select: { id: true, title: true, publishDate: true, cutOffDate: true } } } } } }),
       prisma.lesson.findMany({ where: { deletedAt: null, isVisible: true, course: { ...buildStudentCourseWhere(user), deletedAt: null },
         OR: [{ publishDate: { gte: range.start, lt: range.end } }, { cutOffDate: { gte: range.start, lt: range.end } }] },
-        select: { id: true, title: true, courseId: true, publishDate: true, cutOffDate: true } }),
+        select: { id: true, title: true, courseId: true, course: { select: { title: true, subject: true, coverImage: true } }, publishDate: true, cutOffDate: true } }),
     ]);
     const events: any[] = [];
-    const add = (id: string, title: string, kind: string, date: Date | null, href: string) => {
-      if (date && date >= range.start && date < range.end) events.push({ id, title, kind, at: date.toISOString(), day: egyptDay(date), href });
+    const add = (id: string, title: string, kind: string, date: Date | null, href: string, artwork: { subject?: string | null; courseTitle?: string; coverImage?: string | null } = {}) => {
+      if (date && date >= range.start && date < range.end) events.push({ id, title, kind, at: date.toISOString(), day: egyptDay(date), href, ...artwork });
     };
     for (const exam of exams.filter(exam => user.role !== 'STUDENT' || examMatchesStudent(exam, user))) {
+      const artwork = { subject: exam.course?.subject || exam.subjects, courseTitle: exam.course?.title, coverImage: exam.course?.coverImage };
       const href = user.role === 'STUDENT' ? `/exams/${exam.id}/details` : `/${user.role === 'SUPER_ADMIN' ? 'super-admin' : 'school-admin'}/exams/analytics/${exam.id}`;
-      add(exam.id + '-start', exam.title, 'EXAM_START', exam.startDate, href); add(exam.id + '-end', exam.title, 'EXAM_END', exam.endDate, href);
+      add(exam.id + '-start', exam.title, 'EXAM_START', exam.startDate, href, artwork); add(exam.id + '-end', exam.title, 'EXAM_END', exam.endDate, href, artwork);
       for (const child of exam.modules.flatMap(module => module.subExams)) {
         const childHref = user.role === 'STUDENT' ? `/exams/${exam.id}?subExamId=${child.id}` : href;
-        add(child.id + '-start', child.title, 'EXAM_START', child.publishDate, childHref); add(child.id + '-end', child.title, 'EXAM_END', child.cutOffDate, childHref);
+        add(child.id + '-start', child.title, 'EXAM_START', child.publishDate, childHref, artwork); add(child.id + '-end', child.title, 'EXAM_END', child.cutOffDate, childHref, artwork);
       }
     }
-    for (const lesson of lessons) { add(lesson.id + '-start', lesson.title, 'LESSON_START', lesson.publishDate, `/lessons/${lesson.id}?courseId=${lesson.courseId}`); add(lesson.id + '-end', lesson.title, 'LESSON_END', lesson.cutOffDate, `/lessons/${lesson.id}?courseId=${lesson.courseId}`); }
+    for (const lesson of lessons) { const artwork = { subject: lesson.course.subject, courseTitle: lesson.course.title, coverImage: lesson.course.coverImage }; add(lesson.id + '-start', lesson.title, 'LESSON_START', lesson.publishDate, `/lessons/${lesson.id}?courseId=${lesson.courseId}`, artwork); add(lesson.id + '-end', lesson.title, 'LESSON_END', lesson.cutOffDate, `/lessons/${lesson.id}?courseId=${lesson.courseId}`, artwork); }
     res.json({ events: events.sort((a, b) => a.at.localeCompare(b.at)), from: range.from, to: range.to, timeZone: range.timeZone, generatedAt: new Date().toISOString() });
   } catch (error: any) { res.status(400).json({ error: error.message }); }
 });

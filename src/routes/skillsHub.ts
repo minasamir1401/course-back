@@ -801,6 +801,7 @@ router.get('/api/skills-hub/progress', verifyToken, async (req: any, res: any) =
               select: {
                 id: true,
                 title: true,
+                titleEn: true,
                 type: true,
                 difficulty: true,
                 dok: true,
@@ -834,13 +835,20 @@ router.get('/api/skills-hub/progress', verifyToken, async (req: any, res: any) =
       }
     });
 
+    // XP is awarded independently from question scores, and includes earned bonuses.
+    const activityXP = await prisma.xPHistory.findMany({
+      where: { userId: targetUserId, sourceType: 'INTERACTIVE_ACTIVITY', sourceId: { in: clusters.flatMap(cluster => cluster.skills.map(skill => skill.id)) } },
+      select: { sourceId: true, xp: true }
+    });
+    const xpByLesson = new Map<string, number>();
+    for (const entry of activityXP) xpByLesson.set(entry.sourceId, (xpByLesson.get(entry.sourceId) || 0) + entry.xp);
     const subjects = [...new Set(clusters.map(cluster => cluster.subject))];
     const visibleClusters = subject ? clusters.filter(cluster => cluster.subject === String(subject)) : clusters;
     const clusterProgressReport = visibleClusters.map(cluster => {
       let totalActivities = 0;
       let completedActivities = 0;
       let totalStarsEarned = 0;
-      let totalXPEarned = 0;
+      const totalXPEarned = cluster.skills.reduce((sum, skill) => sum + (xpByLesson.get(skill.id) || 0), 0);
 
       const skillsReport = cluster.skills.map(skill => {
         const activitiesReport = skill.activities.map(act => {
@@ -853,7 +861,6 @@ router.get('/api/skills-hub/progress', verifyToken, async (req: any, res: any) =
             bestAttemptStars = bestAttempt.stars;
             bestAttemptCorrect = bestAttempt.isCorrect;
             totalStarsEarned += bestAttempt.stars;
-            totalXPEarned += bestAttempt.score;
             if (bestAttempt.isCorrect) {
               completedActivities++;
             }
@@ -862,6 +869,7 @@ router.get('/api/skills-hub/progress', verifyToken, async (req: any, res: any) =
           return {
             id: act.id,
             title: act.title,
+            titleEn: act.titleEn,
             type: act.type,
             difficulty: act.difficulty,
             dok: act.dok,
@@ -871,6 +879,7 @@ router.get('/api/skills-hub/progress', verifyToken, async (req: any, res: any) =
             standard: act.standard,
             indicator: act.indicator,
             learningOutcome: act.learningOutcome,
+            hasAttempt: Boolean(bestAttempt),
             bestAttemptStars,
             bestAttemptCorrect
           };

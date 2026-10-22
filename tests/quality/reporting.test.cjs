@@ -15,6 +15,14 @@ const attempt = (id, userId, percentage, day, schoolId = 'school') => ({ id, use
   answers: [{ isCorrect: true, question: { id: 'q', text: 'Question', skill: 'Skill A', moduleId: 'm', subExamId: 'child' } }] });
 
 beforeEach(() => { jest.clearAllMocks(); mockDb.examSubmission.findMany.mockResolvedValue([]); mockDb.subExam.findMany.mockResolvedValue([]); mockDb.studentAnswer.findMany.mockImplementation(async () => { const rows = await mockDb.examSubmission.findMany(); return rows.flatMap(row => (row.answers || []).map(answer => ({ ...answer, submissionId: row.id }))); }); mockDb.user.findMany.mockResolvedValue([]); });
+
+test('daily chart ranges and pass rate use selected recorded grades and preserve zero and unknown scores', async () => {
+  mockDb.examSubmission.findMany.mockResolvedValue([attempt('a','u',100,'14'),attempt('b','v',70,'14'),attempt('c','w',null,'14'),attempt('d','x',0,'15'),attempt('e','unknown',null,'16')]);
+  const report=await generateReport({role:'SUPER_ADMIN'},dates,mockDb);
+  expect(report.timeline[0]).toMatchObject({attempts:3,averageScore:85,minimumScore:70,maximumScore:100,passRate:50});
+  expect(report.timeline[1]).toMatchObject({attempts:1,averageScore:0,minimumScore:0,maximumScore:0,passRate:0});
+  expect(report.timeline[2]).toMatchObject({attempts:1,averageScore:null,minimumScore:null,maximumScore:null,passRate:null});
+});
 test('overview uses selected attempts, frozen thresholds, separate students and Egypt days', async () => {
   mockDb.examSubmission.findMany.mockResolvedValue([attempt('a', 'u', 100, '14'), attempt('b', 'u', 70, '15'), attempt('c', 'v', 90, '16', 'other')]);
   const report = await generateReport({ role: 'SUPER_ADMIN' }, dates, mockDb);

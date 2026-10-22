@@ -49,6 +49,9 @@ import progressRouter from './routes/progress';
 import skillsHubRouter from './routes/skillsHub';
 import reportsRouter from './routes/reports';
 import workspaceRouter from './routes/workspace';
+import studentDeliveryRouter from './routes/studentDelivery';
+import competitionsRouter from './routes/competitions';
+import { startStudentNotifications } from './services/studentNotifications';
 import importRouter from './routes/imports';
 import systemRouter from './routes/system';
 import deduplicateRouter from './routes/deduplicate';
@@ -153,7 +156,7 @@ app.use(cors({
     }
     return callback(new Error('CORS origin is not allowed'));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Offline-User-Id', 'X-Offline-School-Id'],
   credentials: true
 }));
@@ -202,6 +205,8 @@ app.use(progressRouter);
 app.use(skillsHubRouter);
 app.use(reportsRouter);
 app.use(workspaceRouter);
+app.use(studentDeliveryRouter);
+app.use(competitionsRouter);
 app.use(importRouter);
 app.use(systemRouter);
 app.use('/api/deduplicate', deduplicateRouter);
@@ -611,6 +616,7 @@ const startServer = async () => {
   const isPrimaryWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
 
   app.listen(PORT, '0.0.0.0', () => {
+    startStudentNotifications();
     console.log(`[Server] LMS Backend running on port ${PORT}`);
 
     if (isPrimaryWorker) {

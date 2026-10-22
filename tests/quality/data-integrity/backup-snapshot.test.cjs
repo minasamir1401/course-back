@@ -5,6 +5,7 @@ const path = require('path');
 const express = require('express');
 const request = require('supertest');
 const { Prisma } = require('@prisma/client');
+const { createHash } = require('crypto');
 const source = path.resolve(__dirname, '../../../src/lib/backupSnapshot.ts');
 const api = require('fs').existsSync(source) ? require(source) : {};
 const models = Prisma.dmmf.datamodel.models;
@@ -69,7 +70,17 @@ const fixture = {
   examSubmission:[{id:'es',examId:'e',subExamId:'sub',userId:'child',totalScore:1}],
   studentAnswer:[{id:'sa',submissionId:'es',questionId:'q',userId:'child',selectedAnswer:'1',isCorrect:true}],
   deletedTombstone:[{id:'dt',entityType:'lesson',entityId:'deleted',deletedAt:'2025-01-01T00:00:00Z'}],
-  systemSetting:[{key:'allow_content_deletion',value:'false'}]
+  systemSetting:[{key:'allow_content_deletion',value:'false'}],
+  certificate:[{id:'cert',schoolId:'s',studentId:'child',issuerId:'parent',title:'Award',fileName:'award.pdf',mimeType:'application/pdf',fileData:Buffer.from('%PDF-1.4\n%%EOF').toString('base64'),byteSize:14,sha256:createHash('sha256').update('%PDF-1.4\n%%EOF').digest('hex'),createdAt:'2026-10-21T10:00:00Z'}, {id:'cert2',schoolId:'s',studentId:'child',issuerId:'parent',title:'Second award',fileName:'award.png',mimeType:'image/png',fileData:Buffer.from('file-bytes').toString('base64'),byteSize:10,sha256:createHash('sha256').update('file-bytes').digest('hex'),createdAt:'2026-10-21T10:00:00Z'}],
+  studentNotification:[{id:'notice',userId:'child',eventKey:'CERTIFICATE:cert',kind:'CERTIFICATE',titleAr:'شهادة',titleEn:'Certificate',body:'Award',href:'/certificates',createdAt:'2026-10-21T10:00:00Z'}],
+  notificationCursor:[{key:'cursor',value:'2026-10-21T10:00:00Z'}],
+  competitionPolicy:[{key:'school:s',enabled:true,publicBoard:false,sound:true,motion:true,leaderboard:true}],
+  competitionProfile:[{userId:'child',sound:false,motion:false,publicName:false}],
+  competition:[{id:'game',title:'Challenge',schoolId:'s',creatorId:'parent',mode:'SELF_PACED',status:'FINISHED',teams:false}],
+  competitionQuestion:[{id:'gq',competitionId:'game',text:'2+2?',options:['4','3'],correctIndex:0,seconds:30,order:0}],
+  competitionEntry:[{id:'ge',competitionId:'game',studentId:'child',score:140,correct:1,team:0,currentIndex:1,finishedAt:'2026-10-21T10:00:00Z'}],
+  competitionAnswer:[{id:'ga',entryId:'ge',questionId:'gq',selectedIndex:0,correct:true,points:140,elapsedMs:5000}],
+  competitionAward:[{id:'prize',entryId:'ge',rank:1,title:'Certificate',deliveredAt:'2026-10-21T12:00:00Z'}]
 };
 let dir;
 beforeEach(async () => {dir=await fs.mkdtemp(path.join(os.tmpdir(),'backup-test-'));});
@@ -88,6 +99,13 @@ test('full snapshot streams every schema model and restores parent cycles and al
   expect(payload.data.systemSetting[0].key).toBe('allow_content_deletion');
   const target=database();
   await api.restoreSnapshot(target,payload);
+  expect(payload.data.certificate).toHaveLength(2);
+  expect(target.tables.certificate.get('cert').fileData).toBe(fixture.certificate[0].fileData);
+  expect(target.tables.studentNotification.get('notice').userId).toBe('child');
+  expect(target.tables.competitionEntry.get('ge').score).toBe(140);
+  expect(target.tables.competitionAnswer.get('ga')).toMatchObject({ points:140, elapsedMs:5000 });
+  expect(target.tables.competitionAward.get('prize').deliveredAt).toBeInstanceOf(Date);
+  expect(target.tables.competitionProfile.get('child').publicName).toBe(false);
   expect(target.tables.question.get('q')).toMatchObject({moduleId:'a-child',subExamId:'sub',xpPoints:21,indicator:'kept'});
   expect(target.tables.user.get('child')).toMatchObject({parentId:'parent',classroomId:'room'});
   expect(target.tables.examModule.get('a-child').parentModuleId).toBe('z-parent');
@@ -122,6 +140,14 @@ test('retention of generated full snapshots never deletes partial, uploaded, or 
   expect(names.filter(n=>n.startsWith('backup-full-'))).toHaveLength(1);
   expect(names).toEqual(expect.arrayContaining(['auto_hourly_1.json','backup-old.json','backup-uploaded-1.json']));
 });
+test('corrupted certificate bytes abort restore before any school or student records are written', async () => {
+  const payload = await api.collectFullSnapshot(database(fixture));
+  payload.data.certificate[0].fileData = Buffer.from('changed file').toString('base64');
+  const target = database();
+  await expect(api.restoreSnapshot(target, payload)).rejects.toThrow('CERTIFICATE_INTEGRITY');
+  expect(target.tables.school.size).toBe(0); expect(target.tables.user.size).toBe(0); expect(target.tables.certificate.size).toBe(0);
+});
+
 test('private directory rejects uploads descendants, including symlink aliases', async () => {
   expect(typeof api.ensureBackupStorage).toBe('function');
   const uploads=path.join(dir,'uploads'); await fs.mkdir(uploads);

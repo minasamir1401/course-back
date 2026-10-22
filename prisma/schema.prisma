@@ -25,6 +25,8 @@ model School {
   classrooms    Classroom[]
   skillClusters SkillCluster[] @relation("SkillClusterOwner")
   examFolders   ExamFolder[]
+  certificates Certificate[]
+  competitions Competition[]
 }
 
 model User {
@@ -74,6 +76,13 @@ model User {
   xpHistories        XPHistory[]
   sentMessages       Message[] @relation("MessageSender")
   receivedMessages   Message[] @relation("MessageRecipient")
+  notifications      StudentNotification[]
+  pushSubscriptions  PushSubscription[]
+  certificates       Certificate[] @relation("CertificateRecipient")
+  issuedCertificates Certificate[] @relation("CertificateIssuer")
+  competitionProfile CompetitionProfile?
+  hostedCompetitions Competition[]
+  competitionEntries CompetitionEntry[]
   deletedAt          DateTime?           // Soft Delete: null = active, date = in trash
   
   // Content Creation Tracking
@@ -676,4 +685,196 @@ model Message {
   recipient User @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
   @@index([recipientId, createdAt])
   @@index([senderId, createdAt])
+}
+
+// Private, authenticated student inbox; event keys make scheduler retries idempotent.
+model StudentNotification {
+  id String @id @default(uuid())
+  userId String
+  eventKey String
+  kind String
+  titleAr String
+  titleEn String
+  body String
+  href String
+  createdAt DateTime @default(now())
+  readAt DateTime?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
+  @@unique([userId, eventKey])
+  @@index([userId, createdAt])
+}
+
+model NotificationCursor {
+  key String @id
+  value DateTime
+}
+
+model PushSubscription {
+  id String @id @default(uuid())
+  userId String
+  endpoint String @unique
+  p256dh String
+  auth String
+  language String @default("ar")
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
+  @@index([userId])
+}
+
+// Durable per-device outbox: outages do not lose notifications or duplicate inbox items.
+model PushDelivery {
+  id String @id @default(uuid())
+  notificationId String
+  subscriptionId String
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  deliveredAt DateTime?
+  notification StudentNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  subscription PushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  @@unique([notificationId, subscriptionId])
+  @@index([deliveredAt, nextAttemptAt])
+}
+
+// File bytes stay inside the database and therefore inside every full snapshot.
+// No certificate is exposed through public uploads or a bearer URL.
+model Certificate {
+  id String @id @default(uuid())
+  schoolId String
+  studentId String
+  issuerId String
+  title String
+  message String?
+  fileName String
+  mimeType String
+  byteSize Int
+  sha256 String
+  fileData String @db.Text
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  school School @relation(fields: [schoolId], references: [id])
+  student User @relation("CertificateRecipient", fields: [studentId], references: [id])
+  issuer User @relation("CertificateIssuer", fields: [issuerId], references: [id])
+  @@index([studentId, createdAt])
+  @@index([schoolId, createdAt])
+}
+
+model CompetitionPolicy {
+  key String @id
+  enabled Boolean @default(true)
+  publicBoard Boolean @default(false)
+  sound Boolean @default(true)
+  motion Boolean @default(true)
+  leaderboard Boolean @default(true)
+}
+
+model CompetitionProfile {
+  userId String @id
+  sound Boolean @default(true)
+  motion Boolean @default(true)
+  publicName Boolean @default(false)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Competition {
+  id String @id @default(uuid())
+  title String
+  titleEn String?
+  description String?
+  descriptionEn String?
+  schoolId String?
+  creatorId String
+  mode String @default("SELF_PACED")
+  status String @default("DRAFT")
+  grade String?
+  subject String?
+  scoringMode String @default("SPEED")
+  sourceKind String @default("GENERAL")
+  sourceId String?
+  teams Boolean @default(false)
+  capacity Int @default(200)
+  publicBoard Boolean @default(false)
+  prizeLabel String?
+  prizePlaces Int @default(3)
+  opensAt DateTime?
+  closesAt DateTime?
+  currentIndex Int @default(-1)
+  questionStartedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  school School? @relation(fields: [schoolId], references: [id])
+  creator User @relation(fields: [creatorId], references: [id])
+  questions CompetitionQuestion[]
+  entries CompetitionEntry[]
+  @@index([schoolId, status])
+  @@index([sourceKind, sourceId])
+}
+
+model CompetitionQuestion {
+  id String @id @default(uuid())
+  competitionId String
+  text String
+  textEn String?
+  options Json
+  optionsEn Json?
+  correctIndex Int @default(-1)
+  type String @default("MCQ")
+  points Int @default(100)
+  correctAnswer Json?
+  correctAnswerEn Json?
+  metadata Json?
+  seconds Int @default(30)
+  order Int
+  active Boolean @default(true)
+  competition Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  answers CompetitionAnswer[]
+  @@unique([competitionId, order])
+}
+
+model CompetitionEntry {
+  id String @id @default(uuid())
+  competitionId String
+  studentId String
+  team Int @default(0)
+  score Int @default(0)
+  correct Int @default(0)
+  currentIndex Int @default(0)
+  questionStartedAt DateTime?
+  questionSnapshot Json?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  competition Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  answers CompetitionAnswer[]
+  award CompetitionAward?
+  @@unique([competitionId, studentId])
+  @@index([competitionId, score])
+  @@index([studentId, finishedAt])
+}
+
+model CompetitionAnswer {
+  id String @id @default(uuid())
+  entryId String
+  questionId String
+  selectedIndex Int?
+  answer Json?
+  correct Boolean
+  points Int
+  elapsedMs Int
+  createdAt DateTime @default(now())
+  entry CompetitionEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  question CompetitionQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  @@unique([entryId, questionId])
+}
+
+model CompetitionAward {
+  id String @id @default(uuid())
+  entryId String @unique
+  rank Int
+  title String
+  deliveredAt DateTime?
+  createdAt DateTime @default(now())
+  entry CompetitionEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
 }

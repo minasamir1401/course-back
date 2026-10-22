@@ -113,9 +113,9 @@ export async function generateReport(user: any, query: Record<string, any>, db: 
   const skills = new Map<string, any>(), questions = new Map<string, any>(), schools = new Map<string, any>(), timeline = new Map<string, any>();
   for (const row of selected) {
     const day = egyptDay(row.createdAt);
-    const activity = timeline.get(day) || { day, attempts: 0, sum: 0, graded: 0 };
+    const activity = timeline.get(day) || { day, attempts: 0, sum: 0, graded: 0, passed: 0, minimumScore: null, maximumScore: null };
     activity.attempts++;
-    if (typeof row.percentage === 'number') { activity.sum += row.percentage; activity.graded++; }
+    if (typeof row.percentage === 'number') { activity.sum += row.percentage; activity.graded++; if (attemptPassed(row)) activity.passed++; activity.minimumScore = activity.minimumScore == null ? row.percentage : Math.min(activity.minimumScore, row.percentage); activity.maximumScore = activity.maximumScore == null ? row.percentage : Math.max(activity.maximumScore, row.percentage); }
     timeline.set(day, activity);
     const schoolId = row.schoolIdAtSubmission || row.user.schoolId || '__unassigned__';
     const school = schools.get(schoolId) || { id: schoolId, name: row.reportSnapshot?.schoolName || row.user.school?.name || '—', students: new Set(), count: 0, sum: 0, graded: 0, passed: 0 };
@@ -174,7 +174,7 @@ export async function generateReport(user: any, query: Record<string, any>, db: 
       passRate: ratio(passes, graded.length), passed: passes, gradedAttempts: graded.length,
       legacyAttempts: selected.filter(row => !row.reportSnapshot).length,
       averageExamSeconds: selected.some(row => row.totalTime != null) ? Math.round(selected.filter(row => row.totalTime != null).reduce((sum, row) => sum + row.totalTime, 0) / selected.filter(row => row.totalTime != null).length) : null },
-    timeline: [...timeline.values()].sort((a, b) => a.day.localeCompare(b.day)).map(item => ({ day: item.day, attempts: item.attempts, averageScore: item.graded ? roundMetric(item.sum / item.graded) : null })),
+    timeline: [...timeline.values()].sort((a, b) => a.day.localeCompare(b.day)).map(item => ({ day: item.day, attempts: item.attempts, averageScore: item.graded ? roundMetric(item.sum / item.graded) : null, minimumScore: item.minimumScore, maximumScore: item.maximumScore, passRate: ratio(item.passed, item.graded) })),
     skills: skillRows.sort((a, b) => (a.correctRate ?? 0) - (b.correctRate ?? 0)),
     questions: [...questions.values()].map(q => ({ ...q, correctRate: ratio(q.correct, q.total) })).sort((a, b) => (a.correctRate ?? 0) - (b.correctRate ?? 0)),
     modules: (exam?.modules || []).map((module: any) => {
