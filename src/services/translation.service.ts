@@ -161,6 +161,31 @@ async function translateViaFastEngine(text: string, from: 'ar' | 'en', to: 'ar' 
   return null;
 }
 
+/** Translate visible runs, keeping formatting/media outside the provider request. */
+async function translateRichHtml(text: string, from: 'ar' | 'en', to: 'ar' | 'en'): Promise<string> {
+  const rendered = protectRenderedMath(text);
+  const parts = rendered.html.split(/(\x00RENDERED\d+\x00|<!--[\s\S]*?-->|<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)\s*>|<[^>"']*(?:"[^"]*"[^>"']*|'[^']*'[^>"']*)*>|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^$\r\n]+\$)/gi);
+  const decode = (value: string) => value.replace(/&(?:amp|lt|gt|quot|apos|nbsp|#39|#(\d+)|#x([\da-f]+));/gi, (entity, decimal, hex) => {
+    if (decimal || hex) {
+      const code = parseInt(decimal || hex, hex ? 16 : 10);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    }
+    return ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'", '&#39;': "'", '&nbsp;': ' ' } as Record<string, string>)[entity.toLowerCase()] || entity;
+  });
+  const indices = parts.map((part, index) => part.trim() && !/^(?:<|\x00RENDERED|\$|\\[([])/.test(part) ? index : -1).filter(index => index >= 0);
+  for (let start = 0; start < indices.length; start += 16) {
+    await Promise.all(indices.slice(start, start + 16).map(async index => {
+      const part = parts[index];
+      const source = decode(part.trim());
+      const translated = await translateSingleText(source, from, to);
+      if (translated === source) return;
+      const escaped = translated.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      parts[index] = part.replace(/\S[\s\S]*\S|\S/, () => escaped);
+    }));
+  }
+  return parts.join('').replace(/\x00RENDERED(\d+)\x00/g, (_, index) => rendered.blocks[Number(index)]);
+}
+
 export async function translateSingleText(
   text: string,
   from: 'ar' | 'en' = 'ar',
@@ -171,6 +196,12 @@ export async function translateSingleText(
   const cacheKey = getCacheKey(text, from, to);
   if (translationCache.has(cacheKey)) {
     return translationCache.get(cacheKey)!;
+  }
+
+  if (/<\/?[a-z][\s\S]*?>/i.test(text)) {
+    const translated = await translateRichHtml(text, from, to);
+    if (translated !== text) setCache(cacheKey, translated);
+    return translated;
   }
 
   const { maskedText, tokens } = maskSpecialContent(text);
