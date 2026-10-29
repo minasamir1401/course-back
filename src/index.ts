@@ -51,6 +51,7 @@ import reportsRouter from './routes/reports';
 import workspaceRouter from './routes/workspace';
 import studentDeliveryRouter from './routes/studentDelivery';
 import competitionsRouter from './routes/competitions';
+import aiRouter from './routes/ai';
 import { startStudentNotifications } from './services/studentNotifications';
 import importRouter from './routes/imports';
 import systemRouter from './routes/system';
@@ -154,7 +155,7 @@ app.use(cors({
     if (isOriginAllowed(origin, allowedOrigins)) {
       return callback(null, true);
     }
-    return callback(new Error('CORS origin is not allowed'));
+    return callback(Object.assign(new Error('CORS origin is not allowed'), { code: 'CORS_ORIGIN_DENIED', status: 403 }));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Offline-User-Id', 'X-Offline-School-Id'],
@@ -207,6 +208,7 @@ app.use(reportsRouter);
 app.use(workspaceRouter);
 app.use(studentDeliveryRouter);
 app.use(competitionsRouter);
+app.use(aiRouter);
 app.use(importRouter);
 app.use(systemRouter);
 app.use('/api/deduplicate', deduplicateRouter);
@@ -216,6 +218,10 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   // If headers have already been sent to the client, delegate to the default Express error handler
   if (res.headersSent) {
     return next(err);
+  }
+
+  if (err.code === 'CORS_ORIGIN_DENIED') {
+    return res.status(403).json({ error: 'Origin is not allowed', code: 'CORS_ORIGIN_DENIED' });
   }
 
   // 1. Client Abort / Connection Closed Prematurely

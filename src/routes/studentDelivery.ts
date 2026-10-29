@@ -46,17 +46,27 @@ router.delete('/api/push/subscriptions', verifyToken, student, limiter, async (r
 router.get('/api/notifications', verifyToken, student, async (req: any, res: any) => {
   try {
     const offset = Math.max(0, Math.min(100000, Number(req.query.offset) || 0));
-    const where = { userId: req.user.id };
-    const [items, total, unread] = await Promise.all([
+    const category = typeof req.query.category === 'string' ? req.query.category : '';
+    const categories: Record<string, string[]> = { learning: ['COURSE', 'LESSON'], assessments: ['EXAM', 'EXAM_OPEN'], certificates: ['CERTIFICATE'] };
+    const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 150) : '';
+    const where: any = { userId: req.user.id, ...(req.query.unread === '1' ? { readAt: null } : {}),
+      ...(categories[category] ? { kind: { in: categories[category] } } : {}),
+      ...(query ? { OR: ['titleAr', 'titleEn', 'body'].map(field => ({ [field]: { contains: query, mode: 'insensitive' } })) } : {}) };
+    const [items, total, unread, inboxTotal] = await Promise.all([
       prisma.studentNotification.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30, skip: offset }),
-      prisma.studentNotification.count({ where }), prisma.studentNotification.count({ where: { ...where, readAt: null } }),
+      prisma.studentNotification.count({ where }), prisma.studentNotification.count({ where: { userId: req.user.id, readAt: null } }),
+      prisma.studentNotification.count({ where: { userId: req.user.id } }),
     ]);
-    res.json({ items, total, unread });
+    res.json({ items, total, unread, inboxTotal });
   } catch { res.status(500).json({ error: 'Could not load notifications' }); }
 });
 router.patch('/api/notifications/read', verifyToken, student, limiter, async (req: any, res: any) => {
   if (req.body.id !== undefined && typeof req.body.id !== 'string') return res.status(400).json({ error: 'Invalid notification' });
-  try { await prisma.studentNotification.updateMany({ where: { userId: req.user.id, readAt: null, ...(req.body.id ? { id: req.body.id } : {}) }, data: { readAt: new Date() } }); res.json({ success: true }); }
+  try {
+    const result = await prisma.studentNotification.updateMany({ where: { userId: req.user.id, readAt: null, ...(req.body.id ? { id: req.body.id } : {}) }, data: { readAt: new Date() } });
+    const unread = await prisma.studentNotification.count({ where: { userId: req.user.id, readAt: null } });
+    res.json({ success: true, updated: result.count, unread });
+  }
   catch { res.status(500).json({ error: 'Could not update notifications' }); }
 });
 

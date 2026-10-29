@@ -73,6 +73,8 @@ model User {
   blockAnswers       BlockAnswer[]
   activityAttempts   ActivityAttempt[]
   xp                 Int                 @default(0)
+  aiConversations    AiConversation[]
+  aiInsight          StudentAiInsight?
   xpHistories        XPHistory[]
   sentMessages       Message[] @relation("MessageSender")
   receivedMessages   Message[] @relation("MessageRecipient")
@@ -202,6 +204,7 @@ model Lesson {
   creator          User?     @relation("LessonCreator", fields: [creatorId], references: [id])
   progresses       LessonProgress[]
   blocks           LessonBlock[]
+  aiGuidance       AiLessonGuidance?
   
   @@index([courseId, order])
   @@index([deletedAt])
@@ -672,6 +675,69 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model AiProvider {
+  id              String   @id @default(uuid())
+  name            String
+  kind            String
+  baseUrl         String
+  model           String   @default("openai/gpt-oss-120b")
+  encryptedKey    String
+  keyFingerprint  String   @unique
+  enabled         Boolean  @default(true)
+  allowPublic     Boolean  @default(false)
+  allowStudent    Boolean  @default(true)
+  lastAssignedAt  DateTime @default(dbgenerated("'1970-01-01'::timestamp"))
+  cooldownUntil   DateTime?
+  requestCount    Int      @default(0)
+  failureCount    Int      @default(0)
+  lastStatus      Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([enabled, lastAssignedAt])
+}
+
+model AiConversation {
+  id        String @id @default(uuid())
+  userId    String
+  lessonId  String?
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  AiMessage[]
+  @@index([userId, updatedAt])
+}
+
+model AiMessage {
+  id             String @id @default(uuid())
+  conversationId String
+  role           String
+  content        String
+  model          String?
+  createdAt      DateTime @default(now())
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@index([conversationId, createdAt])
+}
+
+model StudentAiInsight {
+  userId      String @id
+  evidence    Json
+  narrative   String?
+  fingerprint String
+  generatedAt DateTime @default(now())
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AiLessonGuidance {
+  lessonId       String @id
+  enabled        Boolean @default(true)
+  instructions   String @default("")
+  referenceText  String @default("")
+  starterPrompts Json?
+  updatedAt      DateTime @updatedAt
+  lesson         Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 }
 
 model Message {

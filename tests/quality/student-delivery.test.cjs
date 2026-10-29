@@ -181,10 +181,23 @@ test('bulk saves only selected students, skips duplicates, and queues individual
 });
 test('inbox and marking read always constrain the authenticated recipient', async () => {
   mockDb.studentNotification.findMany.mockResolvedValue([]); mockDb.studentNotification.count.mockResolvedValue(0);
+  mockDb.studentNotification.updateMany.mockResolvedValue({ count: 0 });
   await request(app).get('/api/notifications?userId=victim').set('x-role', 'STUDENT').expect(200);
   expect(mockDb.studentNotification.findMany.mock.calls[0][0].where).toEqual({ userId: 'me' });
   await request(app).patch('/api/notifications/read').set('x-role', 'STUDENT').send({ id: 'victim-notice' }).expect(200);
   expect(mockDb.studentNotification.updateMany.mock.calls[0][0].where).toEqual({ userId: 'me', id: 'victim-notice', readAt: null });
+});
+
+test('notification filters apply to all pages while counts and ownership remain recipient scoped', async () => {
+  mockDb.studentNotification.findMany.mockResolvedValue([]);
+  mockDb.studentNotification.count.mockImplementation(async ({ where }) => where.OR ? 2 : where.readAt === null ? 4 : 10);
+  const result = await request(app).get('/api/notifications?category=assessments&unread=1&q=matrix&offset=30&userId=victim').set('x-role', 'STUDENT').expect(200);
+  expect(result.body).toMatchObject({ total: 2, unread: 4, inboxTotal: 10 });
+  expect(mockDb.studentNotification.findMany.mock.calls[0][0]).toMatchObject({ take: 30, skip: 30, where: {
+    userId: 'me', readAt: null, kind: { in: ['EXAM', 'EXAM_OPEN'] },
+    OR: ['titleAr', 'titleEn', 'body'].map(field => ({ [field]: { contains: 'matrix', mode: 'insensitive' } })),
+  } });
+  expect(mockDb.studentNotification.count.mock.calls.every(([args]) => args.where.userId === 'me')).toBe(true);
 });
 test('push subscriptions reject SSRF endpoints and cannot be stolen by another account', async () => {
   for (const url of ['http://127.0.0.1/x', 'https://localhost/x', 'https://169.254.169.254/x', 'https://fcm.googleapis.com.evil.example/x', 'https://evil.example/x', 'https://user@fcm.googleapis.com/x']) expect(validPushEndpoint(url)).toBe(false);
