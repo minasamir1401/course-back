@@ -679,6 +679,9 @@ model SystemSetting {
 
 model AiProvider {
   id              String   @id @default(uuid())
+  parentId        String?
+  parent          AiProvider? @relation("AiProviderKeys", fields: [parentId], references: [id], onDelete: Cascade)
+  keys            AiProvider[] @relation("AiProviderKeys")
   name            String
   kind            String
   baseUrl         String
@@ -696,6 +699,7 @@ model AiProvider {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   @@index([enabled, lastAssignedAt])
+  @@index([parentId])
 }
 
 model AiConversation {

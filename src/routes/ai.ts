@@ -36,7 +36,7 @@ const readSettings = async () => {
   const row = await prisma.systemSetting.findUnique({ where: { key: 'ai:settings:v1' } });
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(row?.value || '{}') }; } catch { return DEFAULT_SETTINGS; }
 };
-const providerSelect = { id: true, name: true, kind: true, baseUrl: true, model: true, enabled: true, allowPublic: true, allowStudent: true,
+const providerSelect = { id: true, parentId: true, name: true, kind: true, baseUrl: true, model: true, enabled: true, allowPublic: true, allowStudent: true,
   requestCount: true, failureCount: true, lastStatus: true, cooldownUntil: true, createdAt: true } as const;
 function inputText(value: unknown, limit = 30000): string {
   if (typeof value !== 'string' || !value.trim() || value.length > limit) throw new AiError(400, 'INVALID_AI_MESSAGE', `اكتب رسالة بين حرف و${limit} حرفًا.`);
@@ -178,12 +178,36 @@ router.patch('/api/ai/admin/providers/:id', verifyToken, superAdmin, safe(async 
   if (body.model !== undefined) data.model = inputText(body.model, 200);
   if (body.baseUrl !== undefined) data.baseUrl = await validateAiBaseUrl(body.baseUrl);
   if (body.apiKey) { data.encryptedKey = encryptAiKey(inputText(body.apiKey, 4096)); data.keyFingerprint = aiKeyFingerprint(body.apiKey.trim()); }
-  const existing = await prisma.aiProvider.findUnique({ where: { id: req.params.id }, select: { id: true, baseUrl: true, model: true, allowPublic: true, allowStudent: true } });
+  const existing = await prisma.aiProvider.findUnique({ where: { id: req.params.id } });
   if (!existing) throw new AiError(404, 'NOT_FOUND', 'المزوّد غير موجود.');
+  if (existing.parentId) throw new AiError(400, 'AI_GROUP_KEY', 'عدّل إعدادات الاتصال الرئيسي لهذا المفتاح.');
   if (body.allowPublic !== undefined || body.allowStudent !== undefined) Object.assign(data, aiProviderAudience(body, { allowStudent: existing.allowStudent, allowPublic: existing.allowPublic }));
   if (data.baseUrl && data.baseUrl !== existing.baseUrl && !body.apiKey) throw new AiError(400, 'AI_KEY_REQUIRED_FOR_URL_CHANGE', 'أعد إدخال المفتاح عند تغيير رابط API لحماية المفتاح المحفوظ.');
+  if (data.baseUrl && data.baseUrl !== existing.baseUrl && await prisma.aiProvider.count({ where: { parentId: existing.id } })) throw new AiError(400, 'AI_GROUP_URL_CHANGE', 'أنشئ اتصالًا جديدًا عند تغيير رابط اتصال يحتوي على مفاتيح إضافية لحماية مفاتيحه.');
   if (data.encryptedKey || (data.model && data.model !== existing.model) || (data.baseUrl && data.baseUrl !== existing.baseUrl)) { data.lastStatus = null; data.cooldownUntil = null; }
-  res.json({ provider: await prisma.aiProvider.update({ where: { id: req.params.id }, data, select: providerSelect }) });
+  const additional = body.additionalKeys === undefined ? [] : body.additionalKeys;
+  if (!Array.isArray(additional) || additional.length > 10) throw new AiError(400, 'INVALID_AI_KEYS', 'أضف حتى 10 مفاتيح في المرة الواحدة.');
+  const keys = additional.map(key => inputText(key, 4096));
+  if (new Set(keys.map(aiKeyFingerprint)).size !== keys.length) throw new AiError(409, 'DUPLICATE_AI_KEY', 'أدخل مفاتيح مختلفة بدون تكرار.');
+  const targetModel = data.model || existing.model;
+  await Promise.all(keys.map(async key => {
+    const models = await modelCatalog(data.baseUrl || existing.baseUrl, key, existing.kind);
+    if (!models.some((model: { id: string }) => model.id === targetModel)) throw new AiError(400, 'AI_MODEL_UNAVAILABLE', 'أحد المفاتيح الجديدة لا يتيح النموذج المختار. راجع المفاتيح قبل الحفظ.');
+  }));
+  const provider = await prisma.$transaction(async tx => {
+    const updated = await tx.aiProvider.update({ where: { id: req.params.id, ...(keys.length ? { baseUrl: existing.baseUrl, model: existing.model } : {}) }, data, select: providerSelect });
+    const shared = { model: updated.model, baseUrl: updated.baseUrl, enabled: updated.enabled, allowPublic: updated.allowPublic, allowStudent: updated.allowStudent };
+    const resetGroup = (data.model && data.model !== existing.model) || (data.baseUrl && data.baseUrl !== existing.baseUrl) || data.enabled === true;
+    await tx.aiProvider.updateMany({ where: { parentId: updated.id }, data: { ...shared, ...(resetGroup ? { lastStatus: null, cooldownUntil: null } : {}) } });
+    if (keys.length) {
+      const savedCount = await tx.aiProvider.count({ where: { parentId: updated.id } });
+      await tx.aiProvider.createMany({ data: keys.map((key, index) => ({ parentId: updated.id,
+        name: `Key ${savedCount + index + 2}`, kind: existing.kind, ...shared,
+        encryptedKey: encryptAiKey(key), keyFingerprint: aiKeyFingerprint(key) })) });
+    }
+    return updated;
+  });
+  res.json({ provider });
 }));
 router.delete('/api/ai/admin/providers/:id', verifyToken, superAdmin, safe(async (req: any, res: any) => {
   await prisma.aiProvider.deleteMany({ where: { id: req.params.id } }); res.json({ success: true });
